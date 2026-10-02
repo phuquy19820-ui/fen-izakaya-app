@@ -1,7 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+types.setTypeParser(1700, (v) => parseFloat(v));
 const next = require('next');
 const fs = require('fs');
 const path = require('path');
@@ -51,15 +52,32 @@ async function initializeDatabase() {
           }
         }
       }
-      const migrations = [
-        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS cukcuk_company_code VARCHAR(100)',
-        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS cukcuk_domain VARCHAR(255)',
-        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS cukcuk_auth_token TEXT',
-        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS cukcuk_token_expires_at TIMESTAMP',
-        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE',
-        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
-        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
-      ];
+      const addCols = {
+        branches: ['cukcuk_company_code VARCHAR(100)', 'cukcuk_domain VARCHAR(255)', 'cukcuk_auth_token TEXT',
+          'cukcuk_token_expires_at TIMESTAMP', 'is_active BOOLEAN DEFAULT TRUE',
+          'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'],
+        raw_materials: ['branch_id VARCHAR(50)', 'category VARCHAR(50)', 'category_group VARCHAR(50)',
+          'unit_cost NUMERIC(14,2) DEFAULT 0', 'min_stock NUMERIC(12,2) DEFAULT 0', 'max_stock NUMERIC(12,2) DEFAULT 0',
+          'lead_time_days INT DEFAULT 1', 'waste_rate NUMERIC(5,2) DEFAULT 0', 'shelf_life_days INT DEFAULT 30',
+          'safety_stock NUMERIC(12,2) DEFAULT 0', 'is_merged BOOLEAN DEFAULT FALSE', 'is_active BOOLEAN DEFAULT TRUE',
+          'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'],
+        inventory_tracking: ['opening_stock NUMERIC(12,2) DEFAULT 0', 'purchases_qty NUMERIC(12,2) DEFAULT 0',
+          'sales_usage_qty NUMERIC(12,2) DEFAULT 0', 'waste_loss_qty NUMERIC(12,2) DEFAULT 0',
+          'closing_stock NUMERIC(12,2) DEFAULT 0', 'stock_value NUMERIC(15,2) DEFAULT 0', 'notes TEXT',
+          'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'],
+        purchase_plan_details: ['branch_id VARCHAR(50)', 'material_name VARCHAR(255)', 'category VARCHAR(50)',
+          'purchase_cycle VARCHAR(20)', 'unit_purchase VARCHAR(20)', 'avg_daily_sales NUMERIC(14,4) DEFAULT 0',
+          'forecast_days INT DEFAULT 3', 'forecasted_demand NUMERIC(14,2) DEFAULT 0', 'safety_stock NUMERIC(14,2) DEFAULT 0',
+          'reorder_point NUMERIC(14,2) DEFAULT 0', 'adjusted_qty NUMERIC(14,2)', 'unit_cost NUMERIC(14,2) DEFAULT 0',
+          'estimated_cost NUMERIC(16,2) DEFAULT 0', "status VARCHAR(20) DEFAULT 'PENDING'",
+          'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP']
+      };
+      const migrations = [];
+      for (const [table, cols] of Object.entries(addCols)) {
+        for (const col of cols) migrations.push(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${col}`);
+      }
+      migrations.push('ALTER TABLE raw_materials ALTER COLUMN category DROP NOT NULL');
+      migrations.push('CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_branch_mat_date ON inventory_tracking (branch_id, material_id, period_date)');
       for (const m of migrations) {
         try {
           await pool.query(m);
@@ -128,7 +146,7 @@ app.post('/api/bom/upload', upload.single('file'), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const summary = await parseAndSaveBOM(req.file.buffer, branchId, client);
+    const summary = await parseAndSaveBOM(req.file.buffer, branchId, client, req.file.originalname);
     await client.query('COMMIT');
     return res.json({ success: true, message: 'Tải định lượng thành công!', data: summary });
   } catch (error) {
@@ -145,9 +163,10 @@ app.get('/api/materials/:branchId', async (req, res) => {
   const { branchId } = req.params;
   try {
     const result = await pool.query(`
-      SELECT * FROM raw_materials
-      WHERE branch_id = $1 AND is_active = TRUE
-      ORDER BY category, material_name
+      SELECT * FROM raw_materials rm
+      WHERE rm.is_active IS NOT FALSE
+        AND EXISTS (SELECT 1 FROM bill_of_materials b WHERE b.material_id = rm.material_id AND b.branch_id = $1)
+      ORDER BY rm.category, rm.material_name
     `, [branchId]);
     return res.json({ success: true, data: result.rows });
   } catch (error) {
@@ -220,124 +239,148 @@ app.post('/api/cukcuk/sync', async (req, res) => {
 
 // 7. API Tạo kế hoạch mua hàng
 app.post('/api/purchase-plans/generate', async (req, res) => {
-  const { branchId, cycleType = 'FRESH_3DAYS' } = req.body;
+  const { branchId } = req.body;
   if (!branchId) {
     return res.status(400).json({ success: false, message: 'Thiếu Chi nhánh' });
   }
 
   const client = await pool.connect();
   try {
-    // Lấy danh sách NVL
     const materialsRes = await client.query(`
-      SELECT * FROM raw_materials
-      WHERE branch_id = $1 AND is_active = TRUE AND is_merged = FALSE
+      SELECT * FROM raw_materials rm
+      WHERE rm.is_active IS NOT FALSE AND rm.is_merged IS NOT TRUE
+        AND EXISTS (SELECT 1 FROM bill_of_materials b WHERE b.material_id = rm.material_id AND b.branch_id = $1)
     `, [branchId]);
     const materials = materialsRes.rows;
+    if (materials.length === 0) {
+      return res.status(400).json({ success: false, message: 'Chi nhánh chưa có định lượng (BOM). Hãy tải file định lượng ở mục Đồng Bộ trước.' });
+    }
 
-    // Lấy dữ liệu bán hàng 7 ngày gần nhất
+    const SALES_WINDOW_DAYS = 7;
     const salesRes = await client.query(`
-      SELECT b.material_id, SUM(b.quantity_per_dish * s.quantity_sold) as total_demand
+      SELECT b.material_id, SUM(b.quantity_per_dish * s.quantity_sold) AS total_demand
       FROM cukcuk_daily_sales s
       JOIN bill_of_materials b ON s.dish_id = b.dish_id AND s.branch_id = b.branch_id
-      WHERE s.branch_id = $1 AND s.sale_date >= CURRENT_DATE - INTERVAL '7 days'
+      WHERE s.branch_id = $1 AND s.sale_date >= CURRENT_DATE - INTERVAL '${SALES_WINDOW_DAYS} days'
       GROUP BY b.material_id
     `, [branchId]);
-
     const salesDemandMap = {};
-    salesRes.rows.forEach(r => {
-      salesDemandMap[r.material_id] = parseFloat(r.total_demand) || 0;
-    });
+    salesRes.rows.forEach(r => { salesDemandMap[r.material_id] = r.total_demand || 0; });
 
-    // Lấy tồn kho hiện tại
     const inventoryRes = await client.query(`
-      SELECT DISTINCT ON (material_id) material_id, closing_stock, period_date
+      SELECT DISTINCT ON (material_id) material_id, closing_stock
       FROM inventory_tracking WHERE branch_id = $1
       ORDER BY material_id, period_date DESC
     `, [branchId]);
-
     const inventoryMap = {};
-    inventoryRes.rows.forEach(r => {
-      inventoryMap[r.material_id] = {
-        current_stock: parseFloat(r.closing_stock) || 0,
-        period_date: r.period_date
-      };
-    });
+    inventoryRes.rows.forEach(r => { inventoryMap[r.material_id] = r.closing_stock || 0; });
 
-    // Tính kế hoạch mua
-    const forecastDays = cycleType === 'FRESH_3DAYS' ? 3 : 7;
     const planDetails = [];
-
     for (const material of materials) {
-      const currentStock = inventoryMap[material.material_id]?.current_stock || 0;
-      const avgDailySales = salesDemandMap[material.material_id] || 0;
-      const safetyStock = PurchasePlanService.calculateSafetyStock(avgDailySales, material.lead_time_days || 1);
-      const forecastedDemand = PurchasePlanService.calculateForecastedDemand(avgDailySales, forecastDays, material.waste_rate || 5);
-      const reorderPoint = PurchasePlanService.calculateReorderPoint(avgDailySales, material.lead_time_days || 1, safetyStock);
-      const suggestedQty = PurchasePlanService.calculatePurchaseQty(currentStock, forecastedDemand, reorderPoint, safetyStock);
+      const forecastDays = material.purchase_cycle === 'FRESH_3DAYS' ? 3 : 7;
+      const conv = material.conversion_rate > 0 ? material.conversion_rate : 1;
+      const leadTime = material.lead_time_days || 1;
+      const wasteRate = material.waste_rate || 0;
+      const unitCost = material.unit_cost || 0;
+
+      const currentStock = inventoryMap[material.material_id] || 0;
+      // Nhu cầu quy đổi từ đơn vị định lượng (gr/ml) sang đơn vị mua (kg/lít), bình quân theo ngày
+      const avgDailySales = (salesDemandMap[material.material_id] || 0) / conv / SALES_WINDOW_DAYS;
+      const safetyStock = PurchasePlanService.calculateSafetyStock(avgDailySales, leadTime);
+      const forecastedDemand = PurchasePlanService.calculateForecastedDemand(avgDailySales, forecastDays, wasteRate);
+      const reorderPoint = PurchasePlanService.calculateReorderPoint(avgDailySales, leadTime, safetyStock);
+      const suggestedQty = Math.max(0, Math.ceil(
+        PurchasePlanService.calculatePurchaseQty(currentStock, forecastedDemand, reorderPoint, safetyStock) * 100) / 100);
 
       planDetails.push({
         material_id: material.material_id,
         material_name: material.material_name,
         category: material.category,
+        purchase_cycle: material.purchase_cycle,
         unit_purchase: material.unit_purchase,
         opening_stock: Math.round(currentStock * 100) / 100,
-        avg_daily_sales: Math.round(avgDailySales * 100) / 100,
+        avg_daily_sales: Math.round(avgDailySales * 10000) / 10000,
         forecast_days: forecastDays,
-        forecasted_demand: Math.ceil(forecastedDemand),
-        safety_stock: Math.ceil(safetyStock),
-        reorder_point: Math.ceil(reorderPoint),
-        suggested_qty: Math.max(0, Math.ceil(suggestedQty)),
-        unit_cost: material.unit_cost || 0,
-        estimated_cost: Math.max(0, Math.ceil(suggestedQty)) * (material.unit_cost || 0),
+        forecasted_demand: Math.round(forecastedDemand * 100) / 100,
+        safety_stock: Math.round(safetyStock * 100) / 100,
+        reorder_point: Math.round(reorderPoint * 100) / 100,
+        suggested_qty: suggestedQty,
+        unit_cost: unitCost,
+        estimated_cost: Math.round(suggestedQty * unitCost),
         note: PurchasePlanService.generateNote(currentStock, avgDailySales, forecastDays, material.category)
       });
     }
 
-    // Lưu kế hoạch
+    await client.query('BEGIN');
     const planRes = await client.query(`
       INSERT INTO purchase_plans (branch_id, plan_name, cycle_type, start_date, end_date, status)
-      VALUES ($1, $2, $3, CURRENT_DATE, CURRENT_DATE + INTERVAL '7 days', 'DRAFT')
+      VALUES ($1, $2, 'ALL', CURRENT_DATE, CURRENT_DATE + INTERVAL '7 days', 'DRAFT')
       RETURNING plan_id
-    `, [branchId, `Kế hoạch ${cycleType} - ${new Date().toLocaleDateString('vi-VN')}`, cycleType]);
-
+    `, [branchId, `Kế hoạch mua ${new Date().toLocaleDateString('vi-VN')}`]);
     const planId = planRes.rows[0].plan_id;
 
-    // Lưu chi tiết kế hoạch
-    for (const detail of planDetails) {
+    for (const d of planDetails) {
       await client.query(`
         INSERT INTO purchase_plan_details
-        (plan_id, branch_id, material_id, material_name, category, unit_purchase,
+        (plan_id, branch_id, material_id, material_name, category, purchase_cycle, unit_purchase,
          opening_stock, avg_daily_sales, forecast_days, forecasted_demand,
          safety_stock, reorder_point, suggested_qty, unit_cost, estimated_cost, note, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'PENDING')
-      `, [
-        planId, branchId, detail.material_id, detail.material_name, detail.category, detail.unit_purchase,
-        detail.opening_stock, detail.avg_daily_sales, detail.forecast_days, detail.forecasted_demand,
-        detail.safety_stock, detail.reorder_point, detail.suggested_qty, detail.unit_cost,
-        detail.estimated_cost, detail.note
-      ]);
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'PENDING')
+      `, [planId, branchId, d.material_id, d.material_name, d.category, d.purchase_cycle, d.unit_purchase,
+        d.opening_stock, d.avg_daily_sales, d.forecast_days, d.forecasted_demand,
+        d.safety_stock, d.reorder_point, d.suggested_qty, d.unit_cost, d.estimated_cost, d.note]);
     }
-
-    const totalCost = planDetails.reduce((sum, d) => sum + d.estimated_cost, 0);
+    await client.query('COMMIT');
 
     return res.json({
       success: true,
       message: 'Tạo kế hoạch mua hàng thành công!',
       data: {
         plan_id: planId,
-        cycle_type: cycleType,
         total_items: planDetails.length,
-        total_cost: Math.round(totalCost * 100) / 100,
+        total_cost: planDetails.reduce((s, d) => s + d.estimated_cost, 0),
         details: planDetails
       }
     });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Purchase plan generation error:', error);
     return res.status(500).json({ success: false, message: error.message });
   } finally {
     client.release();
   }
 });
+
+// 7b. API Lưu số lượng thực mua đã chỉnh sửa
+app.post('/api/purchase-plans/:planId/adjust', async (req, res) => {
+  const { planId } = req.params;
+  const { adjustments } = req.body;
+  if (!adjustments || typeof adjustments !== 'object') {
+    return res.status(400).json({ success: false, message: 'Thiếu dữ liệu điều chỉnh' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const [materialId, qty] of Object.entries(adjustments)) {
+      const q = parseFloat(qty);
+      if (!Number.isFinite(q) || q < 0) continue;
+      await client.query(`
+        UPDATE purchase_plan_details
+        SET adjusted_qty = $1, estimated_cost = $1 * COALESCE(unit_cost, 0), status = 'ADJUSTED', updated_at = NOW()
+        WHERE plan_id = $2 AND material_id = $3
+      `, [q, planId, materialId]);
+    }
+    await client.query("UPDATE purchase_plans SET status = 'SAVED' WHERE plan_id = $1", [planId]);
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã lưu kế hoạch mua hàng!' });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 
 // 8. API Lấy kế hoạch mua hàng
 app.get('/api/purchase-plans/:branchId', async (req, res) => {

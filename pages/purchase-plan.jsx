@@ -14,6 +14,19 @@ export default function PurchasePlanMisaUI() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [adjustments, setAdjustments] = useState({});
+  const [planId, setPlanId] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const CATEGORY_LABELS = {
+    FRESH_MEAT: 'Thịt tươi', SEAFOOD: 'Hải sản', VEGETABLE: 'Rau củ quả', HERB_SEASONING: 'Thảo mộc',
+    SPICE_DRY: 'Gia vị khô', DRY_GOODS: 'Hàng khô', FROZEN: 'Đông lạnh', SAUCE_CONDIMENT: 'Sốt & condiment'
+  };
+
+  const initialAdjustments = (details) => {
+    const adj = {};
+    (details || []).forEach(d => { if (d.adjusted_qty !== null && d.adjusted_qty !== undefined) adj[d.material_id] = d.adjusted_qty; });
+    return adj;
+  };
 
   useEffect(() => {
     if (!branch) return;
@@ -38,7 +51,8 @@ export default function PurchasePlanMisaUI() {
       const data = await res.json();
       if (data.success && data.data.length > 0) {
         setPlanData(data.data[0].details || []);
-        setAdjustments({});
+        setPlanId(data.data[0].plan_id);
+        setAdjustments(initialAdjustments(data.data[0].details));
       }
     } catch (error) {
       console.error('Error fetching purchase plan:', error);
@@ -59,6 +73,7 @@ export default function PurchasePlanMisaUI() {
       const data = await res.json();
       if (data.success) {
         setPlanData(data.data.details || []);
+        setPlanId(data.data.plan_id);
         setAdjustments({});
         alert('✅ Đã tạo kế hoạch mua hàng!');
       } else {
@@ -71,12 +86,30 @@ export default function PurchasePlanMisaUI() {
     }
   };
 
+  const savePlan = async () => {
+    if (!planId) { alert('Chưa có kế hoạch để lưu. Hãy tạo kế hoạch trước.'); return; }
+    try {
+      setSaving(true);
+      const res = await fetch('/api/purchase-plans/' + planId + '/adjust', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adjustments })
+      });
+      const data = await res.json();
+      alert(data.success ? '✅ ' + data.message : '❌ Lỗi: ' + data.message);
+    } catch (error) {
+      alert('❌ Lỗi: ' + error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const filteredData = useMemo(() => {
     return planData.filter(item => {
-      const matchCycle = item.purchase_cycle === cycleType || item.purchase_cycle === cycleType.replace('FRESH_', 'MEAT_').replace('WEEKLY_', 'DRY_');
+      const matchCycle = item.purchase_cycle === cycleType;
       const matchGroup = selectedGroup === 'ALL' || item.category === selectedGroup;
       const matchSearch = item.material_name.toLowerCase().includes(searchTerm.toLowerCase()) || item.material_id.toLowerCase().includes(searchTerm.toLowerCase());
-      return matchGroup && matchSearch;
+      return matchCycle && matchGroup && matchSearch;
     });
   }, [planData, cycleType, selectedGroup, searchTerm]);
 
@@ -126,7 +159,7 @@ export default function PurchasePlanMisaUI() {
             >
               {generating ? '⏳ Đang tính...' : '🔄 Tạo Kế Hoạch'}
             </button>
-            <button className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold">💾 Lưu Kế Hoạch</button>
+            <button onClick={savePlan} disabled={saving} className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold disabled:opacity-50">{saving ? '⏳ Đang lưu...' : '💾 Lưu Kế Hoạch'}</button>
           </div>
         </header>
 
@@ -135,7 +168,13 @@ export default function PurchasePlanMisaUI() {
             <button onClick={() => setCycleType('FRESH_3DAYS')} className={`px-4 py-2 font-bold border-b-2 ${cycleType === 'FRESH_3DAYS' ? 'border-blue-600 text-blue-600' : 'text-gray-500'}`}>🔴 ĐỒ TƯƠI (3 Ngày)</button>
             <button onClick={() => setCycleType('WEEKLY_7DAYS')} className={`px-4 py-2 font-bold border-b-2 ${cycleType === 'WEEKLY_7DAYS' ? 'border-blue-600 text-blue-600' : 'text-gray-500'}`}>🔵 ĐỒ KHÔ (7 Ngày)</button>
           </div>
+          <div className="flex gap-2 items-center">
+          <select value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)} className="border p-1.5 rounded">
+            <option value="ALL">Tất cả nhóm hàng</option>
+            {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
           <input type="text" placeholder="Tìm NVL..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="border p-1.5 rounded w-60" />
+          </div>
         </div>
 
         {loading ? (
@@ -159,6 +198,7 @@ export default function PurchasePlanMisaUI() {
                 <tr className="bg-gray-100 border-b font-bold uppercase text-gray-700">
                   <th className="p-2 border-r">Mã NVL</th>
                   <th className="p-2 border-r">Tên Nguyên Vật Liệu</th>
+                  <th className="p-2 border-r">Nhóm</th>
                   <th className="p-2 border-r text-center">ĐVT</th>
                   <th className="p-2 border-r text-right">Tồn</th>
                   <th className="p-2 border-r text-right">Đề Xuất</th>
@@ -175,9 +215,10 @@ export default function PurchasePlanMisaUI() {
                     <tr key={row.material_id} className="border-b hover:bg-blue-50">
                       <td className="p-2 border-r font-mono text-blue-700 text-xs">{row.material_id}</td>
                       <td className="p-2 border-r font-medium">{row.material_name}</td>
+                      <td className="p-2 border-r">{CATEGORY_LABELS[row.category] || row.category}</td>
                       <td className="p-2 border-r text-center">{row.unit_purchase}</td>
-                      <td className="p-2 border-r text-right">{row.opening_stock?.toFixed(2)}</td>
-                      <td className="p-2 border-r text-right font-bold text-yellow-800">{row.suggested_qty?.toFixed(2)}</td>
+                      <td className="p-2 border-r text-right">{Number(row.opening_stock || 0).toFixed(2)}</td>
+                      <td className="p-2 border-r text-right font-bold text-yellow-800">{Number(row.suggested_qty || 0).toFixed(2)}</td>
                       <td className="p-1 border-r bg-green-50">
                         <input
                           type="number"
@@ -195,7 +236,7 @@ export default function PurchasePlanMisaUI() {
               </tbody>
               <tfoot>
                 <tr className="bg-gray-100 font-bold border-t-2">
-                  <td colSpan="7" className="p-2 text-right">Tổng Cộng:</td>
+                  <td colSpan="8" className="p-2 text-right">Tổng Cộng:</td>
                   <td className="p-2 border-l text-right">{actualTotal.toLocaleString('vi-VN')} ₫</td>
                 </tr>
               </tfoot>

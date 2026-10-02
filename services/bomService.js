@@ -1,8 +1,9 @@
 const XLSX = require('xlsx');
+const { MATERIAL_CATEGORIES, classifyMaterial } = require('./materialClassificationService');
 
 function normalizeString(str) {
   if (!str) return '';
-  return str
+  return String(str)
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -10,83 +11,201 @@ function normalizeString(str) {
     .replace(/[^a-z0-9]/g, '');
 }
 
-function autoDetectCategory(materialCode, materialName) {
-  const code = (materialCode || '').toUpperCase();
-  const name = (materialName || '').toLowerCase();
-
-  if (code.startsWith('RC') || /rau|củ|cà|hành|tỏi|ớt|ngò|nấm|măng|bí|dưa|lolo|bắp|tắc|gừng|sả|riềng/.test(name)) {
-    return { group: 'VEGETABLE', cycle: 'FRESH_3DAYS' };
-  }
-  if (/thịt|bò|ba rọi|heo|lợn|gà|vịt|sườn|bacon|xá xíu|phèo|gân|dồi|pate/.test(name)) {
-    return { group: 'MEAT', cycle: 'FRESH_3DAYS' };
-  }
-  if (/cá|tôm|mực|cua|ghẹ|hàu|cò|sò|lươn|sứa|ốc|caviar|mentaiko/.test(name)) {
-    return { group: 'SEAFOOD', cycle: 'FRESH_3DAYS' };
-  }
-  if (code.startsWith('GBB') || /sốt|sauce|bột|dầu|mắm|đường|muối|tiêu|rượu|mè|phô mai|bơ|mirin|sake|kem/.test(name)) {
-    return { group: 'DRY_SPICE', cycle: 'WEEKLY_7DAYS' };
-  }
-
-  return { group: 'DRY_SPICE', cycle: 'WEEKLY_7DAYS' };
+// Hiểu số kiểu Việt Nam: "40,00" -> 40 ; "4.532" -> 4532 ; "12.859,60" -> 12859.6
+function parseNumber(v) {
+  if (typeof v === 'number') return v;
+  if (v === null || v === undefined) return 0;
+  let s = String(v).trim().replace(/\s/g, '');
+  if (!s) return 0;
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+  const n = parseFloat(s.replace(/[^0-9.\-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
 }
 
-async function parseAndSaveBOM(fileBuffer, branchId, db) {
+function parseCsvText(text) {
+  const clean = text.replace(/^﻿/, '');
+  const lines = clean.split(/\r?\n/);
+  const sample = lines.slice(0, 10).join('\n');
+  const delim = (sample.match(/;/g) || []).length >= (sample.match(/,/g) || []).length ? ';' : ',';
+  return lines.map(line => {
+    const cells = [];
+    let cur = '';
+    let inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuote && line[i + 1] === '"') { cur += '"'; i++; } else inQuote = !inQuote;
+      } else if (ch === delim && !inQuote) {
+        cells.push(cur); cur = '';
+      } else cur += ch;
+    }
+    cells.push(cur);
+    return cells;
+  });
+}
+
+function loadRows(fileBuffer, filename) {
+  if (/\.csv$/i.test(filename || '')) {
+    return parseCsvText(fileBuffer.toString('utf8'));
+  }
   const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
-  const sheetName = workbook.SheetNames[0];
-  const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { range: 2 });
+  for (const name of workbook.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', raw: true });
+    if (rows.some(r => r.some(c => normalizeString(c) === 'mamon'))) return rows;
+  }
+  return [];
+}
 
+// Từ khóa (có dấu) theo thứ tự ưu tiên: gia vị/sốt đứng trước để "Bột ớt", "Sốt cà chua" không bị xếp vào rau.
+const NAME_RULES = [
+  ['FROZEN', ['đông lạnh', 'frozen']],
+  ['SPICE_DRY', ['bột', 'tiêu', 'muối', 'đường', 'nanami', 'mù tạt', 'wasabi', 'gia vị', 'hạt nêm', 'bột ngọt', 'mì chính']],
+  ['SAUCE_CONDIMENT', ['sốt', 'tương', 'mayo', 'nước chấm', 'giấm', 'mirin', 'sake', 'nước mắm', 'dầu hào', 'tương ớt', 'ketchup']],
+  ['DRY_GOODS', ['dầu ăn', 'dầu', 'khô', 'gạo', 'mì', 'bún', 'miến', 'rượu', 'bia', 'nước ngọt', 'trà', 'cà phê']],
+  ['VEGETABLE', ['nấm']],
+  ['SEAFOOD', ['cá', 'tôm', 'mực', 'cua', 'ghẹ', 'hàu', 'sò', 'nghêu', 'ốc', 'lươn', 'sứa', 'bạch tuộc', 'ebiko', 'mentaiko', 'caviar', 'surimi', 'chả cá', 'kani', 'hải sản', 'tép']],
+  ['FRESH_MEAT', ['thịt', 'bò', 'heo', 'lợn', 'gà', 'vịt', 'sườn', 'ba rọi', 'ba chỉ', 'bacon', 'xúc xích', 'nạm', 'gân', 'lưỡi', 'dồi', 'phèo', 'pate', 'xá xíu', 'jambon', 'giò', 'trứng']],
+  ['HERB_SEASONING', ['ngò', 'tía tô', 'húng', 'thơm', 'rau mùi', 'hành lá', 'kinh giới', 'diếp cá', 'lá chanh', 'lá lốt', 'lá cà ri', 'rau răm', 'lá nguyệt quế']],
+  ['VEGETABLE', ['rau', 'cải', 'cà chua', 'cà rốt', 'cà tím', 'cà pháo', 'cà', 'khoai', 'nấm', 'hành', 'tỏi', 'ớt', 'măng', 'bắp', 'dưa', 'bí', 'su', 'xà lách', 'gừng', 'sả', 'tắc', 'chanh', 'giá', 'đậu', 'củ', 'bầu', 'mướp', 'hẹ', 'tây', 'quả', 'trái', 'khế', 'me', 'chuối', 'xoài', 'dứa', 'cam', 'táo']]
+];
+
+function categorize(code, name) {
+  const upper = String(code || '').toUpperCase();
+  const text = ' ' + String(name || '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() + ' ';
+  const matchRule = () => {
+    for (const [key, words] of NAME_RULES) {
+      if (words.some(w => text.includes(' ' + w + ' '))) return key;
+    }
+    return null;
+  };
+  const byName = matchRule();
+  let key;
+  if (upper.startsWith('TH')) key = 'FRESH_MEAT';
+  else if (upper.startsWith('HS')) key = 'SEAFOOD';
+  else if (upper.startsWith('RC')) key = byName === 'HERB_SEASONING' ? 'HERB_SEASONING' : 'VEGETABLE';
+  else if (upper.startsWith('GBB')) {
+    key = ['SPICE_DRY', 'SAUCE_CONDIMENT', 'FROZEN'].includes(byName) ? byName : 'DRY_GOODS';
+  } else key = byName || classifyMaterial(name).code;
+  return MATERIAL_CATEGORIES[key];
+}
+
+function autoDetectCategory(materialCode, materialName) {
+  const c = categorize(materialCode, materialName);
+  return { group: c.code, cycle: c.purchase_cycle };
+}
+
+async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
+  const rows = loadRows(fileBuffer, filename);
+  const headerIdx = rows.findIndex(r => r.some(c => normalizeString(c) === 'mamon'));
+  if (headerIdx === -1) {
+    throw new Error('Không tìm thấy dòng tiêu đề "Mã món (*)". Hãy tải đúng file định lượng (khuyến nghị dùng file .xlsx gốc).');
+  }
+
+  const header = rows[headerIdx].map(normalizeString);
+  const find = (pred, from = 0) => { for (let i = from; i < header.length; i++) if (pred(header[i])) return i; return -1; };
+  const col = {
+    type: find(h => h.startsWith('loai')),
+    dishCode: find(h => h === 'mamon'),
+    dishName: find(h => h === 'tenmon'),
+    dishUnit: find(h => h === 'donvitinh'),
+    price: find(h => h === 'giaban'),
+    matCode: find(h => h === 'manvl'),
+    matName: find(h => h === 'tennvl'),
+    qty: find(h => h.startsWith('soluong')),
+    unitPrice: find(h => h.startsWith('dongia'))
+  };
+  col.matUnit = col.dishUnit >= 0 ? find(h => h === 'donvitinh', col.dishUnit + 1) : -1;
+  const missing = Object.entries(col).filter(([k, v]) => v === -1 && k !== 'unitPrice' && k !== 'price').map(([k]) => k);
+  if (missing.length) throw new Error('File thiếu cột bắt buộc: ' + missing.join(', '));
+
+  await db.query('DELETE FROM bill_of_materials WHERE branch_id = $1', [branchId]);
+
+  const summary = { totalDishes: 0, totalMaterials: 0, newMaterialsCreated: 0, byCategory: {} };
+  const knownMaterials = new Map();
+  const bomRows = [];
   let currentDish = null;
-  let summary = { totalDishes: 0, totalMaterials: 0, newMaterialsCreated: 0 };
 
-  for (const row of sheetData) {
-    const dishType = row['Loại (*)'];
-    const dishCode = row['Mã món (*)'];
-    const dishName = row['Tên món (*)'];
-    const dishPrice = row['Giá bán (*)'] ? parseFloat(String(row['Giá bán (*)']).replace(/[^0-9]/g, '')) : 0;
-    const dishUnit = row['Đơn vị tính (*)'];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const cell = (idx) => (idx >= 0 && row[idx] !== undefined && row[idx] !== null ? row[idx] : '');
+    const dishType = String(cell(col.type)).trim();
+    const dishCode = String(cell(col.dishCode)).trim();
 
-    if (dishType === 'Món ăn' || dishCode) {
-      currentDish = { dish_id: dishCode, dish_name: dishName, dish_price: dishPrice, dish_unit: dishUnit };
+    if (dishType && dishCode && !dishCode.startsWith('#')) {
+      currentDish = {
+        id: dishCode,
+        name: String(cell(col.dishName)).trim() || dishCode,
+        unit: String(cell(col.dishUnit)).trim() || 'Phần',
+        price: parseNumber(cell(col.price))
+      };
       summary.totalDishes++;
     }
 
-    const matName = row['Tên NVL'];
-    let matCode = row['Mã NVL'];
-    const recipeUnit = row['Đơn vị tính'] || 'gr';
-    const quantity = parseFloat(row['Số lượng']) || 0;
+    const matName = String(cell(col.matName)).trim();
+    const quantity = parseNumber(cell(col.qty));
+    if (!currentDish || !matName || quantity <= 0) continue;
 
-    if (currentDish && matName && quantity > 0) {
-      const normName = normalizeString(matName);
-      if (!matCode) matCode = 'RAW_' + normName.substring(0, 15).toUpperCase();
+    const normName = normalizeString(matName);
+    let matCode = String(cell(col.matCode)).trim();
+    if (!matCode || matCode.startsWith('#')) matCode = 'RAW_' + normName.substring(0, 20).toUpperCase();
+    matCode = matCode.substring(0, 50);
 
-      let existingMat = await db.query('SELECT * FROM raw_materials WHERE material_id = $1 OR normalized_name = $2', [matCode, normName]);
-      let finalMatId = matCode;
+    if (!knownMaterials.has(matCode)) {
+      const recipeUnit = String(cell(col.matUnit)).trim() || 'gr';
+      const lowerUnit = recipeUnit.toLowerCase();
+      const isWeight = ['gr', 'g', 'gram', 'gam'].includes(lowerUnit);
+      const isVolume = ['ml', 'mililit'].includes(lowerUnit);
+      const purchaseUnit = isWeight ? 'kg' : (isVolume ? 'lít' : recipeUnit);
+      const conversionRate = (isWeight || isVolume) ? 1000 : 1;
+      const cat = categorize(matCode, matName);
+      const unitCost = Math.round(parseNumber(cell(col.unitPrice)) * conversionRate);
+      const leadTime = cat.purchase_cycle === 'FRESH_3DAYS' ? 1 : 3;
 
-      if (existingMat.rows.length === 0) {
-        const detected = autoDetectCategory(matCode, matName);
-        const purchaseUnit = (recipeUnit === 'gr' ? 'kg' : (recipeUnit === 'ml' ? 'lít' : recipeUnit));
-        const conversionRate = (recipeUnit === 'gr' || recipeUnit === 'ml') ? 1000 : 1;
+      const res = await db.query(`
+        INSERT INTO raw_materials
+          (material_id, material_name, normalized_name, category, category_group, purchase_cycle,
+           unit_recipe, unit_purchase, conversion_rate, unit_cost, lead_time_days, waste_rate,
+           shelf_life_days, is_auto_created, is_active)
+        VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,TRUE,TRUE)
+        ON CONFLICT (material_id) DO UPDATE SET
+          unit_cost = CASE WHEN EXCLUDED.unit_cost > 0 THEN EXCLUDED.unit_cost ELSE raw_materials.unit_cost END,
+          updated_at = NOW()
+        RETURNING (xmax = 0) AS inserted
+      `, [matCode, matName.substring(0, 255), normName.substring(0, 255), cat.code, cat.purchase_cycle,
+        recipeUnit.substring(0, 20), purchaseUnit.substring(0, 20), conversionRate, unitCost, leadTime,
+        cat.waste_percentage, cat.shelf_life_days]);
 
-        await db.query(`
-          INSERT INTO raw_materials (material_id, material_name, normalized_name, category_group, purchase_cycle, unit_recipe, unit_purchase, conversion_rate, is_auto_created)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
-        `, [matCode, matName, normName, detected.group, detected.cycle, recipeUnit, purchaseUnit, conversionRate]);
-
+      knownMaterials.set(matCode, cat.code);
+      if (res.rows[0].inserted) {
         summary.newMaterialsCreated++;
-      } else {
-        finalMatId = existingMat.rows[0].material_id;
+        summary.byCategory[cat.code] = (summary.byCategory[cat.code] || 0) + 1;
       }
-
-      await db.query(`
-        INSERT INTO bill_of_materials (branch_id, dish_id, dish_name, dish_unit, dish_price, material_id, quantity_per_dish)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-      `, [branchId, currentDish.dish_id, currentDish.dish_name, currentDish.dish_unit, currentDish.dish_price, finalMatId, quantity]);
-
-      summary.totalMaterials++;
     }
+
+    bomRows.push([branchId, currentDish.id, currentDish.name.substring(0, 255), currentDish.unit.substring(0, 20),
+      currentDish.price, matCode, quantity]);
+    summary.totalMaterials++;
   }
 
+  const CHUNK = 500;
+  for (let i = 0; i < bomRows.length; i += CHUNK) {
+    const chunk = bomRows.slice(i, i + CHUNK);
+    const params = [];
+    const values = chunk.map((r, k) => {
+      params.push(...r);
+      const o = k * 7;
+      return `($${o + 1},$${o + 2},$${o + 3},$${o + 4},$${o + 5},$${o + 6},$${o + 7})`;
+    });
+    await db.query(`
+      INSERT INTO bill_of_materials (branch_id, dish_id, dish_name, dish_unit, dish_price, material_id, quantity_per_dish)
+      VALUES ${values.join(',')}
+    `, params);
+  }
+
+  summary.totalMaterialRows = summary.totalMaterials;
+  summary.uniqueMaterials = knownMaterials.size;
   return summary;
 }
 
-module.exports = { parseAndSaveBOM, autoDetectCategory, normalizeString };
+module.exports = { parseAndSaveBOM, autoDetectCategory, normalizeString, parseNumber };

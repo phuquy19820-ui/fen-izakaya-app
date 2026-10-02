@@ -96,7 +96,7 @@ export default function SyncCukcuk() {
       const data = await res.json();
       setBomResult(data);
       if (data.success) {
-        alert(`✅ Tải định lượng thành công!\n- Món ăn: ${data.data.totalDishes}\n- NVL: ${data.data.totalMaterials}\n- NVL mới: ${data.data.newMaterialsCreated}`);
+        alert(`✅ Tải định lượng thành công!\n- Món ăn: ${data.data.totalDishes}\n- Dòng định lượng: ${data.data.totalMaterials}\n- NVL khác nhau: ${data.data.uniqueMaterials}`);
       } else {
         alert('❌ Lỗi: ' + data.message);
       }
@@ -155,7 +155,7 @@ export default function SyncCukcuk() {
                 <label htmlFor="bomFile" className="cursor-pointer block">
                   <p className="text-3xl mb-2">📊</p>
                   <p className="font-bold text-gray-800 mb-1">Click để chọn file hoặc kéo thả</p>
-                  <p className="text-sm text-gray-600">Hỗ trợ .xlsx, .xls, .csv (tối đa 50MB)</p>
+                  <p className="text-sm text-gray-600">Khuyến nghị file .xlsx gốc (CSV có thể mất dấu tiếng Việt). Tối đa 50MB</p>
                 </label>
               </div>
               {bomUploading && <p className="text-center mt-4 text-blue-600">⏳ Đang tải...</p>}
@@ -165,8 +165,11 @@ export default function SyncCukcuk() {
                   {bomResult.data && (
                     <ul className="text-sm mt-2">
                       <li>- Món ăn: {bomResult.data.totalDishes}</li>
-                      <li>- NVL: {bomResult.data.totalMaterials}</li>
-                      <li>- NVL mới: {bomResult.data.newMaterialsCreated}</li>
+                      <li>- Dòng định lượng: {bomResult.data.totalMaterials}</li>
+                      <li>- NVL khác nhau: {bomResult.data.uniqueMaterials} (mới: {bomResult.data.newMaterialsCreated})</li>
+                      {bomResult.data.byCategory && Object.entries(bomResult.data.byCategory).map(([k, v]) => (
+                        <li key={k} className="ml-4">• {k}: {v}</li>
+                      ))}
                     </ul>
                   )}
                 </div>
