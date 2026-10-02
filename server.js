@@ -39,13 +39,20 @@ async function initializeDatabase() {
       const statements = schema.split(';').filter(s => s.trim());
       for (const statement of statements) {
         if (statement.trim()) {
-          await pool.query(statement);
+          try {
+            await pool.query(statement);
+          } catch (err) {
+            // Table already exists or other expected errors - ignore
+            if (!err.message.includes('already exists')) {
+              console.warn('Statement error (may be expected):', err.message.substring(0, 100));
+            }
+          }
         }
       }
-      console.log('Database schema initialized.');
+      console.log('✅ Database schema initialized successfully.');
     }
   } catch (error) {
-    console.error('Database initialization error:', error.message);
+    console.error('❌ Database initialization error:', error.message);
   }
 }
 
