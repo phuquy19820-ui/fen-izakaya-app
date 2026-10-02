@@ -1,0 +1,23 @@
+{
+  "services": [
+    {
+      "key": "web",
+      "name": "fen-izakaya-app",
+      "plan": "free",
+      "runtime": "node",
+      "buildCommand": "npm install && npm run build",
+      "startCommand": "npm start",
+      "envVars": [
+        {
+          "key": "NODE_ENV",
+          "value": "production"
+        },
+        {
+          "key": "PORT",
+          "value": "5000"
+        }
+      ],
+      "regions": ["singapore"]
+    }
+  ]
+}

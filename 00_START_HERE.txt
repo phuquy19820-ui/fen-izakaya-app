@@ -1,0 +1,194 @@
+================================================================================
+  FEN IZAKAYA - WEB APP LẬP KẾ HOẠCH MUA NVL TỰ ĐỘNG
+================================================================================
+
+📦 BỘ MÃ NGUỒN HOÀN CHỈNH ĐÃ ĐƯỢC TẠO TẠI:
+   D:\Phần mềm mua hàng\
+
+================================================================================
+📚 ĐỌC FILE NÀY TRƯỚC TIÊN
+================================================================================
+
+1️⃣  QUICK_START.md          ← Bắt đầu nhanh (5 phút)
+    - Cài npm dependencies
+    - Setup database
+    - Chạy server
+
+2️⃣  INSTALL.md              ← Hướng dẫn chi tiết từng bước
+    - Cài PostgreSQL
+    - Tạo database
+    - Cấu hình .env
+    - Test API
+
+3️⃣  README.md               ← Tổng quan dự án
+    - Mô tả chức năng
+    - Cấu trúc thư mục
+    - Công thức tính toán
+
+4️⃣  API.md                  ← Tài liệu API chi tiết
+    - 4 endpoints chính
+    - Request/Response examples
+    - Parameters & data types
+
+5️⃣  STRUCTURE.md            ← Cấu trúc code & database
+    - Luồng dữ liệu
+    - Quy trình sử dụng
+    - Danh sách bảng database
+
+================================================================================
+📋 DANH SÁCH TẤT CẢ FILE ĐÃ TẠO (13 Files)
+================================================================================
+
+🔧 Core Files:
+   ✓ package.json                    - Dependencies & Scripts
+   ✓ server.js                       - Backend Express Server
+   ✓ schema.sql                      - Database Schema (PostgreSQL)
+   ✓ seed.sql                        - Sample Data
+   ✓ .env.example                    - Biến môi trường mẫu
+   ✓ next.config.js                  - Cấu hình Next.js
+   ✓ .gitignore                      - Git ignore rules
+
+📂 Services (Tầng logic):
+   ✓ services/bomService.js          - Parse & Upload BOM Excel
+   ✓ services/cukcukService.js       - Tích hợp CUKCUK API
+   ✓ services/purchasePlanService.js - Tính toán kế hoạch mua
+
+📱 Frontend:
+   ✓ pages/_app.jsx                  - Next.js App Wrapper
+   ✓ pages/purchase-plan.jsx         - Giao diện lập kế hoạch
+
+📖 Documentation (5 files):
+   ✓ 00_START_HERE.txt               - File này
+   ✓ QUICK_START.md                  - Bắt đầu nhanh
+   ✓ INSTALL.md                      - Hướng dẫn chi tiết
+   ✓ README.md                       - Tổng quan dự án
+   ✓ API.md                          - Tài liệu API
+   ✓ STRUCTURE.md                    - Cấu trúc code
+
+================================================================================
+🚀 CHẠY TRONG 5 PHÚT
+================================================================================
+
+Terminal 1 (Backend):
+  ───────────────────────────────────────────────
+  cd "D:\Phần mềm mua hàng"
+  npm install
+  copy .env.example .env
+  [Sửa .env - cập nhật DATABASE_URL]
+  npm run dev
+  ───────────────────────────────────────────────
+  → [Server Running] Port 5000
+
+Terminal 2 (Frontend):
+  ───────────────────────────────────────────────
+  cd "D:\Phần mềm mua hàng"
+  npm run dev
+  ───────────────────────────────────────────────
+  → http://localhost:3000/purchase-plan
+
+Database Setup (PowerShell):
+  ───────────────────────────────────────────────
+  psql -U postgres -c "CREATE DATABASE fen_izakaya_db ENCODING 'UTF8';"
+  psql -U postgres -d fen_izakaya_db -f schema.sql
+  psql -U postgres -d fen_izakaya_db -f seed.sql  [Optional: Sample Data]
+  ───────────────────────────────────────────────
+
+================================================================================
+📡 4 API CHÍNH (Chi Tiết ở API.md)
+================================================================================
+
+1. POST /api/branches/create
+   → Tạo chi nhánh mới
+
+2. POST /api/bom/upload
+   → Upload file BOM Excel (định lượng món ăn)
+
+3. POST /api/cukcuk/sync
+   → Đồng bộ dữ liệu bán hàng & tồn kho từ CUKCUK
+
+4. POST /api/purchase-plans/generate
+   → Tạo kế hoạch mua hàng (tự động tính toán)
+
+================================================================================
+💡 WORKFLOW (QUY TRÌNH SỬ DỤNG)
+================================================================================
+
+Step 1: Tạo Chi Nhánh
+  └─→ API: POST /api/branches/create
+
+Step 2: Upload BOM (Định Lượng Món Ăn)
+  └─→ API: POST /api/bom/upload
+  └─→ File Excel: [Mã Món] [Tên Món] [Giá] [NVL] [Số Lượng]
+
+Step 3: Đồng Bộ CUKCUK (Tuỳ Chọn)
+  └─→ API: POST /api/cukcuk/sync
+  └─→ Lấy: Bán Hàng (7 Ngày) + Tồn Kho
+
+Step 4: Tạo Kế Hoạch Mua Hàng
+  └─→ API: POST /api/purchase-plans/generate
+  └─→ Tự động tính: Nhu Cầu + Hao Hụt + An Toàn - Tồn Hiện = Số Mua
+
+Step 5: Xem & Sửa Kế Hoạch (Frontend)
+  └─→ Browser: http://localhost:3000/purchase-plan
+  └─→ Sửa số mua → Lưu
+
+Step 6: Xuất & Gửi Nhà Cung Cấp
+  └─→ Export PDF/Excel
+  └─→ Gửi nhà cung cấp
+
+================================================================================
+🗄️ DATABASE (8 Bảng)
+================================================================================
+
+branches                    - Danh mục chi nhánh
+raw_materials              - Master nguyên vật liệu
+material_aliases           - Mã ánh xạ (Fuzzy matching)
+bill_of_materials          - Định lượng món ăn
+cukcuk_daily_sales         - Bán hàng hàng ngày
+inventory_tracking         - Tồn kho hàng ngày
+purchase_plans             - Header kế hoạch mua
+purchase_plan_details      - Chi tiết từng NVL
+
+================================================================================
+🔧 YÊU CẦU HỆ THỐNG
+================================================================================
+
+✓ Node.js v14+ (khuyến nghị v16+)
+✓ npm v6+
+✓ PostgreSQL v12+
+✓ Windows 10+ / Linux / Mac
+
+================================================================================
+🎯 NHÓM HÀNG & CHU KỲ MUA (AUTO-DETECT)
+================================================================================
+
+Nhóm         | Mã     | Chu Kỳ      | Ví Dụ
+─────────────────────────────────────────────────────
+Rau Củ      | RC     | 3 Ngày      | Hành lá, Gừng
+Thịt        | TH     | 3 Ngày      | Thịt Bò, Gà
+Hải Sản     | HS     | 3 Ngày      | Tôm, Cá
+Gia Vị Khô  | GBB    | 7 Ngày      | Bột Ớt, Mirin
+
+================================================================================
+📞 LIÊN HỆ & HỖ TRỢ
+================================================================================
+
+Email: phuquy19820@gmail.com
+
+================================================================================
+✅ DANH SÁCH KIỂM TRA (Before Starting)
+================================================================================
+
+□ Node.js & npm đã cài
+□ PostgreSQL đã cài & chạy
+□ Database "fen_izakaya_db" đã tạo
+□ File .env đã tạo & cấu hình DATABASE_URL
+□ npm install chạy xong
+□ server.js chạy tại port 5000
+□ Frontend chạy tại port 3000
+
+================================================================================
+
+👉 TIẾP THEO: Mở file QUICK_START.md để bắt đầu trong 5 phút!
+
+================================================================================
