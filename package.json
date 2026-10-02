@@ -4,9 +4,12 @@
   "description": "Web App Lập kế hoạch mua NVL tự động từ CUKCUK & BOM",
   "main": "server.js",
   "scripts": {
-    "build": "next build",
+    "dev": "node server.js",
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "build": "next build",
+    "init-db": "node init-db.js",
+    "lint": "eslint .",
+    "test": "jest"
   },
   "dependencies": {
     "axios": "^1.6.0",
@@ -19,5 +22,12 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
   }
 }
