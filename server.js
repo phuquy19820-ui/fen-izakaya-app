@@ -414,17 +414,36 @@ app.all('*', (req, res) => {
   return handle(req, res);
 });
 
-nextApp.prepare().then(() => {
-  initializeDatabase().then(() => {
+// Start server with async/await
+(async () => {
+  try {
+    // Test database connection
+    console.log('🔄 Testing database connection...');
+    console.log(`📍 DATABASE_URL: ${process.env.DATABASE_URL ? 'configured' : 'missing'}`);
+    const result = await pool.query('SELECT 1');
+    console.log('✅ Database connected successfully:', result.rows);
+
+    // Initialize database
+    console.log('🔄 Initializing database schema...');
+    await initializeDatabase();
+    console.log('✅ Database schema initialized');
+
+    // Prepare Next.js
+    console.log('🔄 Preparing Next.js...');
+    await nextApp.prepare();
+    console.log('✅ Next.js prepared');
+
+    // Start listening
     app.listen(port, () => {
       console.log(`✅ [Server Running] Port ${port}`);
       console.log(`📊 Fen Izakaya Purchase Planning App`);
       console.log(`🌐 http://localhost:${port}`);
     });
-  });
-}).catch(err => {
-  console.error('❌ Failed to start server:', err);
-  process.exit(1);
-});
+  } catch (err) {
+    console.error('❌ Failed to start server:', err.message);
+    console.error('❌ Full error:', err);
+    process.exit(1);
+  }
+})();
 
 module.exports = app;
