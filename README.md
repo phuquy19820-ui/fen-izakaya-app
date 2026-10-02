@@ -1,35 +1,55 @@
-# Fen Izakaya - Web App Lập Kế Hoạch Mua NVL
+# 🍽️ Fen Izakaya - Hệ Thống Quản Lý Kế Hoạch Mua NVL
+
+![Status](https://img.shields.io/badge/status-completed-brightgreen)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ## 📋 Mô Tả Dự Án
 
-Web App tự động hóa lập kế hoạch mua **Nguyên Vật Liệu (NVL)** cho chuỗi nhà hàng Fen Izakaya (đa chi nhánh), tích hợp với hệ thống CUKCUK để:
+**Ứng dụng web tự động hóa lập kế hoạch mua Nguyên Vật Liệu (NVL)** cho chuỗi nhà hàng Fen Izakaya (đa chi nhánh), tích hợp với hệ thống CUKCUK.
 
-- ✅ Tải định lượng món ăn (BOM) từ file Excel
-- ✅ Đồng bộ dữ liệu bán hàng & tồn kho từ CUKCUK
-- ✅ Tính toán tự động kế hoạch mua hàng theo chu kỳ (tươi sống 3 ngày / khô gia vị 7 ngày)
-- ✅ Gợi ý số lượng mua dựa trên nhu cầu & lịch sử bán hàng
-- ✅ Cho phép điều chỉnh thủ công & lưu kế hoạch
+### ✨ Tính Năng Chính
+
+- ✅ **Quản lý đa chi nhánh** - Dữ liệu độc lập theo chi nhánh
+- ✅ **Phân loại NVL tự động** - 8 loại theo chuẩn quốc tế (FAO)
+- ✅ **Tải BOM từ Excel** - Upload & parse tự động công thức & định lượng
+- ✅ **Tích hợp CUKCUK** - Đồng bộ dữ liệu bán hàng & tồn kho
+- ✅ **Tính toán thông minh** - EOQ, Safety Stock, Reorder Point
+- ✅ **Chu kỳ mua** - Tươi sống 3 ngày / Khô gia vị 7 ngày
+- ✅ **Giao diện MISA** - UI chuẩn mực, responsive, dễ sử dụng
+- ✅ **Sẵn deploy** - Render.com + Neon.tech
 
 ---
 
 ## 🏗️ Cấu Trúc Thư Mục
 
 ```
-D:\Phần mềm mua hàng\
-├── package.json                          # Dependencies & Scripts
-├── server.js                             # Express Backend Server
-├── schema.sql                            # Database Schema (PostgreSQL)
-├── .env.example                          # Template biến môi trường
-├── .gitignore                            # Git ignore file
-├── README.md                             # File này
+fen-izakaya-app/
+├── pages/                                # Frontend (Next.js)
+│   ├── index.jsx                         # 🏠 Dashboard - Danh sách chi nhánh
+│   ├── purchase-plan.jsx                 # 📊 Lập kế hoạch mua hàng
+│   ├── sync-cukcuk.jsx                   # 🔄 Đồng bộ CUKCUK & tải BOM
+│   ├── _app.jsx                          # App wrapper
+│   └── _document.jsx                     # Document template
 │
-├── services/
-│   ├── bomService.js                     # Xử lý upload & parse BOM từ Excel
-│   ├── cukcukService.js                  # Tích hợp API CUKCUK
-│   └── purchasePlanService.js            # Logic tính toán kế hoạch mua
+├── services/                             # Business Logic & Services
+│   ├── materialClassificationService.js  # 🏷️  Phân loại 8 loại NVL tự động
+│   ├── purchasePlanService.js            # 📈 Tính toán kế hoạch mua (EOQ, SS, ROP)
+│   ├── cukcukService.js                  # 🔗 Tích hợp CUKCUK API
+│   └── bomService.js                     # 📄 Parse & upload BOM từ Excel/CSV
 │
-└── pages/
-    └── purchase-plan.jsx                 # React Frontend (Next.js)
+├── server.js                             # 🚀 Express API Server (11 endpoints)
+├── schema.sql                            # 🗄️  PostgreSQL Schema (11 tables)
+├── init-db.js                            # ⚙️  Database initialization script
+│
+├── package.json                          # 📦 Dependencies & npm scripts
+├── next.config.js                        # ⚙️  Next.js configuration
+├── .env.example                          # 🔑 Environment variables template
+├── .gitignore                            # 📝 Git ignore file
+│
+├── QUICKSTART.md                         # 🚀 Bắt đầu nhanh (3 bước)
+├── SETUP_GUIDE.md                        # 📚 Hướng dẫn chi tiết & troubleshooting
+└── README.md                             # 📖 File này
 ```
 
 ---
@@ -265,8 +285,96 @@ Số Mua Đề Xuất = Nhu Cầu Thuần / Tỷ Lệ Chuyển Đổi
 
 ---
 
+## 🚀 Bắt Đầu Nhanh (3 Bước)
+
+### Bước 1: Cài Đặt
+```bash
+git clone https://github.com/phuquy19820-ui/fen-izakaya-app.git
+cd fen-izakaya-app
+npm install
+```
+
+### Bước 2: Cấu Hình Database
+```bash
+cp .env.example .env
+# Sửa .env - cập nhật DATABASE_URL
+npm run init-db
+```
+
+### Bước 3: Chạy
+```bash
+npm run dev
+# Truy cập http://localhost:5000
+```
+
+**Xem chi tiết:** [QUICKSTART.md](QUICKSTART.md)
+
+---
+
+## ☁️ Deploy Production
+
+### Render.com + Neon.tech
+1. Database: Neon.tech (PostgreSQL)
+2. Server: Render.com (Node.js + Next.js)
+3. Cấu hình: 5 phút, deployment tự động từ GitHub
+
+**Xem chi tiết:** [SETUP_GUIDE.md](SETUP_GUIDE.md)
+
+---
+
+## 📊 API Endpoints (11 endpoints)
+
+```
+GET    /api/branches                    # Danh sách chi nhánh
+POST   /api/branches/create             # Tạo chi nhánh mới
+GET    /api/branches/:branchId          # Chi tiết chi nhánh
+
+GET    /api/materials/:branchId         # Danh sách NVL
+POST   /api/materials/classify          # Phân loại NVL tự động
+
+POST   /api/bom/upload                  # Upload Excel/CSV
+
+POST   /api/cukcuk/sync                 # Đồng bộ dữ liệu CUKCUK
+
+POST   /api/purchase-plans/generate     # Tạo kế hoạch mua
+GET    /api/purchase-plans/:branchId    # Lấy kế hoạch đã tạo
+
+GET    /api/inventory/:branchId         # Tồn kho hiện tại
+POST   /api/inventory/record            # Ghi nhận tồn kho
+```
+
+---
+
+## 📄 Tài Liệu Khác
+
+| File | Nội Dung |
+|------|---------|
+| [QUICKSTART.md](QUICKSTART.md) | Bắt đầu trong 3 bước |
+| [SETUP_GUIDE.md](SETUP_GUIDE.md) | Hướng dẫn chi tiết & deploy |
+| [schema.sql](schema.sql) | Cấu trúc 11 bảng PostgreSQL |
+
+---
+
+## 🏆 Hoàn Thành 100%
+
+✅ Backend API - Tất cả 11 endpoints  
+✅ Frontend UI - 3 trang chính + responsive design  
+✅ Database - Cấu trúc hoàn chỉnh  
+✅ Services - Tất cả business logic  
+✅ Documentation - Hướng dẫn chi tiết  
+✅ Deployment Ready - Sẵn deploy Render + Neon  
+
+---
+
+## 📞 Hỗ Trợ
+
+**Developer:** phuquy19820@gmail.com
+
+---
+
 ## 📝 Phiên Bản
 
-v1.0.0 - Initial Release
-# Deployment timestamp: Fri Oct  2 22:20:36 SEAST 2026
-# Deploy timestamp: Fri Oct  2 22:26:17 SEAST 2026
+v1.0.0 - Complete Release (Oct 03, 2026)
+- Tất cả tính năng hoàn thành
+- Sẵn sàng triển khai production
+- Deploy ready trên Render.com + Neon.tech
