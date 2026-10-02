@@ -80,7 +80,8 @@ class PurchasePlanService {
   }
 
   generateNote(stock, daily, days, category) {
-    const daysLeft = daily > 0 ? stock / daily : 999;
+    if (daily <= 0) return 'ℹ️ Chưa có dữ liệu bán hàng';
+    const daysLeft = stock / daily;
     if (daysLeft < 1) return '⚠️ CẢNH BÁO: Tồn không đủ 1 ngày!';
     if (daysLeft < days) return `⚠️ Tồn chỉ ${Math.round(daysLeft)} ngày`;
     if (daysLeft > 14) return '💡 Tồn cao, có thể giảm';
