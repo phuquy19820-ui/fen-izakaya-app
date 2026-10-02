@@ -1,47 +1,92 @@
+/**
+ * Purchase Plan Service - Tính toán kế hoạch mua hàng
+ */
+
 class PurchasePlanService {
-  static calculatePlan(materials, salesDemandMap, inventoryMap, cycleType, forecastDays = 7) {
-    const planDetails = [];
+  async calculateFullPurchasePlan(params) {
+    const { branchId, cycleType, materials, salesData, inventoryData, recipes } = params;
+    const forecastDays = cycleType === 'FRESH_3DAYS' ? 3 : 7;
+    const plans = [];
 
-    materials.forEach(mat => {
-      if (mat.purchase_cycle !== cycleType) return;
+    for (const material of materials) {
+      const currentStock = this.getCurrentStock(material.material_id, inventoryData);
+      const avgDailySales = this.calculateAverageDailySales(material.material_id, recipes, salesData);
+      const safetyStock = this.calculateSafetyStock(avgDailySales, material.lead_time_days || 1);
+      const forecastedDemand = this.calculateForecastedDemand(avgDailySales, forecastDays, material.waste_rate || 5);
+      const reorderPoint = this.calculateReorderPoint(avgDailySales, material.lead_time_days || 1, safetyStock);
+      const suggestedQty = this.calculatePurchaseQty(currentStock, forecastedDemand, reorderPoint, safetyStock);
 
-      const matId = mat.material_id;
-      const currentStockRecipeUnit = inventoryMap[matId]?.current_stock || 0;
-      const avgDailyDemand = (salesDemandMap[matId] || 0) / 7;
-      const projectedDemandRecipeUnit = avgDailyDemand * forecastDays;
-
-      const wasteRate = parseFloat(mat.waste_rate) || 0;
-      const demandWithWaste = projectedDemandRecipeUnit * (1 + wasteRate / 100);
-
-      const safetyStockDays = cycleType === 'FRESH_3DAYS' ? 0.5 : 2;
-      const safetyStock = (parseFloat(mat.safety_stock) || (avgDailyDemand * safetyStockDays));
-
-      let netRequirementRecipeUnit = demandWithWaste + safetyStock - currentStockRecipeUnit;
-      if (netRequirementRecipeUnit < 0) netRequirementRecipeUnit = 0;
-
-      const conversionRate = parseFloat(mat.conversion_rate) || 1000;
-      const suggestedPurchaseQty = netRequirementRecipeUnit / conversionRate;
-
-      const roundedSuggestedQty = cycleType === 'WEEKLY_7DAYS'
-        ? Math.ceil(suggestedPurchaseQty * 2) / 2
-        : Math.round(suggestedPurchaseQty * 100) / 100;
-
-      planDetails.push({
-        material_id: matId,
-        material_name: mat.material_name,
-        category_group: mat.category_group,
-        purchase_cycle: mat.purchase_cycle,
-        unit_purchase: mat.unit_purchase,
-        current_stock: Math.round((currentStockRecipeUnit / conversionRate) * 100) / 100,
-        projected_demand: Math.round((demandWithWaste / conversionRate) * 100) / 100,
-        suggested_qty: roundedSuggestedQty,
-        final_purchase_qty: roundedSuggestedQty,
-        note: ''
+      plans.push({
+        material_id: material.material_id,
+        material_name: material.material_name,
+        category: material.category,
+        opening_stock: currentStock,
+        avg_daily_sales: Math.round(avgDailySales * 100) / 100,
+        forecasted_demand: Math.ceil(forecastedDemand),
+        safety_stock: Math.ceil(safetyStock),
+        reorder_point: Math.ceil(reorderPoint),
+        suggested_qty: Math.ceil(Math.max(0, suggestedQty)),
+        estimated_cost: Math.ceil(suggestedQty) * (material.unit_cost || 0),
+        note: this.generateNote(currentStock, avgDailySales, forecastDays, material.category)
       });
-    });
+    }
 
-    return planDetails;
+    return plans;
+  }
+
+  getCurrentStock(materialId, inventoryData) {
+    const latest = inventoryData
+      .filter(inv => inv.material_id === materialId)
+      .sort((a, b) => new Date(b.period_date) - new Date(a.period_date))[0];
+    return latest ? latest.closing_stock : 0;
+  }
+
+  calculateAverageDailySales(materialId, recipes, salesData) {
+    if (!salesData || salesData.length === 0) return 0;
+    const dishesWithMaterial = recipes
+      .filter(r => r.ingredients && r.ingredients.some(ing => ing.material_id === materialId))
+      .map(r => r.dish_id);
+    if (dishesWithMaterial.length === 0) return 0;
+    
+    let totalDemand = 0, dataPoints = 0;
+    for (const sale of salesData) {
+      if (dishesWithMaterial.includes(sale.dish_id)) {
+        const recipe = recipes.find(r => r.dish_id === sale.dish_id);
+        const ingredient = recipe.ingredients.find(ing => ing.material_id === materialId);
+        if (ingredient) {
+          totalDemand += sale.quantity_sold * ingredient.quantity_per_dish;
+          dataPoints++;
+        }
+      }
+    }
+    return dataPoints > 0 ? totalDemand / Math.max(dataPoints / 7, 1) : 0;
+  }
+
+  calculateSafetyStock(avgDaily, leadTimeDays = 1) {
+    return avgDaily * (leadTimeDays + 1);
+  }
+
+  calculateForecastedDemand(avgDaily, days, wasteRate = 5) {
+    return avgDaily * days * (1 + wasteRate / 100);
+  }
+
+  calculateReorderPoint(avgDaily, leadTime, safetyStock) {
+    return avgDaily * leadTime + safetyStock;
+  }
+
+  calculatePurchaseQty(current, forecast, rop, safety) {
+    if (current >= forecast + safety) return 0;
+    return Math.max(0, forecast + rop - current);
+  }
+
+  generateNote(stock, daily, days, category) {
+    const daysLeft = daily > 0 ? stock / daily : 999;
+    if (daysLeft < 1) return '⚠️ CẢNH BÁO: Tồn không đủ 1 ngày!';
+    if (daysLeft < days) return `⚠️ Tồn chỉ ${Math.round(daysLeft)} ngày`;
+    if (daysLeft > 14) return '💡 Tồn cao, có thể giảm';
+    if (['FRESH_MEAT', 'SEAFOOD'].includes(category)) return '🕐 Kiểm tra hạn sử dụng';
+    return '✅ Tồn kho bình thường';
   }
 }
 
-module.exports = PurchasePlanService;
+module.exports = new PurchasePlanService();
