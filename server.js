@@ -25,7 +25,9 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: process.env.NODE_ENV === 'production'
+    ? { rejectUnauthorized: false }
+    : false
 });
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -416,12 +418,16 @@ app.all('*', (req, res) => {
 
 // Start server with async/await
 (async () => {
+  let client;
   try {
     // Test database connection
     console.log('🔄 Testing database connection...');
     console.log(`📍 DATABASE_URL: ${process.env.DATABASE_URL ? 'configured' : 'missing'}`);
-    const result = await pool.query('SELECT 1');
-    console.log('✅ Database connected successfully:', result.rows);
+
+    client = await pool.connect();
+    const result = await client.query('SELECT 1');
+    client.release();
+    console.log('✅ Database connected successfully');
 
     // Initialize database
     console.log('🔄 Initializing database schema...');
@@ -440,8 +446,9 @@ app.all('*', (req, res) => {
       console.log(`🌐 http://localhost:${port}`);
     });
   } catch (err) {
+    if (client) client.release();
     console.error('❌ Failed to start server:', err.message);
-    console.error('❌ Full error:', err);
+    console.error('❌ Error details:', JSON.stringify(err, null, 2));
     process.exit(1);
   }
 })();
