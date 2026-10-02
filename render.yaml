@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: fen-izakaya-app
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        value: postgresql://neondb_owner:npg_hx4GMlNFS2cO@ep-gentle-sun-b3nuwdkl-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+      - key: PORT
+        value: "5000"
+      - key: NODE_ENV
+        value: production
