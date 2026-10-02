@@ -51,6 +51,22 @@ async function initializeDatabase() {
           }
         }
       }
+      const migrations = [
+        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS cukcuk_company_code VARCHAR(100)',
+        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS cukcuk_domain VARCHAR(255)',
+        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS cukcuk_auth_token TEXT',
+        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS cukcuk_token_expires_at TIMESTAMP',
+        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE',
+        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
+        'ALTER TABLE branches ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+      ];
+      for (const m of migrations) {
+        try {
+          await pool.query(m);
+        } catch (err) {
+          console.warn('Migration error:', m, err.message);
+        }
+      }
       console.log('✅ Database schema initialized successfully.');
     }
   } catch (error) {
