@@ -420,9 +420,14 @@ app.all('*', (req, res) => {
 (async () => {
   let client;
   try {
+    // Check environment
+    if (!process.env.DATABASE_URL) {
+      throw new Error('DATABASE_URL environment variable not set. Please set it on Render dashboard.');
+    }
+
     // Test database connection
     console.log('🔄 Testing database connection...');
-    console.log(`📍 DATABASE_URL: ${process.env.DATABASE_URL ? 'configured' : 'missing'}`);
+    console.log(`📍 DATABASE_URL: configured (${process.env.DATABASE_URL.substring(0, 50)}...)`);
 
     client = await pool.connect();
     const result = await client.query('SELECT 1');
