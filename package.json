@@ -4,6 +4,7 @@
   "description": "Web App Lập kế hoạch mua NVL tự động từ CUKCUK & BOM",
   "main": "server.js",
   "scripts": {
+    "build": "next build",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },

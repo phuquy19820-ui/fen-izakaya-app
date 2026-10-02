@@ -2,11 +2,16 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const { Pool } = require('pg');
+const next = require('next');
 require('dotenv').config();
 
 const CukCukService = require('./services/cukcukService');
 const { parseAndSaveBOM } = require('./services/bomService');
 const PurchasePlanService = require('./services/purchasePlanService');
+
+const dev = process.env.NODE_ENV !== 'production';
+const nextApp = next({ dev });
+const handle = nextApp.getRequestHandler();
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -127,4 +132,14 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
   }
 });
 
-app.listen(port, () => console.log(`[Server Running] Port ${port}`));
+// Catch-all route for Next.js pages (must be after all API routes)
+app.all('*', (req, res) => {
+  return handle(req, res);
+});
+
+nextApp.prepare().then(() => {
+  app.listen(port, () => console.log(`[Server Running] Port ${port}`));
+}).catch(err => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});
