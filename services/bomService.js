@@ -83,36 +83,38 @@ const PRICE_CEILING_PER_KG = {
 
 // Nhóm chi tiết (thịt gà, thịt heo, gia vị…) để lọc trong kế hoạch mua. Luật xếp theo nhóm lớn đã phân loại.
 const SUB_RULES = {
+  VAT_TU: ['than', 'lá chuối', 'giấy', 'túi', 'găng', 'khăn', 'tăm', 'ống hút'],
+  SUA_KEM: ['bơ lạt', 'kem', 'whipping', 'phô mai', 'phômai', 'sữa', 'cream', 'cheese', 'butter'],
   TRUNG: ['trứng'],
   THIT_BO: ['bò', 'nạm', 'wagyu', 'fuji', 'tomahawk', 'ribeye', 'gyutan', 'sancho'],
   THIT_HEO: ['heo', 'lợn', 'ba rọi', 'ba chỉ', 'sườn', 'bacon', 'baycon', 'giò', 'xá xíu', 'nọng', 'dồi', 'phèo', 'xúc xích', 'lòng', 'bao tử', 'tai', 'tộc'],
   THIT_GA: ['gà', 'vịt', 'ngan', 'cánh', 'sụn', 'mề', 'tim'],
-  TOM_MUC: ['tôm', 'mực', 'cua', 'ghẹ', 'hàu', 'sò', 'nghêu', 'ốc', 'bạch tuộc', 'tuột', 'sứa', 'tép', 'ebiko', 'mentaiko', 'surimi', 'kani', 'tako'],
+  TOM_MUC: ['tôm', 'mực', 'cua', 'ghẹ', 'hàu', 'sò', 'nghêu', 'ốc', 'bạch tuộc', 'tuột', 'sứa', 'tép', 'ebiko', 'mentaiko', 'surimi', 'kani', 'tako', 'mưc'],
   CA: ['cá', 'lươn', 'saba', 'sashimi', 'hamachi', 'tuna'],
   NAM: ['nấm'],
   TRAI_CAY: ['quả', 'trái', 'chanh', 'cam', 'táo', 'xoài', 'dứa', 'chuối', 'khế', 'me', 'nho', 'đào', 'mận', 'lê', 'dừa', 'bơ'],
   TUOI_GIA_VI: ['hành', 'tỏi', 'gừng', 'sả', 'ớt', 'riềng', 'nghệ', 'tắc', 'quất'],
   BOT: ['bột'],
-  GIA_VI: ['tiêu', 'muối', 'đường', 'nanami', 'mù tạt', 'wasabi', 'gia vị', 'hạt nêm', 'bột ngọt', 'mì chính', 'mè', 'vừng', 'cà ri', 'quế', 'hồi', 'ngũ vị', 'tomyum', 'ớt', 'tỏi', 'hành', 'knorr'],
-  SOT: ['sốt', 'tương', 'mayo', 'mayonnaise', 'nước chấm', 'giấm', 'mirin', 'sake', 'nước mắm', 'mắm', 'dầu hào', 'ketchup', 'miso', 'nước dùng', 'kewpie', 'sauce'],
+  GIA_VI: ['tiêu', 'muối', 'đường', 'nanami', 'mù tạt', 'wasabi', 'gia vị', 'hạt nêm', 'bột ngọt', 'mì chính', 'mè', 'vừng', 'cà ri', 'quế', 'hồi', 'ngũ vị', 'tomyum', 'ớt', 'tỏi', 'hành', 'knorr', 'hạt ngò'],
+  SOT: ['sốt', 'tương', 'mayo', 'mayonnaise', 'nước chấm', 'giấm', 'mirin', 'sake', 'nước mắm', 'mắm', 'dầu hào', 'ketchup', 'miso', 'nước dùng', 'kewpie', 'sauce', 'dấm'],
   DAU_AN: ['dầu', 'mỡ'],
   DO_UONG: ['bia', 'rượu', 'nước ngọt', 'nước suối', 'trà', 'cà phê', 'soda', 'nước ép', 'sữa'],
   TINH_BOT: ['gạo', 'mì', 'bún', 'miến', 'bánh', 'cơm', 'udon', 'ramen', 'phở', 'nui'],
   RAU_CU: ['rau', 'cải', 'cà', 'khoai', 'bắp', 'dưa', 'bí', 'su', 'xà lách', 'củ', 'bầu', 'mướp', 'hẹ', 'đậu', 'măng', 'rong', 'tảo']
 };
 const SUB_LABELS = {
-  TRUNG: 'Trứng', THIT_BO: 'Thịt bò', THIT_HEO: 'Thịt heo', THIT_GA: 'Thịt gà & vịt', TOM_MUC: 'Tôm, mực & nhuyễn thể',
+  VAT_TU: 'Vật tư & khác', SUA_KEM: 'Bơ, sữa, kem & phô mai', TRUNG: 'Trứng', THIT_BO: 'Thịt bò', THIT_HEO: 'Thịt heo', THIT_GA: 'Thịt gà & vịt', TOM_MUC: 'Tôm, mực & nhuyễn thể',
   CA: 'Cá', NAM: 'Nấm', TRAI_CAY: 'Trái cây', TUOI_GIA_VI: 'Hành, tỏi, gừng, ớt', BOT: 'Bột & tinh bột', GIA_VI: 'Gia vị',
   SOT: 'Sốt & nước chấm', DAU_AN: 'Dầu ăn & mỡ', DO_UONG: 'Đồ uống & rượu', TINH_BOT: 'Mì, gạo & bánh', RAU_CU: 'Rau củ',
   THAO_MOC: 'Thảo mộc', THIT_KHAC: 'Thịt khác', HAI_SAN_KHAC: 'Hải sản khác', HANG_KHO_KHAC: 'Hàng khô khác', DONG_LANH_KHAC: 'Đông lạnh khác'
 };
 const SUB_ORDER_BY_CATEGORY = {
-  FRESH_MEAT: ['TRUNG', 'THIT_BO', 'THIT_HEO', 'THIT_GA'],
-  SEAFOOD: ['TOM_MUC', 'CA'],
-  VEGETABLE: ['NAM', 'TRAI_CAY', 'TUOI_GIA_VI', 'RAU_CU'],
-  SPICE_DRY: ['GIA_VI', 'BOT'],
-  DRY_GOODS: ['DAU_AN', 'DO_UONG', 'TINH_BOT', 'GIA_VI', 'SOT'],
-  FROZEN: ['TOM_MUC', 'CA', 'THIT_BO', 'THIT_HEO', 'THIT_GA']
+  FRESH_MEAT: ['VAT_TU', 'TRUNG', 'THIT_BO', 'THIT_HEO', 'THIT_GA', 'TOM_MUC', 'CA', 'RAU_CU'],
+  SEAFOOD: ['VAT_TU', 'TOM_MUC', 'CA'],
+  VEGETABLE: ['VAT_TU', 'NAM', 'TUOI_GIA_VI', 'RAU_CU', 'TRAI_CAY'],
+  SPICE_DRY: ['VAT_TU', 'GIA_VI', 'BOT'],
+  DRY_GOODS: ['VAT_TU', 'DAU_AN', 'DO_UONG', 'SUA_KEM', 'TINH_BOT', 'GIA_VI', 'SOT', 'TOM_MUC', 'CA'],
+  FROZEN: ['VAT_TU', 'TOM_MUC', 'CA', 'THIT_BO', 'THIT_HEO', 'THIT_GA', 'RAU_CU']
 };
 const SUB_DEFAULT_BY_CATEGORY = {
   FRESH_MEAT: 'THIT_KHAC', SEAFOOD: 'HAI_SAN_KHAC', VEGETABLE: 'RAU_CU', HERB_SEASONING: 'THAO_MOC',

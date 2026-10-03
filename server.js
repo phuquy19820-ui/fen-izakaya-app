@@ -100,7 +100,7 @@ async function initializeDatabase() {
         }
       }
       try {
-        const missing = await pool.query('SELECT material_id, material_name, category FROM raw_materials WHERE sub_group IS NULL');
+        const missing = await pool.query('SELECT material_id, material_name, category FROM raw_materials WHERE sub_group IS NULL OR is_auto_created = TRUE');
         for (const m of missing.rows) {
           await pool.query('UPDATE raw_materials SET sub_group = $2 WHERE material_id = $1', [m.material_id, subGroupOf(m.category, m.material_name)]);
         }
