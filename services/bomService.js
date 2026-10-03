@@ -98,7 +98,7 @@ const SUB_RULES = {
   GIA_VI: ['tiêu', 'muối', 'đường', 'nanami', 'mù tạt', 'wasabi', 'gia vị', 'hạt nêm', 'bột ngọt', 'mì chính', 'mè', 'vừng', 'cà ri', 'quế', 'hồi', 'ngũ vị', 'tomyum', 'ớt', 'tỏi', 'hành', 'knorr', 'hạt ngò'],
   SOT: ['sốt', 'tương', 'mayo', 'mayonnaise', 'nước chấm', 'giấm', 'mirin', 'sake', 'nước mắm', 'mắm', 'dầu hào', 'ketchup', 'miso', 'nước dùng', 'kewpie', 'sauce', 'dấm'],
   DAU_AN: ['dầu', 'mỡ'],
-  DO_UONG: ['bia', 'rượu', 'nước ngọt', 'nước suối', 'trà', 'cà phê', 'soda', 'nước ép', 'sữa'],
+  DO_UONG: ['bia', 'rượu', 'nước ngọt', 'nước suối', 'trà', 'cà phê', 'nước soda', 'nước ép', 'sữa'],
   TINH_BOT: ['gạo', 'mì', 'bún', 'miến', 'bánh', 'cơm', 'udon', 'ramen', 'phở', 'nui'],
   RAU_CU: ['rau', 'cải', 'cà', 'khoai', 'bắp', 'dưa', 'bí', 'su', 'xà lách', 'củ', 'bầu', 'mướp', 'hẹ', 'đậu', 'măng', 'rong', 'tảo']
 };

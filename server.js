@@ -680,7 +680,7 @@ app.post('/api/purchase-plans/export-xlsx', async (req, res) => {
     if (branchName) addText('Chi nhánh: ' + branchName);
     if (supplier) addText('Nhà cung cấp: ' + supplier);
     addText('Ngày lập: ' + new Date().toLocaleDateString('vi-VN'));
-    if (deliveryDate) addText('Ngày giao hàng yêu cầu: ' + deliveryDate);
+    if (deliveryDate) addText('Ngày giao hàng yêu cầu: ' + String(deliveryDate).replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1'));
     if (note) addText('Ghi chú: ' + note);
     ws.addRow([]);
 
