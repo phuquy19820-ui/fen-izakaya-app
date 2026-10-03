@@ -62,10 +62,10 @@ export default function SearchSelect({ options, value, onChange, placeholder = '
           </div>
           <div className="max-h-64 overflow-auto">
             {filtered.length === 0 && <p className="p-3 text-sm text-gray-500">Không tìm thấy.</p>}
-            {filtered.map((o) => (
+            {filtered.map((o, idx) => (
               <button
                 type="button"
-                key={o.value}
+                key={`${o.value}-${idx}`}
                 onClick={() => choose(o.value)}
                 className={`w-full text-left px-3 py-2 text-sm hover:bg-purple-50 ${o.value === value ? 'bg-purple-100' : ''}`}
               >

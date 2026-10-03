@@ -183,6 +183,7 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
   const summary = { totalDishes: 0, totalMaterials: 0, newMaterialsCreated: 0, byCategory: {} };
   const knownMaterials = new Map();
   const priceLists = new Map();
+  const dishNamesByCode = new Map();
   const bomRows = [];
   let currentDish = null;
 
@@ -193,13 +194,23 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
     const dishCode = String(cell(col.dishCode)).trim();
 
     if (dishType && dishCode && !dishCode.startsWith('#')) {
+      const dishName = String(cell(col.dishName)).trim() || dishCode;
+      // Một mã món đôi khi bị dùng cho hai món khác tên: tách thành món riêng để không gộp nhầm định lượng.
+      const nameKey = normalizeString(dishName);
+      const seenNames = dishNamesByCode.get(dishCode) || [];
+      let idx = seenNames.indexOf(nameKey);
+      if (idx === -1) {
+        seenNames.push(nameKey);
+        idx = seenNames.length - 1;
+        dishNamesByCode.set(dishCode, seenNames);
+        summary.totalDishes++;
+      }
       currentDish = {
-        id: dishCode,
-        name: String(cell(col.dishName)).trim() || dishCode,
+        id: idx === 0 ? dishCode : dishCode + '~' + (idx + 1),
+        name: dishName,
         unit: String(cell(col.dishUnit)).trim() || 'Phần',
         price: parseNumber(cell(col.price))
       };
-      summary.totalDishes++;
     }
 
     const matName = String(cell(col.matName)).trim();
