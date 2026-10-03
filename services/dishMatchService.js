@@ -26,19 +26,39 @@ function levenshtein(a, b) {
   return prev[b.length];
 }
 
-// Điểm giống nhau 0..1 giữa hai tên món: kết hợp khoảng cách ký tự và độ trùng từ.
+// Từ đệm không làm đổi bản chất món ("Cơm trắng thêm" = "Cơm trắng", "Xiên bạch tuộc" = "Bạch tuộc")
+const FILLER = new Set(['xien', 'them']);
+const meaningful = (ws) => {
+  const kept = ws.filter(w => !FILLER.has(w));
+  return kept.length ? kept : ws;
+};
+
+// Điểm giống nhau 0..1 giữa hai tên món: kết hợp khoảng cách ký tự, độ trùng từ và quan hệ "tên này nằm trong tên kia".
 function similarity(nameA, nameB) {
-  const wa = words(nameA);
-  const wb = words(nameB);
+  const wa = meaningful(words(nameA));
+  const wb = meaningful(words(nameB));
   if (!wa.length || !wb.length) return 0;
   const a = wa.join('');
   const b = wb.join('');
   if (a === b) return 1;
   const lev = 1 - levenshtein(a, b) / Math.max(a.length, b.length);
+  const setA = new Set(wa);
   const setB = new Set(wb);
   const common = wa.filter(w => setB.has(w)).length;
   const dice = (2 * common) / (wa.length + wb.length);
-  return Math.max(lev, dice);
+
+  const [short, long, setLong] = wa.length <= wb.length ? [wa, wb, setB] : [wb, wa, setA];
+  const contained = short.length >= 3 && short.every(w => setLong.has(w));
+  const containment = contained ? 0.85 + 0.1 * (short.length / long.length) : 0;
+  return Math.max(lev, dice, containment);
+}
+
+// Trả về n món định lượng gần nhất để gợi ý khi chưa tự ghép được.
+function suggest(name, bomDishes, n = 1) {
+  return bomDishes
+    .map(d => ({ dish_id: d.dish_id, dish_name: d.dish_name, score: similarity(name, d.dish_name) }))
+    .sort((x, y) => y.score - x.score)
+    .slice(0, n);
 }
 
 const AUTO_THRESHOLD = 0.85;
@@ -54,10 +74,12 @@ function matchDish(name, bomDishes) {
   let second = 0;
   for (const d of bomDishes) {
     const score = similarity(name, d.dish_name);
+    const dKey = normalizeString(d.dish_name);
     if (!best || score > best.score) {
-      if (best) second = best.score;
-      best = { dishId: d.dish_id, score };
-    } else if (score > second) second = score;
+      // Món định lượng trùng tên với ứng viên tốt nhất không được tính là "ứng viên thứ hai"
+      if (best && best.key !== dKey) second = Math.max(second, best.score);
+      best = { dishId: d.dish_id, score, key: dKey };
+    } else if (dKey !== best.key && score > second) second = score;
   }
   // Chỉ nhận khi đủ giống và nổi bật hơn hẳn ứng viên thứ hai, để tránh ghép nhầm món.
   if (best && best.score >= AUTO_THRESHOLD && best.score - second >= 0.03) {
@@ -66,4 +88,4 @@ function matchDish(name, bomDishes) {
   return null;
 }
 
-module.exports = { matchDish, similarity, AUTO_THRESHOLD };
+module.exports = { matchDish, similarity, suggest, AUTO_THRESHOLD };

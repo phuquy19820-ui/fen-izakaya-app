@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-const { matchDish } = require('./services/dishMatchService');
+const { matchDish, suggest } = require('./services/dishMatchService');
 const { parseAndSaveBOM } = require('./services/bomService');
 const { classifyMaterial } = require('./services/materialClassificationService');
 const PurchasePlanService = require('./services/purchasePlanService');
@@ -159,6 +159,7 @@ app.post('/api/bom/upload', upload.single('file'), async (req, res) => {
   try {
     await client.query('BEGIN');
     const summary = await parseAndSaveBOM(req.file.buffer, branchId, client, req.file.originalname);
+    summary.rematched = (await rematchBranch(client, branchId)).matched;
     await client.query('COMMIT');
     return res.json({ success: true, message: 'Tải định lượng thành công!', data: summary });
   } catch (error) {
@@ -181,6 +182,31 @@ app.get('/api/materials/:branchId', async (req, res) => {
       ORDER BY rm.category, rm.material_name
     `, [branchId]);
     return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Ghép lại tự động các món CUKCUK chưa có món định lượng (giữ nguyên ghép tay)
+async function rematchBranch(db, branchId) {
+  const bom = (await db.query('SELECT DISTINCT dish_id, dish_name FROM bill_of_materials WHERE branch_id = $1', [branchId])).rows;
+  const pending = (await db.query(
+    "SELECT cukcuk_code, cukcuk_name FROM dish_code_map WHERE branch_id = $1 AND bom_dish_id IS NULL AND match_type <> 'MANUAL'", [branchId])).rows;
+  let matched = 0;
+  for (const m of pending) {
+    const r = matchDish(m.cukcuk_name, bom);
+    if (!r) continue;
+    await db.query(
+      'UPDATE dish_code_map SET bom_dish_id = $3, match_type = $4, match_score = $5, updated_at = NOW() WHERE branch_id = $1 AND cukcuk_code = $2',
+      [branchId, m.cukcuk_code, r.dishId, r.type, r.score]);
+    matched++;
+  }
+  return { pending: pending.length, matched };
+}
+
+app.post('/api/sales/rematch/:branchId', async (req, res) => {
+  try {
+    return res.json({ success: true, data: await rematchBranch(pool, req.params.branchId) });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -291,7 +317,12 @@ app.get('/api/sales/status/:branchId', async (req, res) => {
     `, [branchId]);
     const dishes = await pool.query(
       'SELECT DISTINCT dish_id, dish_name FROM bill_of_materials WHERE branch_id = $1 ORDER BY dish_name', [branchId]);
-    return res.json({ success: true, data: { range: range.rows[0], mappings: maps.rows, bomDishes: dishes.rows } });
+    const mappings = maps.rows.map(m => {
+      if (m.bom_dish_id || m.cukcuk_kind !== 'Món ăn') return m;
+      const s = suggest(m.cukcuk_name, dishes.rows, 1)[0];
+      return { ...m, suggestion: s && s.score >= 0.5 ? { dish_id: s.dish_id, dish_name: s.dish_name, score: Math.round(s.score * 100) / 100 } : null };
+    });
+    return res.json({ success: true, data: { range: range.rows[0], mappings, bomDishes: dishes.rows } });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

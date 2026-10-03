@@ -183,15 +183,25 @@ export default function SyncCukcuk() {
                         <div className="border rounded divide-y">
                           {foodUnmatched.map(m => (
                             <div key={m.cukcuk_code} className="p-3 flex items-center gap-3 text-sm">
-                              <div className="w-1/2">
+                              <div className="w-1/3">
                                 <p className="font-medium">{m.cukcuk_name}</p>
                                 <p className="text-xs text-gray-500">{m.cukcuk_code} · đã bán {m.qty}</p>
                               </div>
+                              {m.suggestion && (
+                                <button
+                                  disabled={savingCode === m.cukcuk_code}
+                                  onClick={() => saveMapping(m.cukcuk_code, m.suggestion.dish_id)}
+                                  className="shrink-0 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded text-xs font-bold disabled:opacity-50"
+                                  title={`Độ giống ${Math.round(m.suggestion.score * 100)}%`}
+                                >
+                                  ✔ {m.suggestion.dish_name}
+                                </button>
+                              )}
                               <select
                                 disabled={savingCode === m.cukcuk_code}
                                 defaultValue=""
                                 onChange={(e) => e.target.value && saveMapping(m.cukcuk_code, e.target.value)}
-                                className="w-1/2 border p-2 rounded"
+                                className="flex-1 border p-2 rounded"
                               >
                                 <option value="">— Chọn món trong định lượng —</option>
                                 {(salesStatus.bomDishes || []).map(d => (
