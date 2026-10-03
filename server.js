@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-const CukCukService = require('./services/cukcukService');
+const { matchDish } = require('./services/dishMatchService');
 const { parseAndSaveBOM } = require('./services/bomService');
 const { classifyMaterial } = require('./services/materialClassificationService');
 const PurchasePlanService = require('./services/purchasePlanService');
@@ -76,6 +76,18 @@ async function initializeDatabase() {
       for (const [table, cols] of Object.entries(addCols)) {
         for (const col of cols) migrations.push(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${col}`);
       }
+      migrations.push(`CREATE TABLE IF NOT EXISTS dish_code_map (
+        branch_id VARCHAR(50) NOT NULL,
+        cukcuk_code VARCHAR(100) NOT NULL,
+        cukcuk_name VARCHAR(255),
+        cukcuk_kind VARCHAR(50),
+        bom_dish_id VARCHAR(50),
+        match_type VARCHAR(20) DEFAULT 'NONE',
+        match_score NUMERIC(4,3) DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (branch_id, cukcuk_code)
+      )`);
+      migrations.push('CREATE INDEX IF NOT EXISTS idx_sales_branch_date ON cukcuk_daily_sales (branch_id, sale_date)');
       migrations.push('ALTER TABLE raw_materials ALTER COLUMN category DROP NOT NULL');
       migrations.push('CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_branch_mat_date ON inventory_tracking (branch_id, material_id, period_date)');
       for (const m of migrations) {
@@ -174,68 +186,135 @@ app.get('/api/materials/:branchId', async (req, res) => {
   }
 });
 
-// 6. API Đồng bộ CUKCUK
-app.post('/api/cukcuk/sync', async (req, res) => {
-  const { branchId, companyCode, username, password, fromDate, toDate } = req.body;
-  if (!branchId || !companyCode) {
-    return res.status(400).json({ success: false, message: 'Thiếu thông tin đăng nhập CUKCUK' });
+// 6. Doanh số từ báo cáo CUKCUK "Chi tiết doanh thu theo hóa đơn và mặt hàng"
+// Doanh số lưu theo MÃ MÓN CUKCUK; bảng dish_code_map ghép sang mã món trong file định lượng (BOM).
+app.post('/api/sales/import', async (req, res) => {
+  const { branchId, rows, source } = req.body;
+  if (!branchId || !Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc dữ liệu doanh số' });
+  }
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const clean = rows
+    .map(r => ({ date: String(r.date || ''), code: String(r.code || '').trim(), name: String(r.name || '').trim(), kind: String(r.kind || '').trim(), qty: Number(r.qty) }))
+    .filter(r => dateRe.test(r.date) && r.code && Number.isFinite(r.qty) && r.qty !== 0);
+  if (clean.length === 0) {
+    return res.status(400).json({ success: false, message: 'Không có dòng doanh số hợp lệ (cần date YYYY-MM-DD, code, qty)' });
   }
 
   const client = await pool.connect();
   try {
-    const auth = await CukCukService.login(companyCode, username, password);
-    if (!auth.success) return res.status(401).json(auth);
-
-    const salesData = await CukCukService.getSalesData(auth.accessToken, fromDate, toDate);
-    const inventoryData = await CukCukService.getInventoryBalance(auth.accessToken);
-
     await client.query('BEGIN');
+    const bomRes = await client.query('SELECT DISTINCT dish_id, dish_name FROM bill_of_materials WHERE branch_id = $1', [branchId]);
+    const bomDishes = bomRes.rows;
 
-    // Lưu dữ liệu bán hàng
-    for (const item of salesData) {
+    const existingRes = await client.query('SELECT cukcuk_code, bom_dish_id, match_type FROM dish_code_map WHERE branch_id = $1', [branchId]);
+    const existing = new Map(existingRes.rows.map(r => [r.cukcuk_code, r]));
+
+    const seen = new Map();
+    clean.forEach(r => { if (!seen.has(r.code)) seen.set(r.code, r); });
+    for (const r of seen.values()) {
+      const cur = existing.get(r.code);
+      if (cur && (cur.bom_dish_id || cur.match_type === 'MANUAL')) {
+        await client.query('UPDATE dish_code_map SET cukcuk_name = $3, cukcuk_kind = $4, updated_at = NOW() WHERE branch_id = $1 AND cukcuk_code = $2', [branchId, r.code, r.name, r.kind]);
+        continue;
+      }
+      const m = matchDish(r.name, bomDishes);
       await client.query(`
-        INSERT INTO cukcuk_daily_sales (branch_id, dish_id, dish_name, quantity_sold, sale_date)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT DO NOTHING
-      `, [branchId, item.dish_id, item.dish_name, item.quantity, toDate]);
+        INSERT INTO dish_code_map (branch_id, cukcuk_code, cukcuk_name, cukcuk_kind, bom_dish_id, match_type, match_score)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (branch_id, cukcuk_code) DO UPDATE SET
+          cukcuk_name = EXCLUDED.cukcuk_name, cukcuk_kind = EXCLUDED.cukcuk_kind,
+          bom_dish_id = EXCLUDED.bom_dish_id, match_type = EXCLUDED.match_type,
+          match_score = EXCLUDED.match_score, updated_at = NOW()
+      `, [branchId, r.code, r.name, r.kind, m ? m.dishId : null, m ? m.type : 'NONE', m ? m.score : 0]);
     }
 
-    // Lưu tồn kho
-    for (const inv of inventoryData) {
-      await client.query(`
-        INSERT INTO inventory_tracking (branch_id, material_id, period_date, closing_stock)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (branch_id, material_id, period_date) DO UPDATE SET closing_stock = $4
-      `, [branchId, inv.material_code, toDate, inv.current_stock]);
+    const agg = new Map();
+    for (const r of clean) {
+      const k = r.date + '|' + r.code;
+      const cur = agg.get(k) || { ...r, qty: 0 };
+      cur.qty += r.qty;
+      agg.set(k, cur);
     }
-
-    // Cập nhật token CUKCUK
-    await client.query(`
-      UPDATE branches SET cukcuk_auth_token = $1, cukcuk_token_expires_at = NOW() + INTERVAL '24 hours'
-      WHERE branch_id = $2
-    `, [auth.accessToken, branchId]);
-
+    const dates = clean.map(r => r.date).sort();
+    const minDate = dates[0];
+    const maxDate = dates[dates.length - 1];
+    await client.query('DELETE FROM cukcuk_daily_sales WHERE branch_id = $1 AND sale_date BETWEEN $2 AND $3', [branchId, minDate, maxDate]);
+    for (const r of agg.values()) {
+      await client.query(
+        'INSERT INTO cukcuk_daily_sales (branch_id, dish_id, dish_name, quantity_sold, sale_date) VALUES ($1,$2,$3,$4,$5)',
+        [branchId, r.code, r.name.substring(0, 255), r.qty, r.date]);
+    }
+    await client.query(
+      "INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, $2, 'SUCCESS', $3)",
+      [branchId, source || 'SALES_REPORT', agg.size]);
     await client.query('COMMIT');
 
-    // Ghi log sync
-    await pool.query(`
-      INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported)
-      VALUES ($1, 'SALES_INVENTORY', 'SUCCESS', $2)
-    `, [branchId, salesData.length + inventoryData.length]);
-
+    const stat = await pool.query(`
+      SELECT COUNT(*) FILTER (WHERE m.bom_dish_id IS NOT NULL) AS matched_codes,
+             COUNT(*) AS total_codes,
+             COALESCE(SUM(t.qty) FILTER (WHERE m.bom_dish_id IS NOT NULL), 0) AS matched_qty,
+             COALESCE(SUM(t.qty), 0) AS total_qty
+      FROM dish_code_map m
+      JOIN (SELECT dish_id, SUM(quantity_sold) AS qty FROM cukcuk_daily_sales WHERE branch_id = $1 GROUP BY dish_id) t
+        ON t.dish_id = m.cukcuk_code
+      WHERE m.branch_id = $1
+    `, [branchId]);
     return res.json({
       success: true,
-      message: 'Đồng bộ CUKCUK thành công!',
-      data: { salesRecords: salesData.length, inventoryRecords: inventoryData.length }
+      message: 'Đã nhập doanh số CUKCUK!',
+      data: { fromDate: minDate, toDate: maxDate, salesRecords: agg.size, ...stat.rows[0] }
     });
   } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('CUKCUK sync error:', error);
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Sales import error:', error);
     return res.status(500).json({ success: false, message: error.message });
   } finally {
     client.release();
   }
 });
+
+// Trạng thái doanh số + danh sách món CUKCUK chưa ghép được với định lượng
+app.get('/api/sales/status/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    const range = await pool.query(
+      'SELECT MIN(sale_date) AS from_date, MAX(sale_date) AS to_date, COUNT(*) AS records FROM cukcuk_daily_sales WHERE branch_id = $1', [branchId]);
+    const maps = await pool.query(`
+      SELECT m.cukcuk_code, m.cukcuk_name, m.cukcuk_kind, m.bom_dish_id, m.match_type, m.match_score,
+             COALESCE(t.qty, 0) AS qty
+      FROM dish_code_map m
+      LEFT JOIN (SELECT dish_id, SUM(quantity_sold) AS qty FROM cukcuk_daily_sales WHERE branch_id = $1 GROUP BY dish_id) t
+        ON t.dish_id = m.cukcuk_code
+      WHERE m.branch_id = $1
+      ORDER BY (m.bom_dish_id IS NULL) DESC, COALESCE(t.qty, 0) DESC
+    `, [branchId]);
+    const dishes = await pool.query(
+      'SELECT DISTINCT dish_id, dish_name FROM bill_of_materials WHERE branch_id = $1 ORDER BY dish_name', [branchId]);
+    return res.json({ success: true, data: { range: range.rows[0], mappings: maps.rows, bomDishes: dishes.rows } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Ghép tay một món CUKCUK với món trong định lượng (bomDishId = null để bỏ qua món đó)
+app.post('/api/sales/map', async (req, res) => {
+  const { branchId, cukcukCode, bomDishId } = req.body;
+  if (!branchId || !cukcukCode) {
+    return res.status(400).json({ success: false, message: 'Thiếu thông tin ghép món' });
+  }
+  try {
+    const r = await pool.query(`
+      UPDATE dish_code_map SET bom_dish_id = $3, match_type = 'MANUAL', match_score = 1, updated_at = NOW()
+      WHERE branch_id = $1 AND cukcuk_code = $2
+    `, [branchId, cukcukCode, bomDishId || null]);
+    if (r.rowCount === 0) return res.status(404).json({ success: false, message: 'Không tìm thấy món CUKCUK' });
+    return res.json({ success: true, message: 'Đã lưu ghép món' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 
 // 7. API Tạo kế hoạch mua hàng
 app.post('/api/purchase-plans/generate', async (req, res) => {
@@ -260,10 +339,16 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
     const salesRes = await client.query(`
       SELECT b.material_id, SUM(b.quantity_per_dish * s.quantity_sold) AS total_demand
       FROM cukcuk_daily_sales s
-      JOIN bill_of_materials b ON s.dish_id = b.dish_id AND s.branch_id = b.branch_id
+      JOIN dish_code_map m ON m.branch_id = s.branch_id AND m.cukcuk_code = s.dish_id AND m.bom_dish_id IS NOT NULL
+      JOIN bill_of_materials b ON b.dish_id = m.bom_dish_id AND b.branch_id = s.branch_id
       WHERE s.branch_id = $1 AND s.sale_date >= CURRENT_DATE - INTERVAL '${SALES_WINDOW_DAYS} days'
       GROUP BY b.material_id
     `, [branchId]);
+    const daysRes = await client.query(`
+      SELECT COUNT(DISTINCT sale_date) AS days FROM cukcuk_daily_sales
+      WHERE branch_id = $1 AND sale_date >= CURRENT_DATE - INTERVAL '${SALES_WINDOW_DAYS} days'
+    `, [branchId]);
+    const salesDays = Math.max(1, Number(daysRes.rows[0].days) || 1);
     const salesDemandMap = {};
     salesRes.rows.forEach(r => { salesDemandMap[r.material_id] = r.total_demand || 0; });
 
@@ -285,7 +370,7 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
 
       const currentStock = inventoryMap[material.material_id] || 0;
       // Nhu cầu quy đổi từ đơn vị định lượng (gr/ml) sang đơn vị mua (kg/lít), bình quân theo ngày
-      const avgDailySales = (salesDemandMap[material.material_id] || 0) / conv / SALES_WINDOW_DAYS;
+      const avgDailySales = (salesDemandMap[material.material_id] || 0) / conv / salesDays;
       const safetyStock = PurchasePlanService.calculateSafetyStock(avgDailySales, leadTime);
       const forecastedDemand = PurchasePlanService.calculateForecastedDemand(avgDailySales, forecastDays, wasteRate);
       const reorderPoint = PurchasePlanService.calculateReorderPoint(avgDailySales, leadTime, safetyStock);

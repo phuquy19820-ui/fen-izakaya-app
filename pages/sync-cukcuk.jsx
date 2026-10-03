@@ -8,38 +8,23 @@ export default function SyncCukcuk() {
 
   const [currentBranch, setCurrentBranch] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
   const [bomUploading, setBomUploading] = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
   const [bomResult, setBomResult] = useState(null);
 
-  const [cukcukForm, setCukcukForm] = useState({
-    companyCode: '',
-    username: '',
-    password: '',
-    fromDate: '',
-    toDate: ''
-  });
+  const [salesStatus, setSalesStatus] = useState(null);
+  const [savingCode, setSavingCode] = useState('');
 
   useEffect(() => {
     if (!branch) return;
     fetchBranch();
+    fetchSalesStatus();
   }, [branch]);
 
   const fetchBranch = async () => {
     try {
       const res = await fetch(`/api/branches/${branch}`);
       const data = await res.json();
-      if (data.success) {
-        setCurrentBranch(data.data);
-        setCukcukForm({
-          companyCode: data.data.cukcuk_company_code || '',
-          username: '',
-          password: '',
-          fromDate: new Date(Date.now() - 7*24*60*60*1000).toISOString().split('T')[0],
-          toDate: new Date().toISOString().split('T')[0]
-        });
-      }
+      if (data.success) setCurrentBranch(data.data);
     } catch (error) {
       console.error('Error fetching branch:', error);
     } finally {
@@ -47,35 +32,29 @@ export default function SyncCukcuk() {
     }
   };
 
-  const handleCukcukSync = async (e) => {
-    e.preventDefault();
-    if (!cukcukForm.companyCode || !cukcukForm.username || !cukcukForm.password) {
-      alert('Vui lòng nhập đầy đủ thông tin CUKCUK');
-      return;
-    }
-
+  const fetchSalesStatus = async () => {
     try {
-      setSyncing(true);
-      const res = await fetch('/api/cukcuk/sync', {
+      const res = await fetch(`/api/sales/status/${branch}`);
+      const data = await res.json();
+      if (data.success) setSalesStatus(data.data);
+    } catch (error) {
+      console.error('Error fetching sales status:', error);
+    }
+  };
+
+  const saveMapping = async (cukcukCode, bomDishId) => {
+    try {
+      setSavingCode(cukcukCode);
+      const res = await fetch('/api/sales/map', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branchId: branch,
-          ...cukcukForm
-        })
+        body: JSON.stringify({ branchId: branch, cukcukCode, bomDishId: bomDishId || null })
       });
       const data = await res.json();
-      setSyncResult(data);
-      if (data.success) {
-        alert('✅ Đồng bộ CUKCUK thành công!');
-      } else {
-        alert('❌ Lỗi: ' + data.message);
-      }
-    } catch (error) {
-      setSyncResult({ success: false, message: error.message });
-      alert('❌ Lỗi: ' + error.message);
+      if (!data.success) alert('❌ Lỗi: ' + data.message);
+      await fetchSalesStatus();
     } finally {
-      setSyncing(false);
+      setSavingCode('');
     }
   };
 
@@ -177,87 +156,56 @@ export default function SyncCukcuk() {
             </div>
           </div>
 
-          {/* Section 2: CUKCUK Sync */}
+          {/* Section 2: Doanh số CUKCUK */}
           <div className="bg-white rounded-lg shadow-lg overflow-hidden border-l-4 border-purple-600">
             <div className="bg-purple-50 px-6 py-4 border-b border-purple-200">
-              <h2 className="text-xl font-bold text-purple-800">🔄 Bước 2: Đồng Bộ Dữ Liệu CUKCUK</h2>
-              <p className="text-sm text-purple-700 mt-1">Kết nối với hệ thống bán hàng để lấy dữ liệu bán hàng và tồn kho</p>
+              <h2 className="text-xl font-bold text-purple-800">🧾 Bước 2: Doanh Số Bán Hàng Từ CUKCUK</h2>
+              <p className="text-sm text-purple-700 mt-1">Lấy từ báo cáo "Chi tiết doanh thu theo hóa đơn và mặt hàng" trên CUKCUK của chi nhánh</p>
             </div>
-            <div className="p-6">
-              <form onSubmit={handleCukcukSync} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block font-semibold text-gray-700 mb-2">Mã Công Ty CUKCUK *</label>
-                    <input
-                      type="text"
-                      value={cukcukForm.companyCode}
-                      onChange={(e) => setCukcukForm({ ...cukcukForm, companyCode: e.target.value })}
-                      className="w-full border p-2 rounded focus:ring-2 focus:ring-purple-500 outline-none"
-                      placeholder="VD: FENIZAKAYA"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold text-gray-700 mb-2">Tên Đăng Nhập *</label>
-                    <input
-                      type="text"
-                      value={cukcukForm.username}
-                      onChange={(e) => setCukcukForm({ ...cukcukForm, username: e.target.value })}
-                      className="w-full border p-2 rounded focus:ring-2 focus:ring-purple-500 outline-none"
-                      placeholder="VD: admin@fenizakaya"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block font-semibold text-gray-700 mb-2">Mật Khẩu *</label>
-                    <input
-                      type="password"
-                      value={cukcukForm.password}
-                      onChange={(e) => setCukcukForm({ ...cukcukForm, password: e.target.value })}
-                      className="w-full border p-2 rounded focus:ring-2 focus:ring-purple-500 outline-none"
-                      placeholder="••••••••"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold text-gray-700 mb-2">Đến Ngày</label>
-                    <input
-                      type="date"
-                      value={cukcukForm.toDate}
-                      onChange={(e) => setCukcukForm({ ...cukcukForm, toDate: e.target.value })}
-                      className="w-full border p-2 rounded focus:ring-2 focus:ring-purple-500 outline-none"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block font-semibold text-gray-700 mb-2">Từ Ngày</label>
-                    <input
-                      type="date"
-                      value={cukcukForm.fromDate}
-                      onChange={(e) => setCukcukForm({ ...cukcukForm, fromDate: e.target.value })}
-                      className="w-full border p-2 rounded focus:ring-2 focus:ring-purple-500 outline-none"
-                    />
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  disabled={syncing}
-                  className="w-full bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded font-bold disabled:opacity-50"
-                >
-                  {syncing ? '⏳ Đang đồng bộ...' : '🔄 Đồng Bộ CUKCUK'}
-                </button>
-              </form>
-              {syncResult && (
-                <div className={`mt-4 p-4 rounded ${syncResult.success ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-                  <p className="font-bold">{syncResult.success ? '✅' : '❌'} {syncResult.message}</p>
-                  {syncResult.data && (
-                    <ul className="text-sm mt-2">
-                      <li>- Bản ghi bán hàng: {syncResult.data.salesRecords}</li>
-                      <li>- Bản ghi tồn kho: {syncResult.data.inventoryRecords}</li>
-                    </ul>
-                  )}
-                </div>
-              )}
+            <div className="p-6 space-y-4">
+              {!salesStatus || !salesStatus.range || !salesStatus.range.records || Number(salesStatus.range.records) === 0 ? (
+                <p className="text-gray-600">Chưa có doanh số. Hãy nhờ Claude đăng nhập CUKCUK và lấy báo cáo doanh số cho chi nhánh này.</p>
+              ) : (() => {
+                const maps = salesStatus.mappings || [];
+                const foodUnmatched = maps.filter(m => !m.bom_dish_id && m.cukcuk_kind === 'Món ăn');
+                const otherUnmatched = maps.filter(m => !m.bom_dish_id && m.cukcuk_kind !== 'Món ăn');
+                const matched = maps.filter(m => m.bom_dish_id).length;
+                const fmt = (d) => new Date(d).toLocaleDateString('vi-VN');
+                return (
+                  <>
+                    <div className="bg-purple-50 rounded p-4 text-sm text-purple-900">
+                      <p>📅 Doanh số từ <b>{fmt(salesStatus.range.from_date)}</b> đến <b>{fmt(salesStatus.range.to_date)}</b> ({salesStatus.range.records} dòng món/ngày)</p>
+                      <p>✅ Đã ghép với định lượng: <b>{matched}</b> món &nbsp;|&nbsp; ⚠️ Món ăn chưa ghép: <b>{foodUnmatched.length}</b> &nbsp;|&nbsp; Đồ uống/mặt hàng khác không có định lượng: {otherUnmatched.length}</p>
+                    </div>
+                    {foodUnmatched.length > 0 && (
+                      <div>
+                        <p className="font-bold text-gray-800 mb-2">Món ăn CUKCUK chưa khớp với định lượng — chọn món tương ứng:</p>
+                        <div className="border rounded divide-y">
+                          {foodUnmatched.map(m => (
+                            <div key={m.cukcuk_code} className="p-3 flex items-center gap-3 text-sm">
+                              <div className="w-1/2">
+                                <p className="font-medium">{m.cukcuk_name}</p>
+                                <p className="text-xs text-gray-500">{m.cukcuk_code} · đã bán {m.qty}</p>
+                              </div>
+                              <select
+                                disabled={savingCode === m.cukcuk_code}
+                                defaultValue=""
+                                onChange={(e) => e.target.value && saveMapping(m.cukcuk_code, e.target.value)}
+                                className="w-1/2 border p-2 rounded"
+                              >
+                                <option value="">— Chọn món trong định lượng —</option>
+                                {(salesStatus.bomDishes || []).map(d => (
+                                  <option key={d.dish_id} value={d.dish_id}>{d.dish_name}</option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
 
