@@ -118,7 +118,7 @@ export default function SalesReport() {
         <BranchNav branch={branch} active="sales" branchName={branchInfo?.branch_name} />
 
         <div className="p-4 space-y-2" style={{ maxWidth: 1400, margin: '0 auto' }}>
-          <DateRangeBar from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} onApply={(f, t) => load(f, t)} minDate={data && data.range && data.range.min_date ? iso(data.range.min_date) : ''} maxDate={data && data.range && data.range.max_date ? iso(data.range.max_date) : ''}>
+          <DateRangeBar from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} onApply={(f, t) => load(f, t)} minDate={data && data.range && data.range.min_date ? isoDate(data.range.min_date) : ''} maxDate={data && data.range && data.range.max_date ? isoDate(data.range.max_date) : ''}>
             <span className="text-gray-600">Doanh thu = tiền hàng của các món (chưa gồm thuế GTGT và phí dịch vụ)</span>
           </DateRangeBar>
           <div className="bg-white rounded border px-3 py-2 flex flex-wrap items-end gap-3">
