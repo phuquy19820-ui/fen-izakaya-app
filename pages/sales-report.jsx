@@ -3,6 +3,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import BranchNav from '../components/BranchNav';
 import DataTable, { filterRows, sortRows } from '../components/DataTable';
+import DateRangeBar, { presetRange } from '../components/DateRangeBar';
 
 const money = (n) => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 const num = (n) => (Number(n) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 2 });
@@ -117,17 +118,11 @@ export default function SalesReport() {
         <BranchNav branch={branch} active="sales" branchName={branchInfo?.branch_name} />
 
         <div className="p-4 space-y-2" style={{ maxWidth: 1400, margin: '0 auto' }}>
+          <DateRangeBar from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} onApply={(f, t) => load(f, t)} minDate={data && data.range && data.range.min_date ? iso(data.range.min_date) : ''} maxDate={data && data.range && data.range.max_date ? iso(data.range.max_date) : ''}>
+            <span className="text-gray-600">Doanh thu = tiền hàng của các món (chưa gồm thuế GTGT và phí dịch vụ)</span>
+          </DateRangeBar>
           <div className="bg-white rounded border px-3 py-2 flex flex-wrap items-end gap-3">
-            <div>
-              <label className="block font-semibold mb-0.5">Từ ngày</label>
-              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="border px-2 py-1 rounded" />
-            </div>
-            <div>
-              <label className="block font-semibold mb-0.5">Đến ngày</label>
-              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="border px-2 py-1 rounded" />
-            </div>
-            <button onClick={() => load(from, to)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-bold">Xem báo cáo</button>
-            <div className="flex gap-1 ml-3">
+            <div className="flex gap-1">
               <button onClick={() => setTab('dish')} className={`px-3 py-1.5 rounded font-bold border ${tab === 'dish' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🍽️ Theo món</button>
               <button onClick={() => setTab('day')} className={`px-3 py-1.5 rounded font-bold border ${tab === 'day' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>📅 Theo ngày</button>
             </div>

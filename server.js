@@ -12,6 +12,7 @@ require('dotenv').config();
 const { matchDish, suggest, similarity } = require('./services/dishMatchService');
 const { categorize, subGroupOf, normalizeString } = require('./services/bomService');
 const { beverageDefaults, MODE_LABELS } = require('./services/beverageService');
+const { defaultConversion } = require('./services/unitService');
 const { parseAndSaveBOM } = require('./services/bomService');
 const { classifyMaterial } = require('./services/materialClassificationService');
 const PurchasePlanService = require('./services/purchasePlanService');
@@ -147,6 +148,12 @@ async function initializeDatabase() {
         total_amount NUMERIC(18,2) DEFAULT 0, line_count INT DEFAULT 0, payload JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (branch_id, order_year, order_month, seq)
       )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS unit_conversions (
+        branch_id VARCHAR(50) NOT NULL, item_code VARCHAR(100) NOT NULL, item_name VARCHAR(255), base_unit VARCHAR(30),
+        small_unit VARCHAR(30), large_unit VARCHAR(30), ratio NUMERIC(18,4) DEFAULT 1, source VARCHAR(10) DEFAULT 'DEFAULT',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, item_code)
+      )`);
+      migrations.push('ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP');
       migrations.push('ALTER TABLE cukcuk_daily_sales ADD COLUMN IF NOT EXISTS revenue NUMERIC(16,2) DEFAULT 0');
       migrations.push('CREATE INDEX IF NOT EXISTS idx_sales_branch_date ON cukcuk_daily_sales (branch_id, sale_date)');
       migrations.push('ALTER TABLE raw_materials ALTER COLUMN category DROP NOT NULL');
@@ -1284,7 +1291,7 @@ app.get('/api/purchase-orders/:branchId', async (req, res) => {
   try {
     const r = await pool.query(`
       SELECT id, order_no, created_at, buyer_company, supplier_name, total_amount, line_count, payload->>'cycleLabel' AS cycle_label
-      FROM purchase_orders WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 300`, [req.params.branchId]);
+      FROM purchase_orders WHERE branch_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 300`, [req.params.branchId]);
     return res.json({ success: true, data: r.rows });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -1293,7 +1300,7 @@ app.get('/api/purchase-orders/:branchId', async (req, res) => {
 
 app.get('/api/purchase-orders/:branchId/:id', async (req, res) => {
   try {
-    const r = await pool.query('SELECT order_no, payload FROM purchase_orders WHERE branch_id = $1 AND id = $2', [req.params.branchId, Number(req.params.id) || 0]);
+    const r = await pool.query('SELECT order_no, payload FROM purchase_orders WHERE branch_id = $1 AND id = $2 AND deleted_at IS NULL', [req.params.branchId, Number(req.params.id) || 0]);
     if (r.rows.length === 0) return res.status(404).json({ success: false, message: 'Không tìm thấy đơn' });
     return res.json({ success: true, data: r.rows[0] });
   } catch (error) {
@@ -1305,25 +1312,106 @@ app.get('/api/purchase-orders/:branchId/:id', async (req, res) => {
 const SMALL_UNITS_SQL = "lower(p.unit_name) IN ('gram', 'gr', 'g', 'ml')";
 const dateOnly = (s, fallback) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? s : fallback);
 
-// Dòng nhập hàng đã chuẩn hóa đơn vị (gram -> kg, ml -> lít): dùng cho sổ nhập hàng và báo cáo từng ngày
+// --- Đơn vị tính quy đổi theo từng NVL của CUKCUK ---
+async function seedUnits(db, branchId) {
+  const items = (await db.query(`
+    SELECT DISTINCT ON (item_code) item_code, item_name, unit_name FROM (
+      SELECT item_code, item_name, unit_name, purchase_date AS d FROM supplier_purchases WHERE branch_id = $1
+      UNION ALL
+      SELECT item_code, item_name, unit_name, stock_date AS d FROM cukcuk_stock_daily WHERE branch_id = $1
+    ) x ORDER BY item_code, d DESC`, [branchId])).rows;
+  for (const it of items) {
+    const c = defaultConversion(it.item_name, it.unit_name);
+    await db.query(`
+      INSERT INTO unit_conversions (branch_id, item_code, item_name, base_unit, small_unit, large_unit, ratio, source)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (branch_id, item_code) DO UPDATE SET item_name = EXCLUDED.item_name, base_unit = EXCLUDED.base_unit`,
+      [branchId, it.item_code, it.item_name, it.unit_name || '', c.small, c.large, c.ratio, c.source]);
+  }
+}
+
+app.get('/api/units/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    await seedUnits(pool, branchId);
+    const rows = (await pool.query(`
+      SELECT u.item_code, u.item_name, u.base_unit, u.small_unit, u.large_unit, u.ratio, u.source,
+             COALESCE(p.n, 0) AS purchase_count
+      FROM unit_conversions u
+      LEFT JOIN (SELECT item_code, COUNT(*) AS n FROM supplier_purchases WHERE branch_id = $1 GROUP BY item_code) p ON p.item_code = u.item_code
+      WHERE u.branch_id = $1 ORDER BY u.item_name`, [branchId])).rows;
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.put('/api/units', async (req, res) => {
+  const { branchId, itemCode, largeUnit, smallUnit, ratio } = req.body;
+  if (!branchId || !itemCode) return res.status(400).json({ success: false, message: 'Thiếu thông tin' });
+  const r = Number(ratio);
+  if (ratio !== undefined && (!Number.isFinite(r) || r <= 0)) return res.status(400).json({ success: false, message: 'Quy đổi phải là số lớn hơn 0' });
+  try {
+    await pool.query(`
+      UPDATE unit_conversions SET
+        large_unit = COALESCE($3, large_unit), small_unit = COALESCE($4, small_unit), ratio = COALESCE($5, ratio),
+        source = 'MANUAL', updated_at = NOW()
+      WHERE branch_id = $1 AND item_code = $2`,
+      [branchId, itemCode, largeUnit ? String(largeUnit).substring(0, 30) : null, smallUnit ? String(smallUnit).substring(0, 30) : null, ratio === undefined ? null : r]);
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/units/reset', async (req, res) => {
+  const { branchId, itemCode } = req.body;
+  try {
+    const u = (await pool.query('SELECT item_name, base_unit FROM unit_conversions WHERE branch_id = $1 AND item_code = $2', [branchId, itemCode])).rows[0];
+    if (!u) return res.status(404).json({ success: false, message: 'Không tìm thấy' });
+    const c = defaultConversion(u.item_name, u.base_unit);
+    await pool.query(
+      'UPDATE unit_conversions SET small_unit = $3, large_unit = $4, ratio = $5, source = $6, updated_at = NOW() WHERE branch_id = $1 AND item_code = $2',
+      [branchId, itemCode, c.small, c.large, c.ratio, c.source]);
+    return res.json({ success: true, data: c });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Dòng nhập hàng kèm đơn vị lớn/nhỏ, đơn giá theo từng đơn vị và độ lệch so với đơn giá trung bình của NVL đó
 app.get('/api/purchase-books/lines/:branchId', async (req, res) => {
   const { branchId } = req.params;
   const from = dateOnly(req.query.from, '1970-01-01');
   const to = dateOnly(req.query.to, '2999-12-31');
   try {
+    await seedUnits(pool, branchId);
     const rows = (await pool.query(`
-      SELECT p.purchase_date AS date, p.ref_no, p.supplier_code, p.supplier_name, p.item_code, p.item_name,
-             CASE WHEN ${SMALL_UNITS_SQL} THEN p.qty / 1000.0 ELSE p.qty END AS qty,
-             CASE WHEN lower(p.unit_name) IN ('gram', 'gr', 'g') THEN 'kg' WHEN lower(p.unit_name) = 'ml' THEN 'lít' ELSE p.unit_name END AS unit,
-             CASE WHEN ${SMALL_UNITS_SQL} THEN p.unit_price * 1000 ELSE p.unit_price END AS price,
-             p.amount, m.material_id
-      FROM supplier_purchases p
-      LEFT JOIN stock_code_map m ON m.branch_id = p.branch_id AND m.cukcuk_code = p.item_code
-      WHERE p.branch_id = $1 AND p.purchase_date BETWEEN $2 AND $3
-      ORDER BY p.purchase_date DESC, p.supplier_name, p.item_name`, [branchId, from, to])).rows;
+      WITH base AS (
+        SELECT p.*, COALESCE(NULLIF(c.ratio, 0), 1) AS ratio,
+               COALESCE(c.large_unit, p.unit_name) AS large_unit, COALESCE(c.small_unit, p.unit_name) AS small_unit
+        FROM supplier_purchases p
+        LEFT JOIN unit_conversions c ON c.branch_id = p.branch_id AND c.item_code = p.item_code
+        WHERE p.branch_id = $1),
+      stats AS (
+        SELECT item_code, COUNT(*) AS n, SUM(amount) / NULLIF(SUM(qty / ratio), 0) AS avg_large,
+               MIN(unit_price * ratio) AS min_large, MAX(unit_price * ratio) AS max_large
+        FROM base GROUP BY item_code)
+      SELECT b.purchase_date AS date, b.ref_no, b.supplier_code, b.supplier_name, b.item_code, b.item_name,
+             b.small_unit, b.large_unit, b.ratio,
+             b.qty AS qty_small, b.qty / b.ratio AS qty_large,
+             b.unit_price AS price_small, b.unit_price * b.ratio AS price_large, b.amount,
+             s.n AS history_count, s.avg_large, s.min_large, s.max_large,
+             CASE WHEN s.n > 1 AND s.avg_large > 0 THEN (b.unit_price * b.ratio - s.avg_large) / s.avg_large * 100 END AS deviation_pct,
+             m.material_id
+      FROM base b
+      JOIN stats s ON s.item_code = b.item_code
+      LEFT JOIN stock_code_map m ON m.branch_id = b.branch_id AND m.cukcuk_code = b.item_code
+      WHERE b.purchase_date BETWEEN $2 AND $3
+      ORDER BY b.purchase_date DESC, b.supplier_name, b.item_name`, [branchId, from, to])).rows;
     const range = (await pool.query('SELECT MIN(purchase_date) AS min_date, MAX(purchase_date) AS max_date FROM supplier_purchases WHERE branch_id = $1', [branchId])).rows[0];
     return res.json({ success: true, data: { range, rows } });
   } catch (error) {
+    console.error('Purchase lines error:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -1344,57 +1432,50 @@ async function receivedByMaterial(db, branchId, from, to, supplierCode) {
     GROUP BY m.material_id, rm.material_name, rm.unit_purchase`, params)).rows;
 }
 
-async function orderedByMaterial(db, branchId, year, month, supplierCode) {
-  const params = [branchId, year, month];
+// Tổng đặt hàng theo NVL của các đơn lập trong khoảng ngày (giờ Việt Nam), bỏ đơn đã xóa
+async function orderedByMaterial(db, branchId, from, to, supplierCode) {
+  const params = [branchId, from, to];
   let supSql = '';
   if (supplierCode) { params.push(supplierCode); supSql = ' AND o.supplier_code = $4'; }
   return (await db.query(`
     SELECT l->>'code' AS material_id, MAX(l->>'name') AS name, MAX(l->>'unit') AS unit, SUM((l->>'qty')::numeric) AS qty
     FROM purchase_orders o, jsonb_array_elements(o.payload->'lines') l
-    WHERE o.branch_id = $1 AND o.order_year = $2 AND o.order_month = $3${supSql}
+    WHERE o.branch_id = $1 AND o.deleted_at IS NULL
+      AND (o.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $2 AND $3${supSql}
     GROUP BY l->>'code'`, params)).rows;
 }
 
-// So sánh số lượng thực nhập (ngày/tuần/tháng) với tổng đặt hàng trong tháng
+// So sánh số lượng thực nhập trong khoảng ngày với tổng đặt hàng trong tháng
 app.get('/api/purchase-books/compare/:branchId', async (req, res) => {
   const { branchId } = req.params;
-  const period = ['day', 'week', 'month'].includes(req.query.period) ? req.query.period : 'month';
   const today = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
-  const date = dateOnly(req.query.date, today);
+  const to = dateOnly(req.query.to, today);
+  const from = dateOnly(req.query.from, to);
   const supplier = String(req.query.supplier || '').trim();
   try {
-    const d = new Date(date + 'T00:00:00Z');
-    const year = d.getUTCFullYear();
-    const month = d.getUTCMonth() + 1;
-    const monthStart = new Date(Date.UTC(year, month - 1, 1)).toISOString().slice(0, 10);
-    let from = date;
-    let to = date;
-    if (period === 'week') {
-      const dow = (d.getUTCDay() + 6) % 7; // thứ Hai = 0
-      from = new Date(d.getTime() - dow * 86400000).toISOString().slice(0, 10);
-      to = new Date(d.getTime() + (6 - dow) * 86400000).toISOString().slice(0, 10);
-    } else if (period === 'month') {
-      from = monthStart;
-      to = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
-    }
-    const ordered = await orderedByMaterial(pool, branchId, year, month, supplier);
-    const inPeriod = await receivedByMaterial(pool, branchId, from < monthStart ? monthStart : from, to, supplier);
+    const t = new Date(to + 'T00:00:00Z');
+    const monthStart = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 1)).toISOString().slice(0, 10);
+    const monthEnd = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+    const orderedMonth = await orderedByMaterial(pool, branchId, monthStart, monthEnd, supplier);
+    const orderedRange = await orderedByMaterial(pool, branchId, from, to, supplier);
+    const inRange = await receivedByMaterial(pool, branchId, from, to, supplier);
     const cumulative = await receivedByMaterial(pool, branchId, monthStart, to, supplier);
     const rows = new Map();
     const get = (id, name, unit) => {
-      if (!rows.has(id)) rows.set(id, { material_id: id, material_name: name || id, unit: unit || '', ordered: 0, received_period: 0, received_cum: 0 });
+      if (!rows.has(id)) rows.set(id, { material_id: id, material_name: name || id, unit: unit || '', ordered_range: 0, ordered_month: 0, received_range: 0, received_cum: 0 });
       return rows.get(id);
     };
-    ordered.forEach(o => { const r = get(o.material_id, o.name, o.unit); r.ordered = Number(o.qty) || 0; });
-    inPeriod.forEach(o => { const r = get(o.material_id, o.material_name, o.unit); r.received_period = Number(o.qty) || 0; });
-    cumulative.forEach(o => { const r = get(o.material_id, o.material_name, o.unit); r.received_cum = Number(o.qty) || 0; });
+    orderedMonth.forEach(o => { get(o.material_id, o.name, o.unit).ordered_month = Number(o.qty) || 0; });
+    orderedRange.forEach(o => { get(o.material_id, o.name, o.unit).ordered_range = Number(o.qty) || 0; });
+    inRange.forEach(o => { get(o.material_id, o.material_name, o.unit).received_range = Number(o.qty) || 0; });
+    cumulative.forEach(o => { get(o.material_id, o.material_name, o.unit).received_cum = Number(o.qty) || 0; });
     const out = Array.from(rows.values()).map(r => ({
       ...r,
-      remaining: Math.max(0, r.ordered - r.received_cum),
-      pct: r.ordered > 0 ? Math.round((r.received_cum / r.ordered) * 1000) / 10 : null,
-      status: r.ordered === 0 ? 'Nhập ngoài đơn' : r.received_cum === 0 ? 'Chưa nhập' : r.received_cum + 1e-9 >= r.ordered * 0.95 ? 'Đã đủ' : 'Nhập một phần'
+      remaining: Math.max(0, r.ordered_month - r.received_cum),
+      pct: r.ordered_month > 0 ? Math.round((r.received_cum / r.ordered_month) * 1000) / 10 : null,
+      status: r.ordered_month === 0 ? 'Nhập ngoài đơn' : r.received_cum === 0 ? 'Chưa nhập' : r.received_cum + 1e-9 >= r.ordered_month * 0.95 ? 'Đã đủ' : 'Nhập một phần'
     })).sort((a, b) => a.material_name.localeCompare(b.material_name, 'vi'));
-    return res.json({ success: true, data: { period, date, from, to, monthStart, year, month, rows: out } });
+    return res.json({ success: true, data: { from, to, monthStart, monthEnd, rows: out } });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -1412,12 +1493,12 @@ async function orderFulfilment(db, branchId, order) {
   const recMap = Object.fromEntries(received.map(r => [r.material_id, Number(r.qty) || 0]));
   let ordered = 0;
   let got = 0;
-  const detail = lines.map(l => {
+  const detail = lines.map((l, index) => {
     const q = Number(l.qty) || 0;
     const r = recMap[l.code] || 0;
     ordered += q;
     got += Math.min(q, r);
-    return { code: l.code, name: l.name, group: l.group, unit: l.unit, ordered: q, received: Math.round(r * 1000) / 1000, missing: Math.max(0, Math.round((q - r) * 1000) / 1000) };
+    return { index, code: l.code, name: l.name, group: l.group, unit: l.unit, ordered: q, price: Number(l.price) || 0, received: Math.round(r * 1000) / 1000, missing: Math.max(0, Math.round((q - r) * 1000) / 1000) };
   });
   const pct = ordered > 0 ? Math.round((got / ordered) * 1000) / 10 : 0;
   return { pct, status: pct === 0 ? 'Chưa nhận' : pct >= 95 ? 'Đã nhận đủ' : 'Nhận một phần', detail, from, to };
@@ -1425,10 +1506,14 @@ async function orderFulfilment(db, branchId, order) {
 
 app.get('/api/purchase-books/orders/:branchId', async (req, res) => {
   const { branchId } = req.params;
+  const from = dateOnly(req.query.from, '1970-01-01');
+  const to = dateOnly(req.query.to, '2999-12-31');
   try {
     const orders = (await pool.query(`
       SELECT id, order_no, created_at, buyer_company, supplier_code, supplier_name, total_amount, line_count, payload
-      FROM purchase_orders WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 300`, [branchId])).rows;
+      FROM purchase_orders
+      WHERE branch_id = $1 AND deleted_at IS NULL AND (created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $2 AND $3
+      ORDER BY created_at DESC LIMIT 300`, [branchId, from, to])).rows;
     const out = [];
     for (const o of orders) {
       const f = await orderFulfilment(pool, branchId, o);
@@ -1448,12 +1533,56 @@ app.get('/api/purchase-books/orders/:branchId/:id/detail', async (req, res) => {
   const { branchId, id } = req.params;
   try {
     const o = (await pool.query(
-      'SELECT id, order_no, created_at, buyer_company, supplier_code, supplier_name, payload FROM purchase_orders WHERE branch_id = $1 AND id = $2', [branchId, Number(id) || 0])).rows[0];
+      'SELECT id, order_no, created_at, buyer_company, supplier_code, supplier_name, payload FROM purchase_orders WHERE branch_id = $1 AND id = $2 AND deleted_at IS NULL', [branchId, Number(id) || 0])).rows[0];
     if (!o) return res.status(404).json({ success: false, message: 'Không tìm thấy đơn' });
     const f = await orderFulfilment(pool, branchId, o);
-    return res.json({ success: true, data: { order_no: o.order_no, supplier_name: o.supplier_name, created_at: o.created_at, ...f, windowDays: RECEIVE_WINDOW_DAYS } });
+    return res.json({ success: true, data: { id: o.id, order_no: o.order_no, supplier_name: o.supplier_name, created_at: o.created_at, ...f, windowDays: RECEIVE_WINDOW_DAYS } });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Xóa đơn (ẩn khỏi sổ, số đơn đã cấp không bị cấp lại để tránh trùng khi theo dõi)
+app.delete('/api/purchase-orders/:branchId/:id', async (req, res) => {
+  try {
+    const r = await pool.query('UPDATE purchase_orders SET deleted_at = NOW() WHERE branch_id = $1 AND id = $2 AND deleted_at IS NULL', [req.params.branchId, Number(req.params.id) || 0]);
+    if (r.rowCount === 0) return res.status(404).json({ success: false, message: 'Không tìm thấy đơn' });
+    return res.json({ success: true, message: 'Đã xóa đơn' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Xóa một dòng chi tiết trong đơn; xóa hết dòng thì đơn được xóa luôn
+app.delete('/api/purchase-orders/:branchId/:id/lines/:index', async (req, res) => {
+  const { branchId } = req.params;
+  const id = Number(req.params.id) || 0;
+  const idx = Number(req.params.index);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const o = (await client.query('SELECT payload FROM purchase_orders WHERE branch_id = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE', [branchId, id])).rows[0];
+    if (!o) { await client.query('ROLLBACK'); return res.status(404).json({ success: false, message: 'Không tìm thấy đơn' }); }
+    const payload = o.payload || {};
+    const lines = Array.isArray(payload.lines) ? payload.lines : [];
+    if (!Number.isInteger(idx) || idx < 0 || idx >= lines.length) { await client.query('ROLLBACK'); return res.status(400).json({ success: false, message: 'Dòng không hợp lệ' }); }
+    lines.splice(idx, 1);
+    if (lines.length === 0) {
+      await client.query('UPDATE purchase_orders SET deleted_at = NOW() WHERE branch_id = $1 AND id = $2', [branchId, id]);
+      await client.query('COMMIT');
+      return res.json({ success: true, message: 'Đơn không còn dòng nào nên đã được xóa', data: { orderDeleted: true } });
+    }
+    payload.lines = lines;
+    const total = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
+    await client.query('UPDATE purchase_orders SET payload = $3, total_amount = $4, line_count = $5 WHERE branch_id = $1 AND id = $2',
+      [branchId, id, JSON.stringify(payload), Math.round(total), lines.length]);
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã xóa dòng', data: { orderDeleted: false, lines: lines.length } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
   }
 });
 

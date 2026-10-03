@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import BranchNav from '../components/BranchNav';
 import DataTable, { filterRows, sortRows } from '../components/DataTable';
 import SearchSelect from '../components/SearchSelect';
+import DateRangeBar from '../components/DateRangeBar';
 
 const num = (n) => (Number(n) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
 const money = (n) => Math.round(Number(n) || 0).toLocaleString('vi-VN');
@@ -107,19 +108,10 @@ export default function StockReport() {
 
         <div className="p-4 space-y-2" style={{ maxWidth: 1600, margin: '0 auto' }}>
           {data && data.dates.length > 0 && (
-            <div className="bg-white rounded border px-3 py-2 flex flex-wrap items-end gap-3">
-              <div>
-                <label className="block font-semibold mb-0.5">Từ ngày</label>
-                <input type="date" value={from} min={data.dates[0]} max={data.dates[data.dates.length - 1]} onChange={(e) => setFrom(e.target.value)} className="border px-2 py-1 rounded" />
-              </div>
-              <div>
-                <label className="block font-semibold mb-0.5">Đến ngày</label>
-                <input type="date" value={to} min={data.dates[0]} max={data.dates[data.dates.length - 1]} onChange={(e) => setTo(e.target.value)} className="border px-2 py-1 rounded" />
-              </div>
-              <button onClick={() => load(from, to)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-bold">Xem</button>
-              <span className="text-gray-600">Tồn đầu kỳ = tồn đầu ngày {fmtDate(data.from)}; Đã mua/Xuất = cộng dồn trong kỳ; Tồn cuối = cuối ngày {fmtDate(data.to)}. Có dữ liệu từ {fmtDate(data.dates[0])} đến {fmtDate(data.dates[data.dates.length - 1])}.</span>
+            <DateRangeBar from={from} to={to} onChange={(f, tt) => { setFrom(f); setTo(tt); }} onApply={(f, tt) => load(f, tt)} minDate={data.dates[0]} maxDate={data.dates[data.dates.length - 1]}>
+              <span className="text-gray-600">Tồn đầu kỳ = đầu ngày {fmtDate(data.from)}; Đã mua/Xuất = cộng dồn trong kỳ; Tồn cuối = cuối ngày {fmtDate(data.to)}. Có dữ liệu từ {fmtDate(data.dates[0])} đến {fmtDate(data.dates[data.dates.length - 1])}.</span>
               <span className="ml-auto text-gray-700 font-bold">Đã ghép với NVL trong app: {matched}/{items.length}</span>
-            </div>
+            </DateRangeBar>
           )}
           {loading ? (
             <p className="p-4 text-gray-600">Đang tải…</p>
