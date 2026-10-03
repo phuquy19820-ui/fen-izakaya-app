@@ -569,7 +569,7 @@ async function classifyBomForMenu(db, branchId) {
     if (mapped.has(d.dish_id)) return { ...base, status: 'KEEP', reason: 'Đã ghép với món đang bán', near };
     if (best && best.score >= 0.85) return { ...base, status: 'KEEP', reason: 'Có trong thực đơn', near };
     if (isSauceName(d.dish_name)) return { ...base, status: 'KEEP', reason: 'Định lượng sốt (giữ lại)', near };
-    if (best && best.score >= 0.65) return { ...base, status: 'REVIEW', reason: 'Tên gần giống một món thực đơn (giữ lại, bạn kiểm tra)', near };
+    if (best && best.score >= 0.6) return { ...base, status: 'REVIEW', reason: 'Tên gần giống một món thực đơn (giữ lại, bạn kiểm tra)', near };
     return { ...base, status: 'DELETE', reason: 'Không có trong thực đơn', near };
   });
 }
