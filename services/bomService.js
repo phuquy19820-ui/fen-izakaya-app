@@ -104,9 +104,9 @@ const SUB_RULES = {
 };
 const SUB_LABELS = {
   VAT_TU: 'Vật tư & khác', SUA_KEM: 'Bơ, sữa, kem & phô mai', TRUNG: 'Trứng', THIT_BO: 'Thịt bò', THIT_HEO: 'Thịt heo', THIT_GA: 'Thịt gà & vịt', TOM_MUC: 'Tôm, mực & nhuyễn thể',
-  CA: 'Cá', NAM: 'Nấm', TRAI_CAY: 'Trái cây', TUOI_GIA_VI: 'Hành, tỏi, gừng, ớt', BOT: 'Bột & tinh bột', GIA_VI: 'Gia vị',
+  CA: 'Cá', NAM: 'Nấm', TRAI_CAY: 'Trái cây', TUOI_GIA_VI: 'Thảo mộc, hành, tỏi, gừng, ớt', BOT: 'Bột & tinh bột', GIA_VI: 'Gia vị',
   SOT: 'Sốt & nước chấm', DAU_AN: 'Dầu ăn & mỡ', DO_UONG: 'Đồ uống & rượu', TINH_BOT: 'Mì, gạo & bánh', RAU_CU: 'Rau củ',
-  THAO_MOC: 'Thảo mộc', THIT_KHAC: 'Thịt khác', HAI_SAN_KHAC: 'Hải sản khác', HANG_KHO_KHAC: 'Hàng khô khác', DONG_LANH_KHAC: 'Đông lạnh khác'
+  THAO_MOC: 'Thảo mộc, hành, tỏi, gừng, ớt', THIT_KHAC: 'Thịt khác', HAI_SAN_KHAC: 'Hải sản khác', HANG_KHO_KHAC: 'Hàng khô khác', DONG_LANH_KHAC: 'Đông lạnh khác'
 };
 const SUB_ORDER_BY_CATEGORY = {
   FRESH_MEAT: ['VAT_TU', 'TRUNG', 'THIT_BO', 'THIT_HEO', 'THIT_GA', 'TOM_MUC', 'CA', 'RAU_CU'],
@@ -286,6 +286,8 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
       await db.query("UPDATE raw_materials SET unit_cost = ROUND($2), conversion_rate = 1, unit_purchase = 'cái', price_source = 'PER_PIECE' WHERE material_id = $1 AND COALESCE(price_source, '') <> 'MANUAL'", [code, pick(prices)]);
     }
   }
+
+  await db.query("UPDATE raw_materials SET is_active = FALSE WHERE sub_group = 'Vật tư & khác'");
 
   const CHUNK = 500;
   for (let i = 0; i < bomRows.length; i += CHUNK) {

@@ -116,6 +116,37 @@ async function initializeDatabase() {
         mode VARCHAR(10) DEFAULT 'UNIT', ml_per_sale NUMERIC(12,2) DEFAULT 0, buy_name VARCHAR(255),
         PRIMARY KEY (branch_id, item_code)
       )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS cukcuk_stock_daily (
+        branch_id VARCHAR(50) NOT NULL, stock_date DATE NOT NULL, item_code VARCHAR(100) NOT NULL, item_name VARCHAR(255),
+        category_name VARCHAR(100), unit_name VARCHAR(30), opening NUMERIC(18,4) DEFAULT 0, qty_in NUMERIC(18,4) DEFAULT 0,
+        qty_out NUMERIC(18,4) DEFAULT 0, closing NUMERIC(18,4) DEFAULT 0, closing_amount NUMERIC(18,2) DEFAULT 0,
+        PRIMARY KEY (branch_id, stock_date, item_code)
+      )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS stock_code_map (
+        branch_id VARCHAR(50) NOT NULL, cukcuk_code VARCHAR(100) NOT NULL, cukcuk_name VARCHAR(255), unit_name VARCHAR(30),
+        material_id VARCHAR(50), match_type VARCHAR(20) DEFAULT 'NONE', match_score NUMERIC(4,3) DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, cukcuk_code)
+      )`);
+      for (const col of ['opening_stock', 'purchases_qty', 'sales_usage_qty', 'waste_loss_qty', 'closing_stock']) {
+        migrations.push(`ALTER TABLE inventory_tracking ALTER COLUMN ${col} TYPE NUMERIC(18,4)`);
+      }
+      migrations.push(`CREATE TABLE IF NOT EXISTS suppliers (
+        branch_id VARCHAR(50) NOT NULL, code VARCHAR(60) NOT NULL, name VARCHAR(255), phone VARCHAR(60), address VARCHAR(500),
+        tax_code VARCHAR(60), contact VARCHAR(255), category VARCHAR(120), inactive BOOLEAN DEFAULT FALSE,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, code)
+      )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS supplier_purchases (
+        branch_id VARCHAR(50) NOT NULL, detail_id VARCHAR(80) NOT NULL, ref_no VARCHAR(60), purchase_date DATE NOT NULL,
+        supplier_code VARCHAR(60), supplier_name VARCHAR(255), item_code VARCHAR(100) NOT NULL, item_name VARCHAR(255),
+        unit_name VARCHAR(30), qty NUMERIC(18,4) DEFAULT 0, unit_price NUMERIC(18,4) DEFAULT 0, amount NUMERIC(18,2) DEFAULT 0,
+        PRIMARY KEY (branch_id, detail_id)
+      )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS purchase_orders (
+        id SERIAL PRIMARY KEY, branch_id VARCHAR(50) NOT NULL, order_year INT NOT NULL, order_month INT NOT NULL, seq INT NOT NULL,
+        order_no VARCHAR(20) NOT NULL, buyer_company VARCHAR(255), supplier_code VARCHAR(60), supplier_name VARCHAR(255),
+        total_amount NUMERIC(18,2) DEFAULT 0, line_count INT DEFAULT 0, payload JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (branch_id, order_year, order_month, seq)
+      )`);
       migrations.push('ALTER TABLE cukcuk_daily_sales ADD COLUMN IF NOT EXISTS revenue NUMERIC(16,2) DEFAULT 0');
       migrations.push('CREATE INDEX IF NOT EXISTS idx_sales_branch_date ON cukcuk_daily_sales (branch_id, sale_date)');
       migrations.push('ALTER TABLE raw_materials ALTER COLUMN category DROP NOT NULL');
@@ -132,6 +163,7 @@ async function initializeDatabase() {
         for (const m of missing.rows) {
           await pool.query('UPDATE raw_materials SET sub_group = $2 WHERE material_id = $1', [m.material_id, subGroupOf(m.category, m.material_name)]);
         }
+        await pool.query("UPDATE raw_materials SET is_active = FALSE WHERE sub_group = 'Vật tư & khác'");
         if (missing.rows.length) console.log('✅ Đã phân nhóm chi tiết cho ' + missing.rows.length + ' NVL');
       } catch (err) {
         console.warn('Backfill sub_group error:', err.message);
@@ -651,7 +683,7 @@ app.put('/api/branches/:branchId/buyer', async (req, res) => {
 
 // Xuất đơn mua hàng ra Excel để gửi nhà cung cấp
 app.post('/api/purchase-plans/export-xlsx', async (req, res) => {
-  const { buyerCompany, branchName, supplier, deliveryDate, note, cycleLabel, showPrice = true, lines } = req.body;
+  const { buyerCompany, branchName, supplier, supplierPhone, supplierAddress, orderNo, deliveryDate, note, cycleLabel, showPrice = true, lines } = req.body;
   if (!Array.isArray(lines) || lines.length === 0 || lines.length > 3000) {
     return res.status(400).json({ success: false, message: 'Không có dòng hàng để xuất' });
   }
@@ -685,11 +717,14 @@ app.post('/api/purchase-plans/export-xlsx', async (req, res) => {
     };
 
     addText('ĐƠN ĐẶT MUA NGUYÊN VẬT LIỆU', { size: 16, bold: true, center: true }).height = 28;
+    if (orderNo) addText('Số: ' + orderNo, { size: 12, bold: true, center: true });
     if (cycleLabel) addText(cycleLabel, { center: true });
     ws.addRow([]);
     addText('Công ty mua: ' + (buyerCompany || ''), { bold: true });
     if (branchName) addText('Chi nhánh: ' + branchName);
     if (supplier) addText('Nhà cung cấp: ' + supplier);
+    if (supplierPhone) addText('Điện thoại NCC: ' + supplierPhone);
+    if (supplierAddress) addText('Địa chỉ NCC: ' + supplierAddress);
     addText('Ngày lập: ' + new Date().toLocaleDateString('vi-VN'));
     if (deliveryDate) addText('Ngày giao hàng yêu cầu: ' + String(deliveryDate).replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$3/$2/$1'));
     if (note) addText('Ghi chú: ' + note);
@@ -768,6 +803,7 @@ app.post('/api/purchase-plans/export-xlsx', async (req, res) => {
     const buffer = await wb.xlsx.writeBuffer();
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="don-mua-hang.xlsx"');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
     return res.send(Buffer.from(buffer));
   } catch (error) {
     console.error('Export error:', error);
@@ -922,6 +958,346 @@ app.put('/api/beverage/buy-items', async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   } finally {
     client.release();
+  }
+});
+
+// ====== TỒN KHO từ báo cáo "Tổng hợp nhập - xuất - tồn kho" của CUKCUK ======
+// Dựng lại inventory_tracking (đơn vị mua của app) từ dữ liệu CUKCUK đã ghép với NVL
+async function rebuildInventory(db, branchId) {
+  await db.query('DELETE FROM inventory_tracking WHERE branch_id = $1', [branchId]);
+  await db.query(`
+    INSERT INTO inventory_tracking (branch_id, material_id, period_date, opening_stock, purchases_qty, sales_usage_qty, closing_stock, stock_value)
+    SELECT d.branch_id, m.material_id, d.stock_date,
+           SUM(d.opening * x.f), SUM(d.qty_in * x.f), SUM(d.qty_out * x.f), SUM(d.closing * x.f), SUM(d.closing_amount)
+    FROM cukcuk_stock_daily d
+    JOIN stock_code_map m ON m.branch_id = d.branch_id AND m.cukcuk_code = d.item_code AND m.material_id IS NOT NULL
+    JOIN raw_materials rm ON rm.material_id = m.material_id
+    CROSS JOIN LATERAL (SELECT CASE WHEN lower(d.unit_name) IN ('gram', 'gr', 'g', 'ml') AND rm.conversion_rate > 1
+                                    THEN 1.0 / rm.conversion_rate ELSE 1.0 END AS f) x
+    WHERE d.branch_id = $1
+    GROUP BY d.branch_id, m.material_id, d.stock_date
+  `, [branchId]);
+}
+
+async function branchMaterials(db, branchId) {
+  return (await db.query(`
+    SELECT DISTINCT rm.material_id AS dish_id, rm.material_name AS dish_name
+    FROM raw_materials rm JOIN bill_of_materials b ON b.material_id = rm.material_id AND b.branch_id = $1
+    WHERE rm.is_active IS NOT FALSE`, [branchId])).rows;
+}
+
+app.post('/api/inventory/import', async (req, res) => {
+  const { branchId, rows } = req.body;
+  if (!branchId || !Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc dữ liệu tồn kho' });
+  }
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const clean = rows
+    .map(r => ({
+      date: String(r.date || ''), code: String(r.code || '').trim(), name: String(r.name || '').trim(),
+      category: String(r.category || '').trim(), unit: String(r.unit || '').trim(),
+      opening: Number(r.opening) || 0, qtyIn: Number(r.qtyIn) || 0, qtyOut: Number(r.qtyOut) || 0,
+      closing: Number(r.closing) || 0, amount: Number(r.amount) || 0
+    }))
+    .filter(r => dateRe.test(r.date) && r.code);
+  if (clean.length === 0) return res.status(400).json({ success: false, message: 'Không có dòng tồn kho hợp lệ' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const mats = await branchMaterials(client, branchId);
+    const existing = new Map((await client.query('SELECT cukcuk_code, material_id, match_type FROM stock_code_map WHERE branch_id = $1', [branchId])).rows.map(r => [r.cukcuk_code, r]));
+    const seen = new Map();
+    clean.forEach(r => { seen.set(r.code, r); });
+    for (const r of seen.values()) {
+      const cur = existing.get(r.code);
+      if (cur && (cur.material_id || cur.match_type === 'MANUAL')) {
+        await client.query('UPDATE stock_code_map SET cukcuk_name = $3, unit_name = $4, updated_at = NOW() WHERE branch_id = $1 AND cukcuk_code = $2', [branchId, r.code, r.name, r.unit]);
+        continue;
+      }
+      const m = matchDish(r.name, mats);
+      await client.query(`
+        INSERT INTO stock_code_map (branch_id, cukcuk_code, cukcuk_name, unit_name, material_id, match_type, match_score)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT (branch_id, cukcuk_code) DO UPDATE SET cukcuk_name = EXCLUDED.cukcuk_name, unit_name = EXCLUDED.unit_name,
+          material_id = EXCLUDED.material_id, match_type = EXCLUDED.match_type, match_score = EXCLUDED.match_score, updated_at = NOW()
+      `, [branchId, r.code, r.name, r.unit, m ? m.dishId : null, m ? m.type : 'NONE', m ? m.score : 0]);
+    }
+
+    const dates = clean.map(r => r.date).sort();
+    const minDate = dates[0];
+    const maxDate = dates[dates.length - 1];
+    await client.query('DELETE FROM cukcuk_stock_daily WHERE branch_id = $1 AND stock_date BETWEEN $2 AND $3', [branchId, minDate, maxDate]);
+    for (const r of clean) {
+      await client.query(`
+        INSERT INTO cukcuk_stock_daily (branch_id, stock_date, item_code, item_name, category_name, unit_name, opening, qty_in, qty_out, closing, closing_amount)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        ON CONFLICT (branch_id, stock_date, item_code) DO UPDATE SET item_name = EXCLUDED.item_name, category_name = EXCLUDED.category_name,
+          unit_name = EXCLUDED.unit_name, opening = EXCLUDED.opening, qty_in = EXCLUDED.qty_in, qty_out = EXCLUDED.qty_out,
+          closing = EXCLUDED.closing, closing_amount = EXCLUDED.closing_amount
+      `, [branchId, r.date, r.code, r.name.substring(0, 255), r.category.substring(0, 100), r.unit.substring(0, 30), r.opening, r.qtyIn, r.qtyOut, r.closing, r.amount]);
+    }
+    await rebuildInventory(client, branchId);
+    await client.query(
+      "INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, 'STOCK_REPORT', 'SUCCESS', $2)", [branchId, clean.length]);
+    await client.query('COMMIT');
+
+    const stat = await pool.query(`
+      SELECT COUNT(*) AS total_codes, COUNT(*) FILTER (WHERE material_id IS NOT NULL) AS matched_codes
+      FROM stock_code_map WHERE branch_id = $1`, [branchId]);
+    return res.json({ success: true, message: 'Đã nhập tồn kho CUKCUK', data: { fromDate: minDate, toDate: maxDate, rows: clean.length, ...stat.rows[0] } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Inventory import error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Báo cáo tồn kho theo khoảng ngày: tồn đầu kỳ (ngày đầu), đã mua/xuất (cộng dồn), tồn cuối (ngày cuối)
+app.get('/api/stock/report/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    const dates = (await pool.query('SELECT DISTINCT stock_date FROM cukcuk_stock_daily WHERE branch_id = $1 ORDER BY stock_date', [branchId])).rows.map(r => r.stock_date);
+    if (dates.length === 0) return res.json({ success: true, data: { dates: [], items: [], materials: [] } });
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    const iso = (d) => new Date(d).toISOString().slice(0, 10);
+    const from = dateRe.test(req.query.from || '') ? req.query.from : iso(dates[0]);
+    const to = dateRe.test(req.query.to || '') ? req.query.to : iso(dates[dates.length - 1]);
+    const items = (await pool.query(`
+      WITH r AS (SELECT * FROM cukcuk_stock_daily WHERE branch_id = $1 AND stock_date BETWEEN $2 AND $3),
+      firsts AS (SELECT DISTINCT ON (item_code) item_code, opening FROM r ORDER BY item_code, stock_date ASC),
+      lasts AS (SELECT DISTINCT ON (item_code) item_code, item_name, category_name, unit_name, closing, closing_amount FROM r ORDER BY item_code, stock_date DESC),
+      sums AS (SELECT item_code, SUM(qty_in) AS qty_in, SUM(qty_out) AS qty_out FROM r GROUP BY item_code)
+      SELECT l.item_code AS code, l.item_name AS name, l.category_name AS category, l.unit_name AS unit,
+             f.opening, s.qty_in, s.qty_out, l.closing, l.closing_amount AS amount,
+             m.material_id, m.match_type, rm.material_name
+      FROM lasts l JOIN firsts f USING (item_code) JOIN sums s USING (item_code)
+      LEFT JOIN stock_code_map m ON m.branch_id = $1 AND m.cukcuk_code = l.item_code
+      LEFT JOIN raw_materials rm ON rm.material_id = m.material_id
+      ORDER BY l.category_name, l.item_name`, [branchId, from, to])).rows;
+    const mats = await branchMaterials(pool, branchId);
+    const result = items.map(it => {
+      if (it.material_id) return it;
+      const s = suggest(it.name, mats, 1)[0];
+      return { ...it, suggestion: s && s.score >= 0.5 ? { material_id: s.dish_id, material_name: s.dish_name, score: Math.round(s.score * 100) / 100 } : null };
+    });
+    return res.json({
+      success: true,
+      data: { dates: dates.map(iso), from, to, items: result, materials: mats.map(m => ({ material_id: m.dish_id, material_name: m.dish_name })) }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Ghép tay mã NVL CUKCUK với NVL trong app (materialId = null để bỏ ghép)
+app.post('/api/stock/map', async (req, res) => {
+  const { branchId, cukcukCode, materialId } = req.body;
+  if (!branchId || !cukcukCode) return res.status(400).json({ success: false, message: 'Thiếu thông tin' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const r = await client.query(
+      "UPDATE stock_code_map SET material_id = $3, match_type = 'MANUAL', match_score = 1, updated_at = NOW() WHERE branch_id = $1 AND cukcuk_code = $2",
+      [branchId, cukcukCode, materialId || null]);
+    if (r.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ success: false, message: 'Không tìm thấy mã CUKCUK' }); }
+    await rebuildInventory(client, branchId);
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã lưu ghép NVL' });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ====== NHÀ CUNG CẤP + lịch sử mua theo NCC và NVL (báo cáo "Mua hàng chi tiết theo NCC và NVL") ======
+async function ensureStockMap(db, branchId, items) {
+  const mats = await branchMaterials(db, branchId);
+  const existing = new Map((await db.query('SELECT cukcuk_code, material_id, match_type FROM stock_code_map WHERE branch_id = $1', [branchId])).rows.map(r => [r.cukcuk_code, r]));
+  for (const it of items) {
+    const cur = existing.get(it.code);
+    if (cur && (cur.material_id || cur.match_type === 'MANUAL')) continue;
+    const m = matchDish(it.name, mats);
+    await db.query(`
+      INSERT INTO stock_code_map (branch_id, cukcuk_code, cukcuk_name, unit_name, material_id, match_type, match_score)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT (branch_id, cukcuk_code) DO UPDATE SET cukcuk_name = EXCLUDED.cukcuk_name,
+        material_id = EXCLUDED.material_id, match_type = EXCLUDED.match_type, match_score = EXCLUDED.match_score, updated_at = NOW()
+    `, [branchId, it.code, it.name, it.unit || '', m ? m.dishId : null, m ? m.type : 'NONE', m ? m.score : 0]);
+  }
+}
+
+app.post('/api/suppliers/import', async (req, res) => {
+  const { branchId, suppliers, purchases } = req.body;
+  if (!branchId || (!Array.isArray(suppliers) && !Array.isArray(purchases))) {
+    return res.status(400).json({ success: false, message: 'Thiếu dữ liệu nhà cung cấp' });
+  }
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let supCount = 0;
+    if (Array.isArray(suppliers) && suppliers.length) {
+      for (const s of suppliers) {
+        const code = String(s.code || '').trim();
+        if (!code) continue;
+        await client.query(`
+          INSERT INTO suppliers (branch_id, code, name, phone, address, tax_code, contact, category, inactive, updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+          ON CONFLICT (branch_id, code) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, address = EXCLUDED.address,
+            tax_code = EXCLUDED.tax_code, contact = EXCLUDED.contact, category = EXCLUDED.category, inactive = EXCLUDED.inactive, updated_at = NOW()
+        `, [branchId, code.substring(0, 60), String(s.name || '').substring(0, 255), String(s.phone || '').substring(0, 60),
+          String(s.address || '').substring(0, 500), String(s.tax || '').substring(0, 60), String(s.contact || '').substring(0, 255),
+          String(s.category || '').substring(0, 120), !!s.inactive]);
+        supCount++;
+      }
+    }
+    let purCount = 0;
+    if (Array.isArray(purchases) && purchases.length) {
+      const clean = purchases
+        .map(p => ({
+          detailId: String(p.detailId || '').trim(), refNo: String(p.refNo || ''), date: String(p.date || ''),
+          supplierCode: String(p.supplierCode || '').trim(), supplierName: String(p.supplierName || ''),
+          itemCode: String(p.itemCode || '').trim(), itemName: String(p.itemName || ''), unit: String(p.unit || ''),
+          qty: Number(p.qty) || 0, price: Number(p.price) || 0, amount: Number(p.amount) || 0
+        }))
+        .filter(p => p.detailId && dateRe.test(p.date) && p.itemCode);
+      if (clean.length) {
+        const ds = clean.map(p => p.date).sort();
+        await client.query('DELETE FROM supplier_purchases WHERE branch_id = $1 AND purchase_date BETWEEN $2 AND $3', [branchId, ds[0], ds[ds.length - 1]]);
+        for (const p of clean) {
+          await client.query(`
+            INSERT INTO supplier_purchases (branch_id, detail_id, ref_no, purchase_date, supplier_code, supplier_name, item_code, item_name, unit_name, qty, unit_price, amount)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            ON CONFLICT (branch_id, detail_id) DO UPDATE SET purchase_date = EXCLUDED.purchase_date, supplier_code = EXCLUDED.supplier_code,
+              supplier_name = EXCLUDED.supplier_name, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount
+          `, [branchId, p.detailId.substring(0, 80), p.refNo.substring(0, 60), p.date, p.supplierCode.substring(0, 60), p.supplierName.substring(0, 255),
+            p.itemCode.substring(0, 100), p.itemName.substring(0, 255), p.unit.substring(0, 30), p.qty, p.price, p.amount]);
+          purCount++;
+        }
+        const uniq = new Map();
+        clean.forEach(p => uniq.set(p.itemCode, { code: p.itemCode, name: p.itemName, unit: p.unit }));
+        await ensureStockMap(client, branchId, Array.from(uniq.values()));
+      }
+    }
+    await client.query(
+      "INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, 'SUPPLIERS', 'SUCCESS', $2)", [branchId, supCount + purCount]);
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã nhập nhà cung cấp và lịch sử mua', data: { suppliers: supCount, purchases: purCount } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Suppliers import error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Danh sách nhà cung cấp kèm số NVL đã mua và lần mua gần nhất
+app.get('/api/suppliers/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    const rows = (await pool.query(`
+      SELECT s.code, s.name, s.phone, s.address, s.tax_code, s.contact, s.category, s.inactive,
+             COALESCE(p.items, 0) AS item_count, COALESCE(p.times, 0) AS purchase_count, p.last_date, COALESCE(p.total, 0) AS total_amount
+      FROM suppliers s
+      LEFT JOIN (SELECT supplier_code, COUNT(DISTINCT item_code) AS items, COUNT(DISTINCT ref_no) AS times,
+                        MAX(purchase_date) AS last_date, SUM(amount) AS total
+                 FROM supplier_purchases WHERE branch_id = $1 GROUP BY supplier_code) p ON p.supplier_code = s.code
+      WHERE s.branch_id = $1
+      ORDER BY (p.last_date IS NULL), s.inactive, s.name`, [branchId])).rows;
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Mỗi NVL đã mua từ những nhà cung cấp nào (kèm đơn giá gần nhất quy về đơn vị mua của app)
+app.get('/api/suppliers/material-map/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    const rows = (await pool.query(`
+      SELECT DISTINCT ON (m.material_id, p.supplier_code)
+             m.material_id, p.supplier_code, p.supplier_name, p.purchase_date AS last_date,
+             CASE WHEN lower(p.unit_name) IN ('gram', 'gr', 'g', 'ml') AND rm.conversion_rate > 1
+                  THEN p.unit_price * rm.conversion_rate ELSE p.unit_price END AS price_app,
+             (SELECT COUNT(*) FROM supplier_purchases q WHERE q.branch_id = p.branch_id AND q.supplier_code = p.supplier_code AND q.item_code = p.item_code) AS times
+      FROM supplier_purchases p
+      JOIN stock_code_map m ON m.branch_id = p.branch_id AND m.cukcuk_code = p.item_code AND m.material_id IS NOT NULL
+      JOIN raw_materials rm ON rm.material_id = m.material_id
+      WHERE p.branch_id = $1
+      ORDER BY m.material_id, p.supplier_code, p.purchase_date DESC`, [branchId])).rows;
+    const map = {};
+    for (const r of rows) {
+      (map[r.material_id] = map[r.material_id] || []).push({
+        supplier_code: r.supplier_code, supplier_name: r.supplier_name, last_date: r.last_date,
+        price: Math.round(Number(r.price_app) || 0), times: Number(r.times) || 0
+      });
+    }
+    Object.values(map).forEach(list => list.sort((a, b) => new Date(b.last_date) - new Date(a.last_date)));
+    return res.json({ success: true, data: map });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ====== ĐƠN MUA HÀNG: đánh số 001/MM/YYYY theo chi nhánh, về 001 khi sang tháng mới ======
+app.post('/api/purchase-orders', async (req, res) => {
+  const { branchId, buyerCompany, supplierCode, supplierName, supplierPhone, supplierAddress, deliveryDate, note, cycleLabel, showPrice, lines } = req.body;
+  if (!branchId || !Array.isArray(lines) || lines.length === 0) {
+    return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc dòng hàng' });
+  }
+  const total = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.price) || 0), 0);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [branchId + '|purchase-order']);
+    const ym = (await client.query(`
+      SELECT EXTRACT(YEAR FROM (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh'))::int AS y,
+             EXTRACT(MONTH FROM (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh'))::int AS m`)).rows[0];
+    const next = (await client.query(
+      'SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM purchase_orders WHERE branch_id = $1 AND order_year = $2 AND order_month = $3',
+      [branchId, ym.y, ym.m])).rows[0].n;
+    const orderNo = String(next).padStart(3, '0') + '/' + String(ym.m).padStart(2, '0') + '/' + ym.y;
+    const payload = { buyerCompany, supplierCode, supplierName, supplierPhone, supplierAddress, deliveryDate, note, cycleLabel, showPrice, lines };
+    const ins = await client.query(`
+      INSERT INTO purchase_orders (branch_id, order_year, order_month, seq, order_no, buyer_company, supplier_code, supplier_name, total_amount, line_count, payload)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, created_at`,
+      [branchId, ym.y, ym.m, next, orderNo, String(buyerCompany || '').substring(0, 255), String(supplierCode || '').substring(0, 60),
+        String(supplierName || '').substring(0, 255), Math.round(total), lines.length, JSON.stringify(payload)]);
+    await client.query('COMMIT');
+    return res.json({ success: true, data: { id: ins.rows[0].id, orderNo, createdAt: ins.rows[0].created_at } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Create purchase order error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/purchase-orders/:branchId', async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT id, order_no, created_at, buyer_company, supplier_name, total_amount, line_count, payload->>'cycleLabel' AS cycle_label
+      FROM purchase_orders WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 300`, [req.params.branchId]);
+    return res.json({ success: true, data: r.rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/purchase-orders/:branchId/:id', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT order_no, payload FROM purchase_orders WHERE branch_id = $1 AND id = $2', [req.params.branchId, Number(req.params.id) || 0]);
+    if (r.rows.length === 0) return res.status(404).json({ success: false, message: 'Không tìm thấy đơn' });
+    return res.json({ success: true, data: r.rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 });
 

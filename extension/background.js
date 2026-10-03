@@ -56,9 +56,31 @@ async function finishWithRows(job, payload) {
     const json = await res.json();
     if (!json.success) throw new Error(json.message || 'App từ chối dữ liệu');
     const d = json.data;
+    const parts = ['Doanh số: ' + payload.meta.invoices + ' hóa đơn, ' + d.salesRecords + ' dòng món/ngày (' + payload.meta.fromDate + ' → ' + payload.meta.toDate + ')'];
+    const warnings = [...(payload.warnings || [])];
+    const post = async (path, body) => {
+      const r = await fetch(job.appOrigin + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!j.success) throw new Error(j.message || 'App từ chối dữ liệu');
+      return j.data;
+    };
+    if (payload.stock && payload.stock.length) {
+      try {
+        await update(job, { status: 'running', text: 'Đang gửi tồn kho về app…' });
+        const s = await post('/api/inventory/import', { branchId: job.branchId, rows: payload.stock });
+        parts.push('Tồn kho: ' + s.rows + ' dòng, ghép ' + s.matched_codes + '/' + s.total_codes + ' mã NVL');
+      } catch (e) { warnings.push('Tồn kho: ' + e.message); }
+    }
+    if ((payload.suppliers && payload.suppliers.length) || (payload.purchases && payload.purchases.length)) {
+      try {
+        await update(job, { status: 'running', text: 'Đang gửi nhà cung cấp về app…' });
+        const s = await post('/api/suppliers/import', { branchId: job.branchId, suppliers: payload.suppliers, purchases: payload.purchases });
+        parts.push('Nhà cung cấp: ' + s.suppliers + ' NCC, ' + s.purchases + ' dòng mua');
+      } catch (e) { warnings.push('Nhà cung cấp: ' + e.message); }
+    }
     await update(job, {
       status: 'done',
-      text: 'Hoàn tất: ' + payload.meta.invoices + ' hóa đơn, ' + d.salesRecords + ' dòng món/ngày (' + payload.meta.fromDate + ' → ' + payload.meta.toDate + ').',
+      text: 'Hoàn tất. ' + parts.join(' · ') + (warnings.length ? ' · Cảnh báo: ' + warnings.join('; ') : '') + '.',
       result: { matchedCodes: d.matched_codes, totalCodes: d.total_codes, branchName: payload.meta.branchName }
     });
     chrome.tabs.update(job.appTabId, { active: true }).catch(() => {});

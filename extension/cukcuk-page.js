@@ -62,6 +62,104 @@
     return json;
   }
 
+  const baseObj = (tpl, extra) => Object.assign({
+    BranchID: tpl.BranchID, BranchName: tpl.BranchName, CashierID: tpl.CashierID || ALL_GUID,
+    NumberTop: -1, Period: null, PeriodName: 'Tùy chọn', ReportCode: null, RevenueBy: null, TimeZone: 420, ViewMode: 1
+  }, extra);
+
+  async function postReport(tpl, reportId, obj, page) {
+    const body = { reportID: reportId, obj: JSON.stringify(obj), hasSummary: true, hasMaster: false, page, start: (page - 1) * 100, limit: 100 };
+    const res = await fetch('Service/ReportService.svc/GetReportData?_dc=' + Date.now(), {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Cukcuk-Branchid': tpl.BranchID, 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error('CUKCUK trả lỗi ' + res.status);
+    const json = await res.json();
+    if (json.success === false) throw new Error('CUKCUK từ chối báo cáo (có thể chưa đủ quyền)');
+    return json;
+  }
+
+  async function allPages(tpl, reportId, obj) {
+    const rows = [];
+    let page = 1;
+    let total = 0;
+    do {
+      const json = await postReport(tpl, reportId, obj, page);
+      total = Number(json.total) || 0;
+      const data = json.data || [];
+      rows.push(...data);
+      page++;
+      if (data.length === 0) break;
+    } while (rows.length < total);
+    return rows;
+  }
+
+  const eachDay = (from, to) => {
+    const out = [];
+    let t = Date.parse(from + 'T00:00:00Z');
+    const e = Date.parse(to + 'T00:00:00Z');
+    while (t <= e && out.length < 62) { out.push(new Date(t).toISOString().slice(0, 10)); t += 86400000; }
+    return out;
+  };
+
+  // Tồn kho theo từng ngày (báo cáo Tổng hợp nhập - xuất - tồn kho)
+  async function fetchStock(tpl, from, to) {
+    const rows = [];
+    for (const day of eachDay(from, to)) {
+      const obj = baseObj(tpl, {
+        FromDate: day + 'T00:00:00.0000' + TZ, ToDate: day + 'T23:59:59.9990' + TZ,
+        InventoryItemCategoryID: null, InventoryItemCategoryName: 'Tất cả', ReportID: 'ST_STOCKGENERAL',
+        ReportName: 'Tổng hợp nhập - xuất - tồn kho', StockName: 'Tất cả', UnitName: '', branchID: tpl.BranchID
+      });
+      const data = await allPages(tpl, 'ST_STOCKGENERAL', obj);
+      for (const d of data) {
+        const r = { date: day, code: d.InventoryItemCode, name: d.InventoryItemName, category: d.InventoryCategoryName, unit: d.UnitName,
+          opening: Number(d.QuantityInTerm) || 0, qtyIn: Number(d.QuantityIn) || 0, qtyOut: Number(d.QuantityOut) || 0,
+          closing: Number(d.QuantityInStock) || 0, amount: Number(d.ClosingAmount) || 0 };
+        if (r.code && (r.opening || r.qtyIn || r.qtyOut || r.closing)) rows.push(r);
+      }
+    }
+    return rows;
+  }
+
+  async function fetchVendors(tpl) {
+    const out = [];
+    let page = 1;
+    let total = 0;
+    do {
+      const res = await fetch('Service/DictionaryService.svc/GetAllVendorPaging?_dc=' + Date.now() + '&itemType=0&page=' + page + '&start=' + ((page - 1) * 100) + '&limit=100', {
+        credentials: 'same-origin', headers: { 'X-Cukcuk-Branchid': tpl.BranchID, 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      if (!res.ok) throw new Error('CUKCUK trả lỗi ' + res.status);
+      const json = await res.json();
+      total = Number(json.total) || 0;
+      const data = json.data || [];
+      for (const d of data) {
+        out.push({ code: d.VendorCode, name: d.VendorName, phone: d.Tel || d.Mobile || '', address: d.Address || d.AddressOrContactAddress || '',
+          tax: d.CompanyTaxCode || '', contact: d.ContactName || '', category: d.VendorCategoryName || '', inactive: !!d.Inactive });
+      }
+      page++;
+      if (data.length === 0) break;
+    } while (out.length < total);
+    return out;
+  }
+
+  // Lịch sử mua theo nhà cung cấp và NVL: 180 ngày gần nhất
+  async function fetchPurchases(tpl, to) {
+    const from = new Date(Date.parse(to + 'T00:00:00Z') - 180 * 86400000).toISOString().slice(0, 10);
+    const obj = baseObj(tpl, {
+      FromDate: from + 'T00:00:00.0000' + TZ, ToDate: to + 'T23:59:59.9990' + TZ, ReportID: 'PU_BYVENDORANDMATERIALS',
+      ReportName: 'Mua hàng chi tiết theo NCC và NVL', VendorCategoryID: ALL_GUID, VendorCategoryName: 'Tất cả', VendorID: ALL_GUID, VendorName: 'Tất cả'
+    });
+    const data = await allPages(tpl, 'PU_BYVENDORANDMATERIALS', obj);
+    return data.filter((d) => d.InventoryItemCode && d.RefDetailID).map((d) => ({
+      detailId: d.RefDetailID, refNo: d.RefNo, date: new Date(new Date(d.RefDate).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10),
+      supplierCode: d.VendorCode, supplierName: d.VendorName, itemCode: d.InventoryItemCode, itemName: d.InventoryItemName,
+      unit: d.PUUnitName || d.UnitName, qty: Number(d.Quantity) || 0, price: Number(d.UnitPrice) || 0, amount: Number(d.Amount) || 0
+    }));
+  }
+
   const localDate = (iso) => new Date(new Date(iso).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
   async function run(job) {
@@ -116,7 +214,22 @@
         if (data.length === 0) break;
       } while (collected < total);
 
+      const extras = { stock: [], suppliers: [], purchases: [], warnings: [] };
+      try {
+        say('PROGRESS', { status: 'running', text: 'Đang lấy tồn kho theo ngày…' });
+        extras.stock = await fetchStock(tpl, job.fromDate, job.toDate);
+      } catch (e) { extras.warnings.push('Tồn kho: ' + e.message); }
+      try {
+        say('PROGRESS', { status: 'running', text: 'Đang lấy danh sách nhà cung cấp…' });
+        extras.suppliers = await fetchVendors(tpl);
+      } catch (e) { extras.warnings.push('Nhà cung cấp: ' + e.message); }
+      try {
+        say('PROGRESS', { status: 'running', text: 'Đang lấy lịch sử mua theo nhà cung cấp…' });
+        extras.purchases = await fetchPurchases(tpl, job.toDate);
+      } catch (e) { extras.warnings.push('Lịch sử mua: ' + e.message); }
+
       say('ROWS', {
+        stock: extras.stock, suppliers: extras.suppliers, purchases: extras.purchases, warnings: extras.warnings,
         rows: Array.from(agg.values()),
         meta: { branchName: tpl.BranchName, invoices: invoices.size, itemRows, fromDate: job.fromDate, toDate: job.toDate }
       });

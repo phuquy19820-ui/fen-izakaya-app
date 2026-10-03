@@ -30,6 +30,8 @@ export default function PurchasePlanMisaUI() {
   const [planId, setPlanId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
+  const [suppliers, setSuppliers] = useState([]);
+  const [matSup, setMatSup] = useState(null);
 
   const initialAdjustments = (details) => {
     const adj = {};
@@ -41,6 +43,8 @@ export default function PurchasePlanMisaUI() {
     if (!branch) return;
     fetchBranch();
     fetchPurchasePlan();
+    fetch(`/api/suppliers/${branch}`).then((r) => r.json()).then((d) => d.success && setSuppliers(d.data)).catch(() => {});
+    fetch(`/api/suppliers/material-map/${branch}`).then((r) => r.json()).then((d) => d.success && setMatSup(d.data)).catch(() => {});
   }, [branch]);
 
   const fetchBranch = async () => {
@@ -141,6 +145,7 @@ export default function PurchasePlanMisaUI() {
     { key: 'code', label: 'Mã NVL', width: 118, type: 'text', get: (r) => r.material_id, render: (r) => <span className="font-mono text-blue-700">{r.material_id}</span> },
     { key: 'name', label: 'Tên nguyên vật liệu', width: 300, type: 'text', get: (r) => r.material_name, render: (r) => <span className="font-medium">{r.material_name}</span> },
     { key: 'group', label: 'Nhóm hàng', width: 132, type: 'select', get: groupOf },
+    { key: 'supplier', label: 'Nhà cung cấp', width: 170, type: 'select', get: (r) => ((matSup && matSup[r.material_id]) || [])[0]?.supplier_name || '(chưa có)' },
     { key: 'unit', label: 'ĐVT', width: 54, type: 'select', get: (r) => r.unit_purchase, align: 'center' },
     { key: 'stock', label: 'Tồn', width: 62, type: 'number', align: 'right', get: (r) => r.opening_stock, render: (r) => fix2(r.opening_stock) },
     { key: 'suggested', label: 'Đề xuất', width: 74, type: 'number', align: 'right', get: (r) => r.suggested_qty, render: (r) => <span className="font-bold text-yellow-800">{fix2(r.suggested_qty)}</span> },
@@ -185,7 +190,7 @@ export default function PurchasePlanMisaUI() {
 
   const orderLines = visibleRows
     .filter((r) => qtyOf(r) > 0)
-    .map((r) => ({ code: r.material_id, name: r.material_name, group: groupOf(r), unit: r.unit_purchase, qty: qtyOf(r), price: priceOf(r) }));
+    .map((r) => ({ materialId: r.material_id, code: r.material_id, name: r.material_name, group: groupOf(r), unit: r.unit_purchase, qty: qtyOf(r), price: priceOf(r) }));
   const cycleLabel = (cycleType === 'FRESH_3DAYS' ? 'Hàng tươi - chu kỳ mua 3 ngày' : 'Hàng khô - chu kỳ mua 7 ngày') + (selectedGroup ? ' - nhóm ' + selectedGroup : '');
   const unsavedPrices = Object.keys(priceEdits).length;
 
@@ -238,7 +243,7 @@ export default function PurchasePlanMisaUI() {
           </div>
 
           {cycleType === 'DRINKS' ? (
-            <DrinkPlanPanel branch={branch} branchInfo={currentBranch} onCompanySaved={(name) => setCurrentBranch((b) => (b ? { ...b, buyer_company: name } : b))} />
+            <DrinkPlanPanel branch={branch} branchInfo={currentBranch} suppliers={suppliers} onCompanySaved={(name) => setCurrentBranch((b) => (b ? { ...b, buyer_company: name } : b))} />
           ) : (<>
           {groupStats.length > 0 && (
             <div className="flex flex-wrap gap-1.5 items-center bg-white rounded border px-2 py-1.5">
@@ -278,7 +283,7 @@ export default function PurchasePlanMisaUI() {
               onSortChange={setSort}
               maxHeight="calc(100vh - 250px)"
               footer={[
-                <td key="l" colSpan={8} className="px-2 py-1 text-right">Tổng cộng ({visibleRows.length} NVL đang hiển thị):</td>,
+                <td key="l" colSpan={9} className="px-2 py-1 text-right">Tổng cộng ({visibleRows.length} NVL đang hiển thị):</td>,
                 <td key="a" className="px-2 py-1 text-right">{money(totalAmount)} ₫</td>,
                 <td key="n" className="px-2 py-1"></td>
               ]}
@@ -294,6 +299,8 @@ export default function PurchasePlanMisaUI() {
         branch={currentBranch}
         lines={orderLines}
         cycleLabel={cycleLabel}
+        suppliers={suppliers}
+        materialSuppliers={matSup}
         onCompanySaved={(name) => setCurrentBranch((b) => (b ? { ...b, buyer_company: name } : b))}
       />
     </>

@@ -229,7 +229,7 @@ export default function SyncCukcuk() {
                     disabled={!ext.installed || ext.status === 'waiting_login' || ext.status === 'running'}
                     className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded font-bold disabled:opacity-50"
                   >
-                    🔄 Đồng bộ doanh số từ CUKCUK
+                    🔄 Đồng bộ từ CUKCUK (doanh số, tồn kho, nhà cung cấp)
                   </button>
                   <select value={rangeDays} onChange={(e) => setRangeDays(Number(e.target.value))} className="border p-2 rounded text-sm">
                     <option value={3}>3 ngày gần nhất</option>
@@ -237,7 +237,7 @@ export default function SyncCukcuk() {
                     <option value={14}>14 ngày gần nhất</option>
                     <option value={30}>30 ngày gần nhất</option>
                   </select>
-                  <span className="text-xs text-gray-500">Bấm nút → CUKCUK tự mở → bạn đăng nhập → app tự lấy số liệu.</span>
+                  <span className="text-xs text-gray-500">Bấm nút → CUKCUK tự mở → bạn đăng nhập → app tự lấy doanh số, tồn kho theo ngày, nhà cung cấp và lịch sử mua.</span>
                 </div>
                 {ext.status !== 'idle' && (
                   <p className={`text-sm font-medium ${ext.status === 'error' ? 'text-red-700' : ext.status === 'done' ? 'text-green-700' : 'text-purple-800'}`}>

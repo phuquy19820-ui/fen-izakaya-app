@@ -7,7 +7,7 @@ const fix2 = (n) => (Number(n) || 0).toLocaleString('vi-VN', { maximumFractionDi
 const inp = { height: 22, padding: '0 4px' };
 
 // Tab "Đồ uống": dự kiến mua theo số lượng bán, không cần định lượng.
-export default function DrinkPlanPanel({ branch, branchInfo, onCompanySaved }) {
+export default function DrinkPlanPanel({ branch, branchInfo, onCompanySaved, suppliers = [] }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -180,7 +180,7 @@ export default function DrinkPlanPanel({ branch, branchInfo, onCompanySaved }) {
         />
       )}
 
-      <PurchaseOrderModal open={orderOpen} onClose={() => setOrderOpen(false)} branch={branchInfo} lines={lines} cycleLabel={cycleLabel} onCompanySaved={onCompanySaved} />
+      <PurchaseOrderModal open={orderOpen} onClose={() => setOrderOpen(false)} branch={branchInfo} lines={lines} cycleLabel={cycleLabel} suppliers={suppliers} onCompanySaved={onCompanySaved} />
     </div>
   );
 }
