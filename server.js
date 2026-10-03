@@ -11,6 +11,7 @@ require('dotenv').config();
 
 const { matchDish, suggest, similarity } = require('./services/dishMatchService');
 const { categorize, subGroupOf, normalizeString } = require('./services/bomService');
+const { beverageDefaults, MODE_LABELS } = require('./services/beverageService');
 const { parseAndSaveBOM } = require('./services/bomService');
 const { classifyMaterial } = require('./services/materialClassificationService');
 const PurchasePlanService = require('./services/purchasePlanService');
@@ -104,6 +105,16 @@ async function initializeDatabase() {
         id INT, branch_id VARCHAR(50), dish_id VARCHAR(50), dish_name VARCHAR(255), dish_unit VARCHAR(20),
         dish_price NUMERIC(12,2), material_id VARCHAR(50), quantity_per_dish NUMERIC(12,4), updated_at TIMESTAMP,
         deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS beverage_buy_items (
+        branch_id VARCHAR(50) NOT NULL, buy_name VARCHAR(255) NOT NULL, category VARCHAR(60), buy_unit VARCHAR(30) DEFAULT 'chai',
+        size_ml NUMERIC(12,2) DEFAULT 0, unit_cost NUMERIC(14,2) DEFAULT 0, stock_qty NUMERIC(14,2) DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, buy_name)
+      )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS beverage_config (
+        branch_id VARCHAR(50) NOT NULL, item_code VARCHAR(100) NOT NULL, item_name VARCHAR(255), menu_type VARCHAR(60),
+        mode VARCHAR(10) DEFAULT 'UNIT', ml_per_sale NUMERIC(12,2) DEFAULT 0, buy_name VARCHAR(255),
+        PRIMARY KEY (branch_id, item_code)
       )`);
       migrations.push('ALTER TABLE cukcuk_daily_sales ADD COLUMN IF NOT EXISTS revenue NUMERIC(16,2) DEFAULT 0');
       migrations.push('CREATE INDEX IF NOT EXISTS idx_sales_branch_date ON cukcuk_daily_sales (branch_id, sale_date)');
@@ -761,6 +772,156 @@ app.post('/api/purchase-plans/export-xlsx', async (req, res) => {
   } catch (error) {
     console.error('Export error:', error);
     return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ====== ĐỒ UỐNG: dự kiến mua theo số lượng bán (không cần định lượng) ======
+async function seedBeverages(db, branchId) {
+  const menu = (await db.query(
+    "SELECT item_code, item_name, item_type FROM cukcuk_menu WHERE branch_id = $1 AND item_type LIKE 'Đồ uống%'", [branchId])).rows;
+  const sold = (await db.query(
+    "SELECT cukcuk_code AS item_code, cukcuk_name AS item_name, '' AS item_type FROM dish_code_map WHERE branch_id = $1 AND cukcuk_kind = 'Đồ uống'", [branchId])).rows;
+  const seen = new Set();
+  const items = [...menu, ...sold].filter((i) => (seen.has(i.item_code) ? false : (seen.add(i.item_code), true)));
+  for (const it of items) {
+    const d = beverageDefaults(it.item_name, it.item_type);
+    const ins = await db.query(
+      `INSERT INTO beverage_config (branch_id, item_code, item_name, menu_type, mode, ml_per_sale, buy_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (branch_id, item_code) DO NOTHING`,
+      [branchId, it.item_code, it.item_name, it.item_type, d.mode, d.mlPerSale, d.buy ? d.buy.name : null]);
+    if (d.buy) {
+      await db.query(
+        `INSERT INTO beverage_buy_items (branch_id, buy_name, category, buy_unit, size_ml)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (branch_id, buy_name) DO NOTHING`,
+        [branchId, d.buy.name, d.buy.category, d.buy.unit, d.buy.sizeMl]);
+    }
+  }
+}
+
+app.get('/api/beverage/plan/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  const cycleDays = Math.min(30, Math.max(1, parseInt(req.query.days, 10) || 7));
+  try {
+    await seedBeverages(pool, branchId);
+    const WINDOW = 7;
+    const buyItems = (await pool.query('SELECT * FROM beverage_buy_items WHERE branch_id = $1', [branchId])).rows;
+    const cfg = (await pool.query("SELECT * FROM beverage_config WHERE branch_id = $1 AND mode <> 'IGNORE' AND buy_name IS NOT NULL", [branchId])).rows;
+    const sales = (await pool.query(`
+      SELECT dish_id, SUM(quantity_sold) AS qty FROM cukcuk_daily_sales
+      WHERE branch_id = $1 AND sale_date >= CURRENT_DATE - INTERVAL '${WINDOW} days' GROUP BY dish_id`, [branchId])).rows;
+    const soldMap = Object.fromEntries(sales.map((s) => [s.dish_id, Number(s.qty) || 0]));
+    const daysRow = (await pool.query(
+      `SELECT COUNT(DISTINCT sale_date) AS d, MIN(sale_date) AS f, MAX(sale_date) AS t FROM cukcuk_daily_sales
+       WHERE branch_id = $1 AND sale_date >= CURRENT_DATE - INTERVAL '${WINDOW} days'`, [branchId])).rows[0];
+    const salesDays = Math.max(1, Number(daysRow.d) || 1);
+
+    const byBuy = new Map(buyItems.map((b) => [b.buy_name, { ...b, soldQty: 0, consumed: 0, warn: '' }]));
+    for (const c of cfg) {
+      const b = byBuy.get(c.buy_name);
+      const q = soldMap[c.item_code] || 0;
+      if (!b || q === 0) continue;
+      b.soldQty += q;
+      if (c.mode === 'UNIT') b.consumed += q;
+      else if (b.size_ml > 0) b.consumed += (q * c.ml_per_sale) / b.size_ml;
+      else b.warn = 'Chưa nhập quy cách (ml/ĐVT) nên chưa tính được';
+    }
+
+    const rows = [];
+    for (const b of byBuy.values()) {
+      const avg = b.consumed / salesDays;
+      const safety = PurchasePlanService.calculateSafetyStock(avg, 1);
+      const forecast = PurchasePlanService.calculateForecastedDemand(avg, cycleDays, 0);
+      const rop = PurchasePlanService.calculateReorderPoint(avg, 1, safety);
+      const stock = Number(b.stock_qty) || 0;
+      let suggested = PurchasePlanService.calculatePurchaseQty(stock, forecast, rop, safety);
+      suggested = b.buy_unit === 'lít' ? Math.ceil(suggested * 10) / 10 : Math.ceil(suggested - 1e-9);
+      const cost = Number(b.unit_cost) || 0;
+      let note = b.warn;
+      if (!note && b.soldQty === 0) note = 'Chưa có dữ liệu bán';
+      if (!note && cost === 0) note = 'Chưa có đơn giá';
+      rows.push({
+        buy_name: b.buy_name, category: b.category || 'Khác', buy_unit: b.buy_unit, size_ml: Number(b.size_ml) || 0,
+        sold_qty: Math.round(b.soldQty * 100) / 100, consumed_units: Math.round(b.consumed * 100) / 100,
+        avg_daily: Math.round(avg * 100) / 100, stock_qty: stock, suggested_qty: Math.max(0, suggested),
+        unit_cost: cost, estimated_cost: Math.max(0, suggested) * cost, note
+      });
+    }
+    rows.sort((a, b) => b.suggested_qty - a.suggested_qty || a.buy_name.localeCompare(b.buy_name, 'vi'));
+    return res.json({ success: true, data: { cycleDays, salesDays, fromDate: daysRow.f, toDate: daysRow.t, rows } });
+  } catch (error) {
+    console.error('Beverage plan error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/beverage/config/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    await seedBeverages(pool, branchId);
+    const items = (await pool.query(`
+      SELECT c.*, COALESCE(s.qty, 0) AS sold_qty FROM beverage_config c
+      LEFT JOIN (SELECT dish_id, SUM(quantity_sold) AS qty FROM cukcuk_daily_sales WHERE branch_id = $1 GROUP BY dish_id) s ON s.dish_id = c.item_code
+      WHERE c.branch_id = $1 ORDER BY c.menu_type, c.item_name`, [branchId])).rows;
+    const buyItems = (await pool.query('SELECT * FROM beverage_buy_items WHERE branch_id = $1 ORDER BY category, buy_name', [branchId])).rows;
+    return res.json({ success: true, data: { items, buyItems, modes: MODE_LABELS } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.put('/api/beverage/config', async (req, res) => {
+  const { branchId, itemCode, mode, mlPerSale, buyName } = req.body;
+  if (!branchId || !itemCode) return res.status(400).json({ success: false, message: 'Thiếu thông tin' });
+  if (mode && !MODE_LABELS[mode]) return res.status(400).json({ success: false, message: 'Cách tính không hợp lệ' });
+  try {
+    const name = buyName === undefined ? undefined : String(buyName || '').trim().substring(0, 255);
+    if (name) {
+      await pool.query(
+        `INSERT INTO beverage_buy_items (branch_id, buy_name, category, buy_unit, size_ml) VALUES ($1,$2,'Khác','chai',0)
+         ON CONFLICT (branch_id, buy_name) DO NOTHING`, [branchId, name]);
+    }
+    await pool.query(`
+      UPDATE beverage_config SET
+        mode = COALESCE($3, mode),
+        ml_per_sale = COALESCE($4, ml_per_sale),
+        buy_name = CASE WHEN $5::boolean THEN $6 ELSE buy_name END
+      WHERE branch_id = $1 AND item_code = $2`,
+      [branchId, itemCode, mode || null, mlPerSale === undefined ? null : Math.max(0, Number(mlPerSale) || 0), name !== undefined, name || null]);
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Sửa thông tin mặt hàng mua: tồn, đơn giá, quy cách, đơn vị, nhóm (nhận nhiều dòng một lần)
+app.put('/api/beverage/buy-items', async (req, res) => {
+  const { branchId, items } = req.body;
+  if (!branchId || !Array.isArray(items)) return res.status(400).json({ success: false, message: 'Thiếu dữ liệu' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const it of items) {
+      if (!it.buyName) continue;
+      await client.query(`
+        UPDATE beverage_buy_items SET
+          unit_cost = COALESCE($3, unit_cost), stock_qty = COALESCE($4, stock_qty),
+          size_ml = COALESCE($5, size_ml), buy_unit = COALESCE($6, buy_unit), category = COALESCE($7, category),
+          updated_at = NOW()
+        WHERE branch_id = $1 AND buy_name = $2`,
+        [branchId, it.buyName,
+          it.unitCost === undefined ? null : Math.max(0, Number(it.unitCost) || 0),
+          it.stockQty === undefined ? null : Math.max(0, Number(it.stockQty) || 0),
+          it.sizeMl === undefined ? null : Math.max(0, Number(it.sizeMl) || 0),
+          it.buyUnit ? String(it.buyUnit).substring(0, 30) : null,
+          it.category ? String(it.category).substring(0, 60) : null]);
+    }
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã lưu' });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
   }
 });
 

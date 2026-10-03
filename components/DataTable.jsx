@@ -74,7 +74,7 @@ export default function DataTable({ columns, allRows, rows, rowKey, filters, onF
 
   return (
     <div className="bg-white rounded shadow border" style={{ overflow: 'auto', maxHeight }}>
-      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: '100%', minWidth: columns.reduce((s, c) => s + (c.width || 160), 0) }}>
+      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: '100%', minWidth: columns.reduce((s, c) => s + (c.width || c.minWidth || 160), 0) }}>
         <colgroup>
           {columns.map((c) => <col key={c.key} style={c.width ? { width: c.width } : undefined} />)}
         </colgroup>

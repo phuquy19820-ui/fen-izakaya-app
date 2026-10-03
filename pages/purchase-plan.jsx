@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import BranchNav from '../components/BranchNav';
 import DataTable, { filterRows, sortRows } from '../components/DataTable';
 import PurchaseOrderModal from '../components/PurchaseOrderModal';
+import DrinkPlanPanel from '../components/DrinkPlanPanel';
 
 const CATEGORY_LABELS = {
   FRESH_MEAT: 'Thịt tươi', SEAFOOD: 'Hải sản', VEGETABLE: 'Rau củ quả', HERB_SEASONING: 'Thảo mộc',
@@ -138,7 +139,7 @@ export default function PurchasePlanMisaUI() {
 
   const columns = [
     { key: 'code', label: 'Mã NVL', width: 118, type: 'text', get: (r) => r.material_id, render: (r) => <span className="font-mono text-blue-700">{r.material_id}</span> },
-    { key: 'name', label: 'Tên nguyên vật liệu', type: 'text', get: (r) => r.material_name, render: (r) => <span className="font-medium">{r.material_name}</span> },
+    { key: 'name', label: 'Tên nguyên vật liệu', width: 300, type: 'text', get: (r) => r.material_name, render: (r) => <span className="font-medium">{r.material_name}</span> },
     { key: 'group', label: 'Nhóm hàng', width: 132, type: 'select', get: groupOf },
     { key: 'unit', label: 'ĐVT', width: 54, type: 'select', get: (r) => r.unit_purchase, align: 'center' },
     { key: 'stock', label: 'Tồn', width: 62, type: 'number', align: 'right', get: (r) => r.opening_stock, render: (r) => fix2(r.opening_stock) },
@@ -165,7 +166,7 @@ export default function PurchasePlanMisaUI() {
       )
     },
     { key: 'amount', label: 'Thành tiền', width: 106, type: 'number', align: 'right', get: (r) => qtyOf(r) * priceOf(r), render: (r) => <b>{money(qtyOf(r) * priceOf(r))}</b> },
-    { key: 'note', label: 'Ghi chú', width: 230, type: 'text', get: (r) => r.note || '', render: (r) => <span className="text-gray-600">{r.note}</span> }
+    { key: 'note', label: 'Ghi chú', minWidth: 230, type: 'text', get: (r) => r.note || '', render: (r) => <span className="text-gray-600">{r.note}</span> }
   ];
 
   const visibleRows = useMemo(
@@ -212,7 +213,7 @@ export default function PurchasePlanMisaUI() {
             <h1 className="text-base font-bold">LẬP KẾ HOẠCH MUA NGUYÊN VẬT LIỆU</h1>
             <p className="text-blue-200">Chi nhánh: {currentBranch?.branch_name || 'Đang tải...'}</p>
           </div>
-          <div className="flex gap-2 flex-wrap justify-end">
+          {cycleType !== 'DRINKS' && <div className="flex gap-2 flex-wrap justify-end">
             <button onClick={generatePurchasePlan} disabled={generating} className="bg-yellow-600 hover:bg-yellow-700 px-3 py-1.5 rounded font-bold disabled:opacity-50">
               {generating ? '⏳ Đang tính...' : '🔄 Tạo Kế Hoạch'}
             </button>
@@ -220,7 +221,7 @@ export default function PurchasePlanMisaUI() {
               {saving ? '⏳ Đang lưu...' : `💾 Lưu Kế Hoạch${unsavedPrices ? ` (${unsavedPrices} giá sửa)` : ''}`}
             </button>
             <button onClick={() => setOrderOpen(true)} className="bg-white text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded font-bold">📤 Xuất đơn mua hàng</button>
-          </div>
+          </div>}
         </header>
         <BranchNav branch={branch} active="plan" branchName={currentBranch?.branch_name} />
 
@@ -228,13 +229,17 @@ export default function PurchasePlanMisaUI() {
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => { setCycleType('FRESH_3DAYS'); setGroup(''); }} className={`px-3 py-1.5 rounded font-bold border ${cycleType === 'FRESH_3DAYS' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🔴 ĐỒ TƯƠI (3 ngày)</button>
             <button onClick={() => { setCycleType('WEEKLY_7DAYS'); setGroup(''); }} className={`px-3 py-1.5 rounded font-bold border ${cycleType === 'WEEKLY_7DAYS' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🔵 ĐỒ KHÔ (7 ngày)</button>
-            <label className="flex items-center gap-1 ml-3 text-gray-700 cursor-pointer font-bold">
+            <button onClick={() => { setCycleType('DRINKS'); setGroup(''); }} className={`px-3 py-1.5 rounded font-bold border ${cycleType === 'DRINKS' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🍺 ĐỒ UỐNG (theo số lượng bán)</button>
+            {cycleType !== 'DRINKS' && <><label className="flex items-center gap-1 ml-3 text-gray-700 cursor-pointer font-bold">
               <input type="checkbox" checked={!!onlyNeed} onChange={(e) => toggleOnlyNeed(e.target.checked)} /> Chỉ NVL cần mua (Đề xuất &gt; 0)
             </label>
             {hasFilter && <button onClick={() => { setFilters({}); setSort(null); }} className="px-2 py-1 rounded border bg-white text-red-600 font-bold">✕ Xóa bộ lọc</button>}
-            <span className="ml-auto text-gray-500">{visibleRows.length}/{cycleData.length} NVL · Bấm tiêu đề cột để sắp xếp, ô dưới tiêu đề để lọc</span>
+            <span className="ml-auto text-gray-500">{visibleRows.length}/{cycleData.length} NVL · Bấm tiêu đề cột để sắp xếp, ô dưới tiêu đề để lọc</span></>}
           </div>
 
+          {cycleType === 'DRINKS' ? (
+            <DrinkPlanPanel branch={branch} branchInfo={currentBranch} onCompanySaved={(name) => setCurrentBranch((b) => (b ? { ...b, buyer_company: name } : b))} />
+          ) : (<>
           {groupStats.length > 0 && (
             <div className="flex flex-wrap gap-1.5 items-center bg-white rounded border px-2 py-1.5">
               <span className="text-gray-500 font-bold mr-1">Nhóm hàng:</span>
@@ -279,6 +284,7 @@ export default function PurchasePlanMisaUI() {
               ]}
             />
           )}
+          </>)}
         </div>
       </div>
 
