@@ -205,6 +205,7 @@ export default function PurchasePlanMisaUI() {
                   <th className="p-2 border-r text-right bg-green-50">Thực Mua</th>
                   <th className="p-2 border-r text-right">Đơn Giá</th>
                   <th className="p-2 border-r text-right">Thành Tiền</th>
+                  <th className="p-2 border-r">Ghi Chú</th>
                 </tr>
               </thead>
               <tbody>
@@ -230,6 +231,7 @@ export default function PurchasePlanMisaUI() {
                       </td>
                       <td className="p-2 border-r text-right text-xs">{(row.unit_cost || 0).toLocaleString('vi-VN')}</td>
                       <td className="p-2 border-r text-right text-xs font-bold">{actualCost.toLocaleString('vi-VN')}</td>
+                      <td className="p-2 border-r text-xs text-gray-600">{row.note}</td>
                     </tr>
                   );
                 })}
@@ -238,6 +240,7 @@ export default function PurchasePlanMisaUI() {
                 <tr className="bg-gray-100 font-bold border-t-2">
                   <td colSpan="8" className="p-2 text-right">Tổng Cộng:</td>
                   <td className="p-2 border-l text-right">{actualTotal.toLocaleString('vi-VN')} ₫</td>
+                  <td></td>
                 </tr>
               </tfoot>
             </table>

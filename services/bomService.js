@@ -70,6 +70,17 @@ const NAME_RULES = [
   ['VEGETABLE', ['rau', 'cải', 'cà chua', 'cà rốt', 'cà tím', 'cà pháo', 'cà', 'khoai', 'nấm', 'hành', 'tỏi', 'ớt', 'măng', 'bắp', 'dưa', 'bí', 'su', 'xà lách', 'gừng', 'sả', 'tắc', 'chanh', 'giá', 'đậu', 'củ', 'bầu', 'mướp', 'hẹ', 'tây', 'quả', 'trái', 'khế', 'me', 'chuối', 'xoài', 'dứa', 'cam', 'táo']]
 ];
 
+const PRICE_CEILING_PER_KG = {
+  FRESH_MEAT: 1200000,
+  SEAFOOD: 1500000,
+  VEGETABLE: 600000,
+  HERB_SEASONING: 300000,
+  SPICE_DRY: 1000000,
+  DRY_GOODS: 1500000,
+  FROZEN: 1000000,
+  SAUCE_CONDIMENT: 600000
+};
+
 function categorize(code, name) {
   const upper = String(code || '').toUpperCase();
   const text = ' ' + String(name || '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() + ' ';
@@ -177,7 +188,7 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
         recipeUnit.substring(0, 20), purchaseUnit.substring(0, 20), conversionRate, unitCost, leadTime,
         cat.waste_percentage, cat.shelf_life_days]);
 
-      knownMaterials.set(matCode, cat.code);
+      knownMaterials.set(matCode, { cat: cat.code, conv: conversionRate });
       if (res.rows[0].inserted) {
         summary.newMaterialsCreated++;
         summary.byCategory[cat.code] = (summary.byCategory[cat.code] || 0) + 1;
@@ -195,11 +206,25 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
     summary.totalMaterials++;
   }
 
-  // File định lượng có thể ghi nhiều đơn giá khác nhau cho cùng một NVL: lấy giá trung vị (thấp hơn khi chẵn) để loại giá ngoại lai.
-  for (const [code, prices] of priceLists) {
-    const sorted = [...prices].sort((a, b) => a - b);
-    const median = sorted[Math.floor((sorted.length - 1) / 2)];
-    await db.query('UPDATE raw_materials SET unit_cost = ROUND($2 * conversion_rate) WHERE material_id = $1', [code, median]);
+  // Đơn giá trong file định lượng có chỗ sai (vd. giá 1 cái/con nhưng ghi theo gr). Đối chiếu với trần giá thị trường
+  // (đ/kg hoặc đ/lít, giá bán buôn nhà hàng tại Hà Nội) theo nhóm hàng để loại giá bất hợp lý.
+  for (const [code, info] of knownMaterials) {
+    const prices = (priceLists.get(code) || []).slice().sort((a, b) => a - b);
+    if (prices.length === 0) {
+      await db.query("UPDATE raw_materials SET unit_cost = 0, price_source = 'MISSING' WHERE material_id = $1", [code]);
+      continue;
+    }
+    const pick = (list) => list[Math.floor((list.length - 1) / 2)];
+    const ceiling = PRICE_CEILING_PER_KG[info.cat] || 1500000;
+    const plausible = info.conv > 1 ? prices.filter(p => p * info.conv <= ceiling) : prices;
+    if (plausible.length > 0) {
+      const price = pick(plausible);
+      const source = plausible.length < prices.length ? 'MEDIAN' : 'FILE';
+      await db.query('UPDATE raw_materials SET unit_cost = ROUND($2 * conversion_rate), price_source = $3 WHERE material_id = $1', [code, price, source]);
+    } else {
+      // Mọi dòng đều có giá quy ra kg vượt trần thị trường: đó là giá theo cái/con, tính theo cái thay vì theo kg.
+      await db.query("UPDATE raw_materials SET unit_cost = ROUND($2), conversion_rate = 1, unit_purchase = 'cái', price_source = 'PER_PIECE' WHERE material_id = $1", [code, pick(prices)]);
+    }
   }
 
   const CHUNK = 500;

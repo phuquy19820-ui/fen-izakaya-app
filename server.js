@@ -59,7 +59,7 @@ async function initializeDatabase() {
         raw_materials: ['branch_id VARCHAR(50)', 'category VARCHAR(50)', 'category_group VARCHAR(50)',
           'unit_cost NUMERIC(14,2) DEFAULT 0', 'min_stock NUMERIC(12,2) DEFAULT 0', 'max_stock NUMERIC(12,2) DEFAULT 0',
           'lead_time_days INT DEFAULT 1', 'waste_rate NUMERIC(5,2) DEFAULT 0', 'shelf_life_days INT DEFAULT 30',
-          'safety_stock NUMERIC(12,2) DEFAULT 0', 'is_merged BOOLEAN DEFAULT FALSE', 'is_active BOOLEAN DEFAULT TRUE',
+          'safety_stock NUMERIC(12,2) DEFAULT 0', 'price_source VARCHAR(20)', 'is_merged BOOLEAN DEFAULT FALSE', 'is_active BOOLEAN DEFAULT TRUE',
           'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'],
         inventory_tracking: ['opening_stock NUMERIC(12,2) DEFAULT 0', 'purchases_qty NUMERIC(12,2) DEFAULT 0',
           'sales_usage_qty NUMERIC(12,2) DEFAULT 0', 'waste_loss_qty NUMERIC(12,2) DEFAULT 0',
@@ -423,7 +423,7 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
         suggested_qty: suggestedQty,
         unit_cost: unitCost,
         estimated_cost: Math.round(suggestedQty * unitCost),
-        note: (unitCost > 3000000 ? '⚠️ Đơn giá bất thường, kiểm tra file định lượng. ' : '') +
+        note: ({ PER_PIECE: 'ℹ️ Giá theo cái/con (file ghi theo gr). ', MISSING: '⚠️ Chưa có đơn giá. ' }[material.price_source] || '') +
           PurchasePlanService.generateNote(currentStock, avgDailySales, forecastDays, material.category)
       });
     }
