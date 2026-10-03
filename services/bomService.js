@@ -240,7 +240,7 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
            shelf_life_days, is_auto_created, is_active, sub_group)
         VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,TRUE,TRUE,$13)
         ON CONFLICT (material_id) DO UPDATE SET
-          unit_cost = CASE WHEN EXCLUDED.unit_cost > 0 THEN EXCLUDED.unit_cost ELSE raw_materials.unit_cost END,
+          unit_cost = CASE WHEN raw_materials.price_source = 'MANUAL' THEN raw_materials.unit_cost WHEN EXCLUDED.unit_cost > 0 THEN EXCLUDED.unit_cost ELSE raw_materials.unit_cost END,
           sub_group = EXCLUDED.sub_group,
           updated_at = NOW()
         RETURNING (xmax = 0) AS inserted
@@ -271,7 +271,7 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
   for (const [code, info] of knownMaterials) {
     const prices = (priceLists.get(code) || []).slice().sort((a, b) => a - b);
     if (prices.length === 0) {
-      await db.query("UPDATE raw_materials SET unit_cost = 0, price_source = 'MISSING' WHERE material_id = $1", [code]);
+      await db.query("UPDATE raw_materials SET unit_cost = 0, price_source = 'MISSING' WHERE material_id = $1 AND COALESCE(price_source, '') <> 'MANUAL'", [code]);
       continue;
     }
     const pick = (list) => list[Math.floor((list.length - 1) / 2)];
@@ -280,10 +280,10 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
     if (plausible.length > 0) {
       const price = pick(plausible);
       const source = plausible.length < prices.length ? 'MEDIAN' : 'FILE';
-      await db.query('UPDATE raw_materials SET unit_cost = ROUND($2 * conversion_rate), price_source = $3 WHERE material_id = $1', [code, price, source]);
+      await db.query("UPDATE raw_materials SET unit_cost = ROUND($2 * conversion_rate), price_source = $3 WHERE material_id = $1 AND COALESCE(price_source, '') <> 'MANUAL'", [code, price, source]);
     } else {
       // Mọi dòng đều có giá quy ra kg vượt trần thị trường: đó là giá theo cái/con, tính theo cái thay vì theo kg.
-      await db.query("UPDATE raw_materials SET unit_cost = ROUND($2), conversion_rate = 1, unit_purchase = 'cái', price_source = 'PER_PIECE' WHERE material_id = $1", [code, pick(prices)]);
+      await db.query("UPDATE raw_materials SET unit_cost = ROUND($2), conversion_rate = 1, unit_purchase = 'cái', price_source = 'PER_PIECE' WHERE material_id = $1 AND COALESCE(price_source, '') <> 'MANUAL'", [code, pick(prices)]);
     }
   }
 

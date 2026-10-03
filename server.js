@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const ExcelJS = require('exceljs');
 const { Pool, types } = require('pg');
 types.setTypeParser(1700, (v) => parseFloat(v));
 const next = require('next');
@@ -54,7 +55,7 @@ async function initializeDatabase() {
         }
       }
       const addCols = {
-        branches: ['cukcuk_company_code VARCHAR(100)', 'cukcuk_domain VARCHAR(255)', 'cukcuk_auth_token TEXT',
+        branches: ['buyer_company VARCHAR(255)', 'cukcuk_company_code VARCHAR(100)', 'cukcuk_domain VARCHAR(255)', 'cukcuk_auth_token TEXT',
           'cukcuk_token_expires_at TIMESTAMP', 'is_active BOOLEAN DEFAULT TRUE',
           'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'],
         raw_materials: ['branch_id VARCHAR(50)', 'category VARCHAR(50)', 'category_group VARCHAR(50)',
@@ -625,6 +626,144 @@ app.post('/api/menu/cleanup', async (req, res) => {
   }
 });
 
+// Ghi nhớ tên công ty mua theo từng chi nhánh
+app.put('/api/branches/:branchId/buyer', async (req, res) => {
+  const company = String(req.body.buyerCompany || '').trim().substring(0, 255);
+  try {
+    const r = await pool.query('UPDATE branches SET buyer_company = $2, updated_at = NOW() WHERE branch_id = $1', [req.params.branchId, company || null]);
+    if (r.rowCount === 0) return res.status(404).json({ success: false, message: 'Không tìm thấy chi nhánh' });
+    return res.json({ success: true, message: 'Đã lưu tên công ty mua' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Xuất đơn mua hàng ra Excel để gửi nhà cung cấp
+app.post('/api/purchase-plans/export-xlsx', async (req, res) => {
+  const { buyerCompany, branchName, supplier, deliveryDate, note, cycleLabel, showPrice = true, lines } = req.body;
+  if (!Array.isArray(lines) || lines.length === 0 || lines.length > 3000) {
+    return res.status(400).json({ success: false, message: 'Không có dòng hàng để xuất' });
+  }
+  try {
+    const items = lines
+      .map(l => ({
+        code: String(l.code || ''), name: String(l.name || ''), group: String(l.group || 'Khác'), unit: String(l.unit || ''),
+        qty: Number(l.qty) || 0, price: Number(l.price) || 0
+      }))
+      .filter(l => l.qty > 0)
+      .sort((a, b) => a.group.localeCompare(b.group, 'vi') || a.name.localeCompare(b.name, 'vi'));
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Đơn mua hàng', {
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 }
+    });
+    const cols = showPrice
+      ? [['STT', 6], ['Mã NVL', 18], ['Tên nguyên vật liệu', 46], ['ĐVT', 8], ['Số lượng', 12], ['Đơn giá (đ)', 14], ['Thành tiền (đ)', 16]]
+      : [['STT', 6], ['Mã NVL', 18], ['Tên nguyên vật liệu', 54], ['ĐVT', 10], ['Số lượng', 14]];
+    ws.columns = cols.map(([, w]) => ({ width: w }));
+    const lastCol = cols.length;
+
+    const thin = { style: 'thin', color: { argb: 'FFBBBBBB' } };
+    const border = { top: thin, left: thin, bottom: thin, right: thin };
+    const addText = (text, opts = {}) => {
+      const row = ws.addRow([text]);
+      ws.mergeCells(row.number, 1, row.number, lastCol);
+      row.getCell(1).font = { name: 'Arial', size: opts.size || 10, bold: !!opts.bold };
+      row.getCell(1).alignment = { horizontal: opts.center ? 'center' : 'left', vertical: 'middle' };
+      return row;
+    };
+
+    addText('ĐƠN ĐẶT MUA NGUYÊN VẬT LIỆU', { size: 16, bold: true, center: true }).height = 28;
+    if (cycleLabel) addText(cycleLabel, { center: true });
+    ws.addRow([]);
+    addText('Công ty mua: ' + (buyerCompany || ''), { bold: true });
+    if (branchName) addText('Chi nhánh: ' + branchName);
+    if (supplier) addText('Nhà cung cấp: ' + supplier);
+    addText('Ngày lập: ' + new Date().toLocaleDateString('vi-VN'));
+    if (deliveryDate) addText('Ngày giao hàng yêu cầu: ' + deliveryDate);
+    if (note) addText('Ghi chú: ' + note);
+    ws.addRow([]);
+
+    const header = ws.addRow(cols.map(([label]) => label));
+    header.eachCell(c => {
+      c.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0073C5' } };
+      c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      c.border = border;
+    });
+    header.height = 22;
+
+    let stt = 0;
+    let grand = 0;
+    let currentGroup = null;
+    let groupTotal = 0;
+    const flushGroup = () => {
+      if (currentGroup === null || !showPrice) return;
+      const r = ws.addRow([]);
+      r.getCell(lastCol - 1).value = 'Cộng nhóm:';
+      r.getCell(lastCol - 1).font = { name: 'Arial', size: 10, italic: true };
+      r.getCell(lastCol - 1).alignment = { horizontal: 'right' };
+      r.getCell(lastCol).value = Math.round(groupTotal);
+      r.getCell(lastCol).numFmt = '#,##0';
+      r.getCell(lastCol).font = { name: 'Arial', size: 10, italic: true };
+    };
+    for (const it of items) {
+      if (it.group !== currentGroup) {
+        flushGroup();
+        currentGroup = it.group;
+        groupTotal = 0;
+        const g = ws.addRow([it.group.toUpperCase()]);
+        ws.mergeCells(g.number, 1, g.number, lastCol);
+        g.getCell(1).font = { name: 'Arial', size: 10, bold: true };
+        g.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F1FA' } };
+      }
+      stt++;
+      const amount = Math.round(it.qty * it.price);
+      groupTotal += amount;
+      grand += amount;
+      const values = showPrice
+        ? [stt, it.code, it.name, it.unit, it.qty, it.price, amount]
+        : [stt, it.code, it.name, it.unit, it.qty];
+      const r = ws.addRow(values);
+      r.eachCell((c, n) => {
+        c.font = { name: 'Arial', size: 10 };
+        c.border = border;
+        if (n === 1 || n === 4) c.alignment = { horizontal: 'center' };
+        if (n === 5) { c.numFmt = '#,##0.00'; c.alignment = { horizontal: 'right' }; }
+        if (showPrice && n >= 6) { c.numFmt = '#,##0'; c.alignment = { horizontal: 'right' }; }
+      });
+    }
+    flushGroup();
+
+    if (showPrice) {
+      const t = ws.addRow([]);
+      t.getCell(lastCol - 1).value = 'TỔNG CỘNG:';
+      t.getCell(lastCol - 1).font = { name: 'Arial', size: 11, bold: true };
+      t.getCell(lastCol - 1).alignment = { horizontal: 'right' };
+      t.getCell(lastCol).value = grand;
+      t.getCell(lastCol).numFmt = '#,##0';
+      t.getCell(lastCol).font = { name: 'Arial', size: 11, bold: true };
+      t.getCell(lastCol).border = border;
+    }
+
+    ws.addRow([]);
+    const sig = ws.addRow([]);
+    sig.getCell(2).value = 'Người lập';
+    sig.getCell(3).value = 'Người duyệt';
+    sig.getCell(lastCol - 1).value = 'Nhà cung cấp xác nhận';
+    sig.eachCell(c => { c.font = { name: 'Arial', size: 10, bold: true }; c.alignment = { horizontal: 'center' }; });
+    ws.views = [{ state: 'frozen', ySplit: header.number }];
+
+    const buffer = await wb.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="don-mua-hang.xlsx"');
+    return res.send(Buffer.from(buffer));
+  } catch (error) {
+    console.error('Export error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // 7. API Tạo kế hoạch mua hàng
 app.post('/api/purchase-plans/generate', async (req, res) => {
   const { branchId } = req.body;
@@ -750,13 +889,25 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
 // 7b. API Lưu số lượng thực mua đã chỉnh sửa
 app.post('/api/purchase-plans/:planId/adjust', async (req, res) => {
   const { planId } = req.params;
-  const { adjustments } = req.body;
-  if (!adjustments || typeof adjustments !== 'object') {
+  const adjustments = req.body.adjustments || {};
+  const prices = req.body.prices || {};
+  if (typeof adjustments !== 'object' || typeof prices !== 'object') {
     return res.status(400).json({ success: false, message: 'Thiếu dữ liệu điều chỉnh' });
   }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // Đơn giá sửa tay: lưu vào dòng kế hoạch và vào NVL (đánh dấu MANUAL để tải định lượng mới không ghi đè)
+    for (const [materialId, price] of Object.entries(prices)) {
+      const p = Math.round(parseFloat(price));
+      if (!Number.isFinite(p) || p < 0) continue;
+      await client.query(`
+        UPDATE purchase_plan_details
+        SET unit_cost = $1, estimated_cost = COALESCE(adjusted_qty, suggested_qty, 0) * $1, updated_at = NOW()
+        WHERE plan_id = $2 AND material_id = $3
+      `, [p, planId, materialId]);
+      await client.query("UPDATE raw_materials SET unit_cost = $1, price_source = 'MANUAL', updated_at = NOW() WHERE material_id = $2", [p, materialId]);
+    }
     for (const [materialId, qty] of Object.entries(adjustments)) {
       const q = parseFloat(qty);
       if (!Number.isFinite(q) || q < 0) continue;
