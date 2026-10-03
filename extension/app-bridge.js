@@ -1,6 +1,6 @@
 // Cầu nối giữa trang app Fen Izakaya và tiện ích.
 (function () {
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const announce = () => window.postMessage({ source: 'FEN_EXT', type: 'READY', version: VERSION }, '*');
 
   announce();

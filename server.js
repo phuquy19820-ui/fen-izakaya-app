@@ -9,6 +9,7 @@ const path = require('path');
 require('dotenv').config();
 
 const { matchDish, suggest } = require('./services/dishMatchService');
+const { categorize, subGroupOf, normalizeString } = require('./services/bomService');
 const { parseAndSaveBOM } = require('./services/bomService');
 const { classifyMaterial } = require('./services/materialClassificationService');
 const PurchasePlanService = require('./services/purchasePlanService');
@@ -59,14 +60,14 @@ async function initializeDatabase() {
         raw_materials: ['branch_id VARCHAR(50)', 'category VARCHAR(50)', 'category_group VARCHAR(50)',
           'unit_cost NUMERIC(14,2) DEFAULT 0', 'min_stock NUMERIC(12,2) DEFAULT 0', 'max_stock NUMERIC(12,2) DEFAULT 0',
           'lead_time_days INT DEFAULT 1', 'waste_rate NUMERIC(5,2) DEFAULT 0', 'shelf_life_days INT DEFAULT 30',
-          'safety_stock NUMERIC(12,2) DEFAULT 0', 'price_source VARCHAR(20)', 'is_merged BOOLEAN DEFAULT FALSE', 'is_active BOOLEAN DEFAULT TRUE',
+          'safety_stock NUMERIC(12,2) DEFAULT 0', 'price_source VARCHAR(20)', 'sub_group VARCHAR(60)', 'is_merged BOOLEAN DEFAULT FALSE', 'is_active BOOLEAN DEFAULT TRUE',
           'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'],
         inventory_tracking: ['opening_stock NUMERIC(12,2) DEFAULT 0', 'purchases_qty NUMERIC(12,2) DEFAULT 0',
           'sales_usage_qty NUMERIC(12,2) DEFAULT 0', 'waste_loss_qty NUMERIC(12,2) DEFAULT 0',
           'closing_stock NUMERIC(12,2) DEFAULT 0', 'stock_value NUMERIC(15,2) DEFAULT 0', 'notes TEXT',
           'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'],
         purchase_plan_details: ['branch_id VARCHAR(50)', 'material_name VARCHAR(255)', 'category VARCHAR(50)',
-          'purchase_cycle VARCHAR(20)', 'unit_purchase VARCHAR(20)', 'avg_daily_sales NUMERIC(14,4) DEFAULT 0',
+          'purchase_cycle VARCHAR(20)', 'sub_group VARCHAR(60)', 'unit_purchase VARCHAR(20)', 'avg_daily_sales NUMERIC(14,4) DEFAULT 0',
           'forecast_days INT DEFAULT 3', 'forecasted_demand NUMERIC(14,2) DEFAULT 0', 'safety_stock NUMERIC(14,2) DEFAULT 0',
           'reorder_point NUMERIC(14,2) DEFAULT 0', 'adjusted_qty NUMERIC(14,2)', 'unit_cost NUMERIC(14,2) DEFAULT 0',
           'estimated_cost NUMERIC(16,2) DEFAULT 0', "status VARCHAR(20) DEFAULT 'PENDING'",
@@ -87,6 +88,7 @@ async function initializeDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (branch_id, cukcuk_code)
       )`);
+      migrations.push('ALTER TABLE cukcuk_daily_sales ADD COLUMN IF NOT EXISTS revenue NUMERIC(16,2) DEFAULT 0');
       migrations.push('CREATE INDEX IF NOT EXISTS idx_sales_branch_date ON cukcuk_daily_sales (branch_id, sale_date)');
       migrations.push('ALTER TABLE raw_materials ALTER COLUMN category DROP NOT NULL');
       migrations.push('CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_branch_mat_date ON inventory_tracking (branch_id, material_id, period_date)');
@@ -96,6 +98,15 @@ async function initializeDatabase() {
         } catch (err) {
           console.warn('Migration error:', m, err.message);
         }
+      }
+      try {
+        const missing = await pool.query('SELECT material_id, material_name, category FROM raw_materials WHERE sub_group IS NULL');
+        for (const m of missing.rows) {
+          await pool.query('UPDATE raw_materials SET sub_group = $2 WHERE material_id = $1', [m.material_id, subGroupOf(m.category, m.material_name)]);
+        }
+        if (missing.rows.length) console.log('✅ Đã phân nhóm chi tiết cho ' + missing.rows.length + ' NVL');
+      } catch (err) {
+        console.warn('Backfill sub_group error:', err.message);
       }
       console.log('✅ Database schema initialized successfully.');
     }
@@ -221,7 +232,7 @@ app.post('/api/sales/import', async (req, res) => {
   }
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
   const clean = rows
-    .map(r => ({ date: String(r.date || ''), code: String(r.code || '').trim(), name: String(r.name || '').trim(), kind: String(r.kind || '').trim(), qty: Number(r.qty) }))
+    .map(r => ({ date: String(r.date || ''), code: String(r.code || '').trim(), name: String(r.name || '').trim(), kind: String(r.kind || '').trim(), qty: Number(r.qty), amount: Number(r.amount) || 0 }))
     .filter(r => dateRe.test(r.date) && r.code && Number.isFinite(r.qty) && r.qty !== 0);
   if (clean.length === 0) {
     return res.status(400).json({ success: false, message: 'Không có dòng doanh số hợp lệ (cần date YYYY-MM-DD, code, qty)' });
@@ -258,8 +269,9 @@ app.post('/api/sales/import', async (req, res) => {
     const agg = new Map();
     for (const r of clean) {
       const k = r.date + '|' + r.code;
-      const cur = agg.get(k) || { ...r, qty: 0 };
+      const cur = agg.get(k) || { ...r, qty: 0, amount: 0 };
       cur.qty += r.qty;
+      cur.amount += r.amount;
       agg.set(k, cur);
     }
     const dates = clean.map(r => r.date).sort();
@@ -268,8 +280,8 @@ app.post('/api/sales/import', async (req, res) => {
     await client.query('DELETE FROM cukcuk_daily_sales WHERE branch_id = $1 AND sale_date BETWEEN $2 AND $3', [branchId, minDate, maxDate]);
     for (const r of agg.values()) {
       await client.query(
-        'INSERT INTO cukcuk_daily_sales (branch_id, dish_id, dish_name, quantity_sold, sale_date) VALUES ($1,$2,$3,$4,$5)',
-        [branchId, r.code, r.name.substring(0, 255), r.qty, r.date]);
+        'INSERT INTO cukcuk_daily_sales (branch_id, dish_id, dish_name, quantity_sold, sale_date, revenue) VALUES ($1,$2,$3,$4,$5,$6)',
+        [branchId, r.code, r.name.substring(0, 255), r.qty, r.date, r.amount]);
     }
     await client.query(
       "INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, $2, 'SUCCESS', $3)",
@@ -347,6 +359,138 @@ app.post('/api/sales/map', async (req, res) => {
 });
 
 
+// Báo cáo doanh thu theo món / theo ngày
+app.get('/api/sales/report/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const from = dateRe.test(req.query.from || '') ? req.query.from : '1970-01-01';
+  const to = dateRe.test(req.query.to || '') ? req.query.to : '2999-12-31';
+  try {
+    const range = await pool.query(
+      'SELECT MIN(sale_date) AS min_date, MAX(sale_date) AS max_date FROM cukcuk_daily_sales WHERE branch_id = $1', [branchId]);
+    const byDish = await pool.query(`
+      SELECT s.dish_id AS code, COALESCE(MAX(m.cukcuk_name), MAX(s.dish_name)) AS name,
+             COALESCE(MAX(m.cukcuk_kind), '') AS kind,
+             BOOL_OR(m.bom_dish_id IS NOT NULL) AS matched,
+             SUM(s.quantity_sold) AS qty, SUM(s.revenue) AS revenue, COUNT(DISTINCT s.sale_date) AS days
+      FROM cukcuk_daily_sales s
+      LEFT JOIN dish_code_map m ON m.branch_id = s.branch_id AND m.cukcuk_code = s.dish_id
+      WHERE s.branch_id = $1 AND s.sale_date BETWEEN $2 AND $3
+      GROUP BY s.dish_id
+      ORDER BY SUM(s.revenue) DESC, SUM(s.quantity_sold) DESC
+    `, [branchId, from, to]);
+    const byDay = await pool.query(`
+      SELECT s.sale_date AS date, SUM(s.quantity_sold) AS qty, SUM(s.revenue) AS revenue,
+             SUM(s.revenue) FILTER (WHERE m.cukcuk_kind = 'Món ăn') AS food_revenue,
+             SUM(s.revenue) FILTER (WHERE m.cukcuk_kind = 'Đồ uống') AS drink_revenue,
+             SUM(s.quantity_sold) FILTER (WHERE m.cukcuk_kind = 'Món ăn') AS food_qty
+      FROM cukcuk_daily_sales s
+      LEFT JOIN dish_code_map m ON m.branch_id = s.branch_id AND m.cukcuk_code = s.dish_id
+      WHERE s.branch_id = $1 AND s.sale_date BETWEEN $2 AND $3
+      GROUP BY s.sale_date ORDER BY s.sale_date
+    `, [branchId, from, to]);
+    return res.json({ success: true, data: { range: range.rows[0], byDish: byDish.rows, byDay: byDay.rows } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Danh sách toàn bộ NVL (để tìm và chọn khi tạo món mới)
+app.get('/api/material-list', async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT material_id, material_name, unit_recipe, unit_purchase, category, sub_group, unit_cost
+      FROM raw_materials WHERE is_active IS NOT FALSE ORDER BY material_name`);
+    return res.json({ success: true, data: r.rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Tạo NVL mới: nhóm hàng tự phân loại theo tên
+app.post('/api/materials/create', async (req, res) => {
+  const { name, recipeUnit, unitCost } = req.body;
+  const cleanName = String(name || '').trim();
+  if (!cleanName) return res.status(400).json({ success: false, message: 'Thiếu tên NVL' });
+  const unit = String(recipeUnit || 'gr').trim() || 'gr';
+  const lower = unit.toLowerCase();
+  const isWeight = ['gr', 'g', 'gram'].includes(lower);
+  const isVolume = ['ml'].includes(lower);
+  const purchaseUnit = isWeight ? 'kg' : (isVolume ? 'lít' : unit);
+  const conv = (isWeight || isVolume) ? 1000 : 1;
+  const cost = Math.max(0, Number(unitCost) || 0);
+  try {
+    const normName = normalizeString(cleanName);
+    const dup = await pool.query('SELECT material_id, material_name FROM raw_materials WHERE normalized_name = $1 LIMIT 1', [normName]);
+    if (dup.rows.length) {
+      return res.status(409).json({ success: false, message: 'NVL này đã có: ' + dup.rows[0].material_name, data: dup.rows[0] });
+    }
+    const cat = categorize('', cleanName);
+    const sub = subGroupOf(cat.code, cleanName);
+    const id = ('NEW_' + normName.substring(0, 18).toUpperCase() + '_' + Math.random().toString(36).slice(2, 6).toUpperCase()).substring(0, 50);
+    await pool.query(`
+      INSERT INTO raw_materials (material_id, material_name, normalized_name, category, category_group, purchase_cycle,
+        unit_recipe, unit_purchase, conversion_rate, unit_cost, lead_time_days, waste_rate, shelf_life_days,
+        is_auto_created, is_active, sub_group, price_source)
+      VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,FALSE,TRUE,$13,$14)
+    `, [id, cleanName.substring(0, 255), normName.substring(0, 255), cat.code, cat.purchase_cycle, unit.substring(0, 20),
+      purchaseUnit.substring(0, 20), conv, cost, cat.purchase_cycle === 'FRESH_3DAYS' ? 1 : 3, cat.waste_percentage,
+      cat.shelf_life_days, sub, cost > 0 ? 'FILE' : 'MISSING']);
+    return res.json({
+      success: true, message: 'Đã tạo NVL mới',
+      data: { material_id: id, material_name: cleanName, unit_recipe: unit, unit_purchase: purchaseUnit, category: cat.code, sub_group: sub, unit_cost: cost }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Tạo món mới kèm định lượng; nếu có cukcukCode thì ghép luôn món CUKCUK đó với món vừa tạo
+app.post('/api/dishes/create', async (req, res) => {
+  const { branchId, dishName, cukcukCode, ingredients } = req.body;
+  const name = String(dishName || '').trim();
+  if (!branchId || !name) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc tên món' });
+  const items = (Array.isArray(ingredients) ? ingredients : [])
+    .map(i => ({ materialId: String(i.materialId || ''), qty: Number(i.quantity) }))
+    .filter(i => i.materialId && Number.isFinite(i.qty) && i.qty > 0);
+  if (items.length === 0) return res.status(400).json({ success: false, message: 'Món cần ít nhất 1 NVL với số lượng > 0' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const dup = await client.query('SELECT 1 FROM bill_of_materials WHERE branch_id = $1 AND LOWER(dish_name) = LOWER($2) LIMIT 1', [branchId, name]);
+    if (dup.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, message: 'Đã có món trùng tên trong định lượng. Hãy chọn món đó ở ô tìm kiếm thay vì tạo mới.' });
+    }
+    const ids = await client.query('SELECT material_id FROM raw_materials WHERE material_id = ANY($1)', [items.map(i => i.materialId)]);
+    const known = new Set(ids.rows.map(r => r.material_id));
+    const unknown = items.filter(i => !known.has(i.materialId));
+    if (unknown.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: 'Có NVL không tồn tại: ' + unknown.map(u => u.materialId).join(', ') });
+    }
+    const dishId = ('NEW_' + normalizeString(name).substring(0, 20).toUpperCase() + '_' + Math.random().toString(36).slice(2, 6).toUpperCase()).substring(0, 50);
+    for (const i of items) {
+      await client.query(
+        'INSERT INTO bill_of_materials (branch_id, dish_id, dish_name, dish_unit, dish_price, material_id, quantity_per_dish) VALUES ($1,$2,$3,$4,0,$5,$6)',
+        [branchId, dishId, name.substring(0, 255), 'Phần', i.materialId, i.qty]);
+    }
+    if (cukcukCode) {
+      await client.query(
+        "UPDATE dish_code_map SET bom_dish_id = $3, match_type = 'MANUAL', match_score = 1, updated_at = NOW() WHERE branch_id = $1 AND cukcuk_code = $2",
+        [branchId, cukcukCode, dishId]);
+    }
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã tạo món mới', data: { dish_id: dishId, dish_name: name } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 // 7. API Tạo kế hoạch mua hàng
 app.post('/api/purchase-plans/generate', async (req, res) => {
   const { branchId } = req.body;
@@ -413,6 +557,7 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
         material_name: material.material_name,
         category: material.category,
         purchase_cycle: material.purchase_cycle,
+        sub_group: material.sub_group || subGroupOf(material.category, material.material_name),
         unit_purchase: material.unit_purchase,
         opening_stock: Math.round(currentStock * 100) / 100,
         avg_daily_sales: Math.round(avgDailySales * 10000) / 10000,
@@ -439,11 +584,11 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
     for (const d of planDetails) {
       await client.query(`
         INSERT INTO purchase_plan_details
-        (plan_id, branch_id, material_id, material_name, category, purchase_cycle, unit_purchase,
+        (plan_id, branch_id, material_id, material_name, category, purchase_cycle, sub_group, unit_purchase,
          opening_stock, avg_daily_sales, forecast_days, forecasted_demand,
          safety_stock, reorder_point, suggested_qty, unit_cost, estimated_cost, note, status)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'PENDING')
-      `, [planId, branchId, d.material_id, d.material_name, d.category, d.purchase_cycle, d.unit_purchase,
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'PENDING')
+      `, [planId, branchId, d.material_id, d.material_name, d.category, d.purchase_cycle, d.sub_group, d.unit_purchase,
         d.opening_stock, d.avg_daily_sales, d.forecast_days, d.forecasted_demand,
         d.safety_stock, d.reorder_point, d.suggested_qty, d.unit_cost, d.estimated_cost, d.note]);
     }

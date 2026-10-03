@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
+import SearchSelect from '../components/SearchSelect';
+import BranchNav from '../components/BranchNav';
+import NewDishModal from '../components/NewDishModal';
+import NewMaterialModal from '../components/NewMaterialModal';
 
 export default function SyncCukcuk() {
   const router = useRouter();
@@ -15,6 +19,8 @@ export default function SyncCukcuk() {
   const [savingCode, setSavingCode] = useState('');
   const [ext, setExt] = useState({ installed: false, status: 'idle', text: '' });
   const [rangeDays, setRangeDays] = useState(7);
+  const [dishModal, setDishModal] = useState({ open: false, item: null });
+  const [matModalOpen, setMatModalOpen] = useState(false);
 
   useEffect(() => {
     const onMsg = (e) => {
@@ -153,8 +159,21 @@ export default function SyncCukcuk() {
             <p className="text-blue-200">Chi nhánh: {currentBranch?.branch_name}</p>
           </div>
         </header>
+        <BranchNav branch={branch} active="sync" branchName={currentBranch?.branch_name} />
+        <NewDishModal
+          open={dishModal.open}
+          branch={branch}
+          cukcukItem={dishModal.item}
+          onClose={() => setDishModal({ open: false, item: null })}
+          onCreated={() => { setDishModal({ open: false, item: null }); fetchSalesStatus(); }}
+        />
+        <NewMaterialModal
+          open={matModalOpen}
+          onClose={() => setMatModalOpen(false)}
+          onCreated={() => { setMatModalOpen(false); alert('✅ Đã tạo nguyên vật liệu mới. Bạn có thể chọn nó khi tạo món.'); }}
+        />
 
-        <div className="max-w-4xl mx-auto p-8 space-y-8">
+        <div className="max-w-6xl mx-auto p-8 space-y-8">
           {/* Section 1: Upload BOM */}
           <div className="bg-white rounded-lg shadow-lg overflow-hidden border-l-4 border-green-600">
             <div className="bg-green-50 px-6 py-4 border-b border-green-200">
@@ -252,6 +271,10 @@ export default function SyncCukcuk() {
                       <p>📅 Doanh số từ <b>{fmt(salesStatus.range.from_date)}</b> đến <b>{fmt(salesStatus.range.to_date)}</b> ({salesStatus.range.records} dòng món/ngày)</p>
                       <p>✅ Đã ghép với định lượng: <b>{matched}</b> món &nbsp;|&nbsp; ⚠️ Món ăn chưa ghép: <b>{foodUnmatched.length}</b> &nbsp;|&nbsp; Đồ uống/mặt hàng khác không có định lượng: {otherUnmatched.length}</p>
                     </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => setDishModal({ open: true, item: null })} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm font-bold">＋ Tạo món mới</button>
+                      <button onClick={() => setMatModalOpen(true)} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm font-bold">＋ Tạo nguyên vật liệu mới</button>
+                    </div>
                     {foodUnmatched.length > 0 && (
                       <div>
                         <p className="font-bold text-gray-800 mb-2">Món ăn CUKCUK chưa khớp với định lượng — chọn món tương ứng:</p>
@@ -272,17 +295,21 @@ export default function SyncCukcuk() {
                                   ✔ {m.suggestion.dish_name}
                                 </button>
                               )}
-                              <select
+                              <SearchSelect
+                                className="flex-1"
                                 disabled={savingCode === m.cukcuk_code}
-                                defaultValue=""
-                                onChange={(e) => e.target.value && saveMapping(m.cukcuk_code, e.target.value)}
-                                className="flex-1 border p-2 rounded"
+                                value=""
+                                options={(salesStatus.bomDishes || []).map(d => ({ value: d.dish_id, label: d.dish_name }))}
+                                onChange={(v) => v && saveMapping(m.cukcuk_code, v)}
+                                placeholder="🔍 Tìm món trong định lượng…"
+                              />
+                              <button
+                                onClick={() => setDishModal({ open: true, item: { code: m.cukcuk_code, name: m.cukcuk_name } })}
+                                className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded text-xs font-bold"
+                                title="Món này chưa có trong file định lượng: tạo món mới và định lượng"
                               >
-                                <option value="">— Chọn món trong định lượng —</option>
-                                {(salesStatus.bomDishes || []).map(d => (
-                                  <option key={d.dish_id} value={d.dish_id}>{d.dish_name}</option>
-                                ))}
-                              </select>
+                                ＋ Tạo món mới
+                              </button>
                             </div>
                           ))}
                         </div>

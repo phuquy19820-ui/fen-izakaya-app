@@ -81,6 +81,52 @@ const PRICE_CEILING_PER_KG = {
   SAUCE_CONDIMENT: 600000
 };
 
+// Nhóm chi tiết (thịt gà, thịt heo, gia vị…) để lọc trong kế hoạch mua. Luật xếp theo nhóm lớn đã phân loại.
+const SUB_RULES = {
+  TRUNG: ['trứng'],
+  THIT_BO: ['bò', 'nạm', 'wagyu', 'fuji', 'tomahawk', 'ribeye', 'gyutan', 'sancho'],
+  THIT_HEO: ['heo', 'lợn', 'ba rọi', 'ba chỉ', 'sườn', 'bacon', 'baycon', 'giò', 'xá xíu', 'nọng', 'dồi', 'phèo', 'xúc xích', 'lòng', 'bao tử', 'tai', 'tộc'],
+  THIT_GA: ['gà', 'vịt', 'ngan', 'cánh', 'sụn', 'mề', 'tim'],
+  TOM_MUC: ['tôm', 'mực', 'cua', 'ghẹ', 'hàu', 'sò', 'nghêu', 'ốc', 'bạch tuộc', 'tuột', 'sứa', 'tép', 'ebiko', 'mentaiko', 'surimi', 'kani', 'tako'],
+  CA: ['cá', 'lươn', 'saba', 'sashimi', 'hamachi', 'tuna'],
+  NAM: ['nấm'],
+  TRAI_CAY: ['quả', 'trái', 'chanh', 'cam', 'táo', 'xoài', 'dứa', 'chuối', 'khế', 'me', 'nho', 'đào', 'mận', 'lê', 'dừa', 'bơ'],
+  TUOI_GIA_VI: ['hành', 'tỏi', 'gừng', 'sả', 'ớt', 'riềng', 'nghệ', 'tắc', 'quất'],
+  BOT: ['bột'],
+  GIA_VI: ['tiêu', 'muối', 'đường', 'nanami', 'mù tạt', 'wasabi', 'gia vị', 'hạt nêm', 'bột ngọt', 'mì chính', 'mè', 'vừng', 'cà ri', 'quế', 'hồi', 'ngũ vị', 'tomyum', 'ớt', 'tỏi', 'hành', 'knorr'],
+  SOT: ['sốt', 'tương', 'mayo', 'mayonnaise', 'nước chấm', 'giấm', 'mirin', 'sake', 'nước mắm', 'mắm', 'dầu hào', 'ketchup', 'miso', 'nước dùng', 'kewpie', 'sauce'],
+  DAU_AN: ['dầu', 'mỡ'],
+  DO_UONG: ['bia', 'rượu', 'nước ngọt', 'nước suối', 'trà', 'cà phê', 'soda', 'nước ép', 'sữa'],
+  TINH_BOT: ['gạo', 'mì', 'bún', 'miến', 'bánh', 'cơm', 'udon', 'ramen', 'phở', 'nui'],
+  RAU_CU: ['rau', 'cải', 'cà', 'khoai', 'bắp', 'dưa', 'bí', 'su', 'xà lách', 'củ', 'bầu', 'mướp', 'hẹ', 'đậu', 'măng', 'rong', 'tảo']
+};
+const SUB_LABELS = {
+  TRUNG: 'Trứng', THIT_BO: 'Thịt bò', THIT_HEO: 'Thịt heo', THIT_GA: 'Thịt gà & vịt', TOM_MUC: 'Tôm, mực & nhuyễn thể',
+  CA: 'Cá', NAM: 'Nấm', TRAI_CAY: 'Trái cây', TUOI_GIA_VI: 'Hành, tỏi, gừng, ớt', BOT: 'Bột & tinh bột', GIA_VI: 'Gia vị',
+  SOT: 'Sốt & nước chấm', DAU_AN: 'Dầu ăn & mỡ', DO_UONG: 'Đồ uống & rượu', TINH_BOT: 'Mì, gạo & bánh', RAU_CU: 'Rau củ',
+  THAO_MOC: 'Thảo mộc', THIT_KHAC: 'Thịt khác', HAI_SAN_KHAC: 'Hải sản khác', HANG_KHO_KHAC: 'Hàng khô khác', DONG_LANH_KHAC: 'Đông lạnh khác'
+};
+const SUB_ORDER_BY_CATEGORY = {
+  FRESH_MEAT: ['TRUNG', 'THIT_BO', 'THIT_HEO', 'THIT_GA'],
+  SEAFOOD: ['TOM_MUC', 'CA'],
+  VEGETABLE: ['NAM', 'TRAI_CAY', 'TUOI_GIA_VI', 'RAU_CU'],
+  SPICE_DRY: ['GIA_VI', 'BOT'],
+  DRY_GOODS: ['DAU_AN', 'DO_UONG', 'TINH_BOT', 'GIA_VI', 'SOT'],
+  FROZEN: ['TOM_MUC', 'CA', 'THIT_BO', 'THIT_HEO', 'THIT_GA']
+};
+const SUB_DEFAULT_BY_CATEGORY = {
+  FRESH_MEAT: 'THIT_KHAC', SEAFOOD: 'HAI_SAN_KHAC', VEGETABLE: 'RAU_CU', HERB_SEASONING: 'THAO_MOC',
+  SPICE_DRY: 'GIA_VI', SAUCE_CONDIMENT: 'SOT', DRY_GOODS: 'HANG_KHO_KHAC', FROZEN: 'DONG_LANH_KHAC'
+};
+
+function subGroupOf(categoryCode, name) {
+  const text = ' ' + String(name || '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() + ' ';
+  for (const key of SUB_ORDER_BY_CATEGORY[categoryCode] || []) {
+    if (SUB_RULES[key].some(w => text.includes(' ' + w + ' '))) return SUB_LABELS[key];
+  }
+  return SUB_LABELS[SUB_DEFAULT_BY_CATEGORY[categoryCode] || 'HANG_KHO_KHAC'];
+}
+
 function categorize(code, name) {
   const upper = String(code || '').toUpperCase();
   const text = ' ' + String(name || '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() + ' ';
@@ -178,15 +224,16 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
         INSERT INTO raw_materials
           (material_id, material_name, normalized_name, category, category_group, purchase_cycle,
            unit_recipe, unit_purchase, conversion_rate, unit_cost, lead_time_days, waste_rate,
-           shelf_life_days, is_auto_created, is_active)
-        VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,TRUE,TRUE)
+           shelf_life_days, is_auto_created, is_active, sub_group)
+        VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8,$9,$10,$11,$12,TRUE,TRUE,$13)
         ON CONFLICT (material_id) DO UPDATE SET
           unit_cost = CASE WHEN EXCLUDED.unit_cost > 0 THEN EXCLUDED.unit_cost ELSE raw_materials.unit_cost END,
+          sub_group = EXCLUDED.sub_group,
           updated_at = NOW()
         RETURNING (xmax = 0) AS inserted
       `, [matCode, matName.substring(0, 255), normName.substring(0, 255), cat.code, cat.purchase_cycle,
         recipeUnit.substring(0, 20), purchaseUnit.substring(0, 20), conversionRate, unitCost, leadTime,
-        cat.waste_percentage, cat.shelf_life_days]);
+        cat.waste_percentage, cat.shelf_life_days, subGroupOf(cat.code, matName)]);
 
       knownMaterials.set(matCode, { cat: cat.code, conv: conversionRate });
       if (res.rows[0].inserted) {
@@ -247,4 +294,4 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
   return summary;
 }
 
-module.exports = { parseAndSaveBOM, autoDetectCategory, normalizeString, parseNumber };
+module.exports = { parseAndSaveBOM, autoDetectCategory, categorize, subGroupOf, normalizeString, parseNumber };

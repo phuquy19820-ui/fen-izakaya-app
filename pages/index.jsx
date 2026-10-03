@@ -165,6 +165,11 @@ export default function Dashboard() {
                           📊 Kế Hoạch Mua
                         </a>
                       </Link>
+                      <Link href={`/sales-report?branch=${branch.branch_id}`}>
+                        <a className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-bold text-center text-sm">
+                          💰 Doanh Thu
+                        </a>
+                      </Link>
                       <Link href={`/sync-cukcuk?branch=${branch.branch_id}`}>
                         <a className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded font-bold text-center text-sm">
                           🔄 Đồng Bộ

@@ -106,8 +106,9 @@
           itemRows++;
           const date = localDate(r.RefDate);
           const key = date + '|' + r.InventoryItemCode;
-          const cur = agg.get(key) || { date, code: r.InventoryItemCode, name: r.ItemName, kind: r.InventoryItemKind, qty: 0 };
+          const cur = agg.get(key) || { date, code: r.InventoryItemCode, name: r.ItemName, kind: r.InventoryItemKind, qty: 0, amount: 0 };
           cur.qty += Number(r.Quantity);
+          cur.amount += Number(r.Amount) || 0;
           agg.set(key, cur);
         }
         say('PROGRESS', { status: 'running', text: 'Đã đọc ' + collected + '/' + total + ' dòng…' });
