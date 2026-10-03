@@ -423,7 +423,8 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
         suggested_qty: suggestedQty,
         unit_cost: unitCost,
         estimated_cost: Math.round(suggestedQty * unitCost),
-        note: PurchasePlanService.generateNote(currentStock, avgDailySales, forecastDays, material.category)
+        note: (unitCost > 3000000 ? '⚠️ Đơn giá bất thường, kiểm tra file định lượng. ' : '') +
+          PurchasePlanService.generateNote(currentStock, avgDailySales, forecastDays, material.category)
       });
     }
 

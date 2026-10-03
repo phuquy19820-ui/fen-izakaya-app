@@ -123,6 +123,7 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
 
   const summary = { totalDishes: 0, totalMaterials: 0, newMaterialsCreated: 0, byCategory: {} };
   const knownMaterials = new Map();
+  const priceLists = new Map();
   const bomRows = [];
   let currentDish = null;
 
@@ -183,9 +184,22 @@ async function parseAndSaveBOM(fileBuffer, branchId, db, filename) {
       }
     }
 
+    const rowPrice = parseNumber(cell(col.unitPrice));
+    if (rowPrice > 0) {
+      if (!priceLists.has(matCode)) priceLists.set(matCode, []);
+      priceLists.get(matCode).push(rowPrice);
+    }
+
     bomRows.push([branchId, currentDish.id, currentDish.name.substring(0, 255), currentDish.unit.substring(0, 20),
       currentDish.price, matCode, quantity]);
     summary.totalMaterials++;
+  }
+
+  // File định lượng có thể ghi nhiều đơn giá khác nhau cho cùng một NVL: lấy giá trung vị (thấp hơn khi chẵn) để loại giá ngoại lai.
+  for (const [code, prices] of priceLists) {
+    const sorted = [...prices].sort((a, b) => a - b);
+    const median = sorted[Math.floor((sorted.length - 1) / 2)];
+    await db.query('UPDATE raw_materials SET unit_cost = ROUND($2 * conversion_rate) WHERE material_id = $1', [code, median]);
   }
 
   const CHUNK = 500;
