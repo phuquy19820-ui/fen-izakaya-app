@@ -1,9 +1,11 @@
 const { normalizeString } = require('./bomService');
 
-function words(str) {
-  return String(str || '')
-    .normalize('NFC')
-    .toLowerCase()
+function words(str, keepAccents = false) {
+  const lower = String(str || '').normalize('NFC').toLowerCase();
+  if (keepAccents) {
+    return lower.replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(' ').filter(Boolean);
+  }
+  return lower
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .replace(/đ/g, 'd')
@@ -34,9 +36,11 @@ const meaningful = (ws) => {
 };
 
 // Điểm giống nhau 0..1 giữa hai tên món: kết hợp khoảng cách ký tự, độ trùng từ và quan hệ "tên này nằm trong tên kia".
-function similarity(nameA, nameB) {
-  const wa = meaningful(words(nameA));
-  const wb = meaningful(words(nameB));
+function similarity(nameA, nameB, opts = {}) {
+  const keep = !!opts.keepAccents;
+  const minContain = opts.minContain || 3;
+  const wa = meaningful(words(nameA, keep));
+  const wb = meaningful(words(nameB, keep));
   if (!wa.length || !wb.length) return 0;
   const a = wa.join('');
   const b = wb.join('');
@@ -48,15 +52,15 @@ function similarity(nameA, nameB) {
   const dice = (2 * common) / (wa.length + wb.length);
 
   const [short, long, setLong] = wa.length <= wb.length ? [wa, wb, setB] : [wb, wa, setA];
-  const contained = short.length >= 3 && short.every(w => setLong.has(w));
+  const contained = short.length >= minContain && short.every(w => setLong.has(w));
   const containment = contained ? 0.85 + 0.1 * (short.length / long.length) : 0;
   return Math.max(lev, dice, containment);
 }
 
 // Trả về n món định lượng gần nhất để gợi ý khi chưa tự ghép được.
-function suggest(name, bomDishes, n = 1) {
+function suggest(name, bomDishes, n = 1, opts = {}) {
   return bomDishes
-    .map(d => ({ dish_id: d.dish_id, dish_name: d.dish_name, score: similarity(name, d.dish_name) }))
+    .map(d => ({ dish_id: d.dish_id, dish_name: d.dish_name, score: similarity(name, d.dish_name, opts) }))
     .sort((x, y) => y.score - x.score)
     .slice(0, n);
 }
@@ -64,7 +68,7 @@ function suggest(name, bomDishes, n = 1) {
 const AUTO_THRESHOLD = 0.85;
 
 // bomDishes: [{ dish_id, dish_name }]. Trả về { dishId, type, score } hoặc null.
-function matchDish(name, bomDishes) {
+function matchDish(name, bomDishes, opts = {}) {
   const key = normalizeString(name);
   if (!key) return null;
   const exact = bomDishes.find(d => normalizeString(d.dish_name) === key);
@@ -73,7 +77,7 @@ function matchDish(name, bomDishes) {
   let best = null;
   let second = 0;
   for (const d of bomDishes) {
-    const score = similarity(name, d.dish_name);
+    const score = similarity(name, d.dish_name, opts);
     const dKey = normalizeString(d.dish_name);
     if (!best || score > best.score) {
       // Món định lượng trùng tên với ứng viên tốt nhất không được tính là "ứng viên thứ hai"
@@ -83,7 +87,10 @@ function matchDish(name, bomDishes) {
   }
   // Chỉ nhận khi đủ giống và nổi bật hơn hẳn ứng viên thứ hai, để tránh ghép nhầm món.
   if (best && best.score >= AUTO_THRESHOLD && best.score - second >= 0.03) {
-    return { dishId: best.dishId, type: 'AUTO_FUZZY', score: best.score };
+    // Tính cả dấu: "cà chua" khác "cải chua" dù chỉ lệch một chữ khi bỏ dấu
+    const bestDish = bomDishes.find(d => d.dish_id === best.dishId);
+    const strict = similarity(name, bestDish.dish_name, { ...opts, keepAccents: true });
+    if (strict >= 0.8) return { dishId: best.dishId, type: 'AUTO_FUZZY', score: best.score };
   }
   return null;
 }

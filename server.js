@@ -1011,11 +1011,11 @@ app.post('/api/inventory/import', async (req, res) => {
     clean.forEach(r => { seen.set(r.code, r); });
     for (const r of seen.values()) {
       const cur = existing.get(r.code);
-      if (cur && (cur.material_id || cur.match_type === 'MANUAL')) {
+      if (cur && cur.match_type === 'MANUAL') {
         await client.query('UPDATE stock_code_map SET cukcuk_name = $3, unit_name = $4, updated_at = NOW() WHERE branch_id = $1 AND cukcuk_code = $2', [branchId, r.code, r.name, r.unit]);
         continue;
       }
-      const m = matchDish(r.name, mats);
+      const m = matchDish(r.name, mats, { minContain: 2 });
       await client.query(`
         INSERT INTO stock_code_map (branch_id, cukcuk_code, cukcuk_name, unit_name, material_id, match_type, match_score)
         VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -1080,7 +1080,7 @@ app.get('/api/stock/report/:branchId', async (req, res) => {
     const mats = await branchMaterials(pool, branchId);
     const result = items.map(it => {
       if (it.material_id) return it;
-      const s = suggest(it.name, mats, 1)[0];
+      const s = suggest(it.name, mats, 1, { minContain: 2 })[0];
       return { ...it, suggestion: s && s.score >= 0.5 ? { material_id: s.dish_id, material_name: s.dish_name, score: Math.round(s.score * 100) / 100 } : null };
     });
     return res.json({
@@ -1120,8 +1120,8 @@ async function ensureStockMap(db, branchId, items) {
   const existing = new Map((await db.query('SELECT cukcuk_code, material_id, match_type FROM stock_code_map WHERE branch_id = $1', [branchId])).rows.map(r => [r.cukcuk_code, r]));
   for (const it of items) {
     const cur = existing.get(it.code);
-    if (cur && (cur.material_id || cur.match_type === 'MANUAL')) continue;
-    const m = matchDish(it.name, mats);
+    if (cur && cur.match_type === 'MANUAL') continue;
+    const m = matchDish(it.name, mats, { minContain: 2 });
     await db.query(`
       INSERT INTO stock_code_map (branch_id, cukcuk_code, cukcuk_name, unit_name, material_id, match_type, match_score)
       VALUES ($1,$2,$3,$4,$5,$6,$7)
