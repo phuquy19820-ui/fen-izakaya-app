@@ -13,6 +13,46 @@ export default function SyncCukcuk() {
 
   const [salesStatus, setSalesStatus] = useState(null);
   const [savingCode, setSavingCode] = useState('');
+  const [ext, setExt] = useState({ installed: false, status: 'idle', text: '' });
+  const [rangeDays, setRangeDays] = useState(7);
+
+  useEffect(() => {
+    const onMsg = (e) => {
+      if (e.source !== window || !e.data || e.data.source !== 'FEN_EXT') return;
+      if (e.data.type === 'READY') setExt((x) => ({ ...x, installed: true }));
+      if (e.data.type === 'STATUS') {
+        setExt((x) => ({ ...x, installed: true, ...e.data.payload }));
+        if (e.data.payload.status === 'done') fetchSalesStatus();
+      }
+    };
+    window.addEventListener('message', onMsg);
+    window.postMessage({ source: 'FEN_APP', type: 'PING' }, '*');
+    return () => window.removeEventListener('message', onMsg);
+  }, [branch]);
+
+  const cukcukUrl = () => {
+    const c = (currentBranch?.cukcuk_domain || currentBranch?.cukcuk_company_code || '').trim();
+    if (!c) return '';
+    if (/^https?:\/\//.test(c)) return c;
+    return c.includes('.') ? `https://${c}` : `https://${c}.cukcuk.vn`;
+  };
+
+  const startExtSync = () => {
+    const url = cukcukUrl();
+    if (!url) {
+      alert('Chi nhánh chưa có Mã công ty CUKCUK (phần đầu địa chỉ ....cukcuk.vn). Hãy tạo lại chi nhánh với mã này.');
+      return;
+    }
+    const p = (n) => String(n).padStart(2, '0');
+    const fmt = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    const to = new Date();
+    const from = new Date(Date.now() - (rangeDays - 1) * 86400000);
+    setExt((x) => ({ ...x, status: 'waiting_login', text: 'Đang mở CUKCUK…', result: null }));
+    window.postMessage({
+      source: 'FEN_APP', type: 'START_SYNC',
+      job: { branchId: branch, cukcukUrl: url, fromDate: fmt(from), toDate: fmt(to) }
+    }, '*');
+  };
 
   useEffect(() => {
     if (!branch) return;
@@ -160,11 +200,46 @@ export default function SyncCukcuk() {
           <div className="bg-white rounded-lg shadow-lg overflow-hidden border-l-4 border-purple-600">
             <div className="bg-purple-50 px-6 py-4 border-b border-purple-200">
               <h2 className="text-xl font-bold text-purple-800">🧾 Bước 2: Doanh Số Bán Hàng Từ CUKCUK</h2>
-              <p className="text-sm text-purple-700 mt-1">Lấy từ báo cáo "Chi tiết doanh thu theo hóa đơn và mặt hàng" trên CUKCUK của chi nhánh</p>
+              <p className="text-sm text-purple-700 mt-1">Lấy từ báo cáo "Chi tiết doanh thu theo hóa đơn và mặt hàng" (phân hệ Báo cáo → Bán hàng) trên CUKCUK của chi nhánh</p>
             </div>
             <div className="p-6 space-y-4">
+              <div className="border border-purple-200 rounded p-4 space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={startExtSync}
+                    disabled={!ext.installed || ext.status === 'waiting_login' || ext.status === 'running'}
+                    className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded font-bold disabled:opacity-50"
+                  >
+                    🔄 Đồng bộ doanh số từ CUKCUK
+                  </button>
+                  <select value={rangeDays} onChange={(e) => setRangeDays(Number(e.target.value))} className="border p-2 rounded text-sm">
+                    <option value={3}>3 ngày gần nhất</option>
+                    <option value={7}>7 ngày gần nhất</option>
+                    <option value={14}>14 ngày gần nhất</option>
+                    <option value={30}>30 ngày gần nhất</option>
+                  </select>
+                  <span className="text-xs text-gray-500">Bấm nút → CUKCUK tự mở → bạn đăng nhập → app tự lấy số liệu.</span>
+                </div>
+                {ext.status !== 'idle' && (
+                  <p className={`text-sm font-medium ${ext.status === 'error' ? 'text-red-700' : ext.status === 'done' ? 'text-green-700' : 'text-purple-800'}`}>
+                    {ext.status === 'error' ? '❌ ' : ext.status === 'done' ? '✅ ' : '⏳ '}{ext.text}
+                    {ext.status === 'done' && ext.result && ` Ghép được ${ext.result.matchedCodes}/${ext.result.totalCodes} mã món.`}
+                  </p>
+                )}
+                {!ext.installed && (
+                  <div className="bg-yellow-50 border border-yellow-300 rounded p-3 text-sm text-yellow-900">
+                    <p className="font-bold mb-1">Cần cài tiện ích Chrome một lần (không thấy tiện ích trên trình duyệt này):</p>
+                    <ol className="list-decimal ml-5 space-y-1">
+                      <li><a href="/fen-cukcuk-extension.zip" className="text-blue-700 underline">Tải tiện ích (.zip)</a> rồi giải nén ra một thư mục cố định.</li>
+                      <li>Mở Chrome, vào <b>chrome://extensions</b>, bật <b>Chế độ nhà phát triển</b> (Developer mode).</li>
+                      <li>Bấm <b>Tải tiện ích đã giải nén</b> (Load unpacked) và chọn thư mục vừa giải nén.</li>
+                      <li>Quay lại trang này, tải lại trang (F5), nút đồng bộ sẽ sáng lên.</li>
+                    </ol>
+                  </div>
+                )}
+              </div>
               {!salesStatus || !salesStatus.range || !salesStatus.range.records || Number(salesStatus.range.records) === 0 ? (
-                <p className="text-gray-600">Chưa có doanh số. Hãy nhờ Claude đăng nhập CUKCUK và lấy báo cáo doanh số cho chi nhánh này.</p>
+                <p className="text-gray-600">Chưa có doanh số. Bấm nút "Đồng bộ doanh số từ CUKCUK" ở trên.</p>
               ) : (() => {
                 const maps = salesStatus.mappings || [];
                 const foodUnmatched = maps.filter(m => !m.bom_dish_id && m.cukcuk_kind === 'Món ăn');
