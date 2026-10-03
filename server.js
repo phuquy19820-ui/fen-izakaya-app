@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-const { matchDish, suggest } = require('./services/dishMatchService');
+const { matchDish, suggest, similarity } = require('./services/dishMatchService');
 const { categorize, subGroupOf, normalizeString } = require('./services/bomService');
 const { parseAndSaveBOM } = require('./services/bomService');
 const { classifyMaterial } = require('./services/materialClassificationService');
@@ -87,6 +87,22 @@ async function initializeDatabase() {
         match_score NUMERIC(4,3) DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (branch_id, cukcuk_code)
+      )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS cukcuk_menu (
+        branch_id VARCHAR(50) NOT NULL,
+        item_code VARCHAR(100) NOT NULL,
+        item_name VARCHAR(255) NOT NULL,
+        item_type VARCHAR(60),
+        category_name VARCHAR(100),
+        inactive BOOLEAN DEFAULT FALSE,
+        hidden BOOLEAN DEFAULT FALSE,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (branch_id, item_code)
+      )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS bom_deleted (
+        id INT, branch_id VARCHAR(50), dish_id VARCHAR(50), dish_name VARCHAR(255), dish_unit VARCHAR(20),
+        dish_price NUMERIC(12,2), material_id VARCHAR(50), quantity_per_dish NUMERIC(12,4), updated_at TIMESTAMP,
+        deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )`);
       migrations.push('ALTER TABLE cukcuk_daily_sales ADD COLUMN IF NOT EXISTS revenue NUMERIC(16,2) DEFAULT 0');
       migrations.push('CREATE INDEX IF NOT EXISTS idx_sales_branch_date ON cukcuk_daily_sales (branch_id, sale_date)');
@@ -483,6 +499,124 @@ app.post('/api/dishes/create', async (req, res) => {
     }
     await client.query('COMMIT');
     return res.json({ success: true, message: 'Đã tạo món mới', data: { dish_id: dishId, dish_name: name } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Thực đơn CUKCUK (Danh mục → Thực đơn) của từng chi nhánh
+app.post('/api/menu/import', async (req, res) => {
+  const { branchId, items } = req.body;
+  if (!branchId || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc danh sách thực đơn' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM cukcuk_menu WHERE branch_id = $1', [branchId]);
+    let n = 0;
+    for (const it of items) {
+      const code = String(it.code || '').trim();
+      const name = String(it.name || '').trim();
+      if (!code || !name) continue;
+      await client.query(
+        `INSERT INTO cukcuk_menu (branch_id, item_code, item_name, item_type, category_name, inactive, hidden)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (branch_id, item_code) DO NOTHING`,
+        [branchId, code.substring(0, 100), name.substring(0, 255), String(it.type || '').substring(0, 60),
+          String(it.category || '').substring(0, 100), !!it.inactive, !!it.hidden]);
+      n++;
+    }
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã lưu thực đơn CUKCUK', data: { items: n } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+const SAUCE_WORDS = [' sốt ', ' sauce ', ' sot ', ' nước chấm ', ' dressing ', ' mayo '];
+const isSauceName = (name) => {
+  const t = ' ' + String(name || '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() + ' ';
+  return SAUCE_WORDS.some(w => t.includes(w));
+};
+
+// Phân loại từng món trong định lượng so với thực đơn: giữ / cần xem lại / xóa
+async function classifyBomForMenu(db, branchId) {
+  const menu = (await db.query('SELECT item_code, item_name, item_type FROM cukcuk_menu WHERE branch_id = $1', [branchId])).rows;
+  if (menu.length === 0) throw new Error('Chưa có thực đơn CUKCUK của chi nhánh này. Hãy lấy thực đơn trước.');
+  const dishes = (await db.query(
+    'SELECT dish_id, MIN(dish_name) AS dish_name, COUNT(*) AS ingredient_rows FROM bill_of_materials WHERE branch_id = $1 GROUP BY dish_id ORDER BY MIN(dish_name)', [branchId])).rows;
+  const mapped = new Set((await db.query(
+    'SELECT DISTINCT bom_dish_id FROM dish_code_map WHERE branch_id = $1 AND bom_dish_id IS NOT NULL', [branchId])).rows.map(r => r.bom_dish_id));
+
+  return dishes.map(d => {
+    const base = { dish_id: d.dish_id, dish_name: d.dish_name, ingredient_rows: Number(d.ingredient_rows) };
+    if (d.dish_id.startsWith('NEW_')) return { ...base, status: 'KEEP', reason: 'Món do bạn tạo trong app' };
+    const exact = menu.find(m => normalizeString(m.item_name) === normalizeString(d.dish_name));
+    let best = exact ? { item: exact, score: 1 } : null;
+    if (!best) {
+      for (const m of menu) {
+        const score = similarity(d.dish_name, m.item_name);
+        if (!best || score > best.score) best = { item: m, score };
+      }
+    }
+    const near = best ? { menu_name: best.item.item_name, score: Math.round(best.score * 100) / 100 } : null;
+    if (mapped.has(d.dish_id)) return { ...base, status: 'KEEP', reason: 'Đã ghép với món đang bán', near };
+    if (best && best.score >= 0.85) return { ...base, status: 'KEEP', reason: 'Có trong thực đơn', near };
+    if (isSauceName(d.dish_name)) return { ...base, status: 'KEEP', reason: 'Định lượng sốt (giữ lại)', near };
+    if (best && best.score >= 0.65) return { ...base, status: 'REVIEW', reason: 'Tên gần giống một món thực đơn (giữ lại, bạn kiểm tra)', near };
+    return { ...base, status: 'DELETE', reason: 'Không có trong thực đơn', near };
+  });
+}
+
+app.get('/api/menu/cleanup-preview/:branchId', async (req, res) => {
+  try {
+    const rows = await classifyBomForMenu(pool, req.params.branchId);
+    const count = (s) => rows.filter(r => r.status === s).length;
+    return res.json({
+      success: true,
+      data: {
+        totalDishes: rows.length, keep: count('KEEP'), review: count('REVIEW'), delete: count('DELETE'),
+        deleteRows: rows.filter(r => r.status === 'DELETE').reduce((s, r) => s + r.ingredient_rows, 0),
+        dishes: rows
+      }
+    });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// Xóa định lượng không có trong thực đơn. Lưu bản sao vào bom_deleted để khôi phục khi cần.
+app.post('/api/menu/cleanup', async (req, res) => {
+  const { branchId, confirm } = req.body;
+  if (!branchId || confirm !== true) {
+    return res.status(400).json({ success: false, message: 'Cần branchId và confirm: true' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const rows = await classifyBomForMenu(client, branchId);
+    const ids = rows.filter(r => r.status === 'DELETE').map(r => r.dish_id);
+    if (ids.length === 0) {
+      await client.query('ROLLBACK');
+      return res.json({ success: true, message: 'Không có định lượng nào cần xóa', data: { deletedDishes: 0, deletedRows: 0 } });
+    }
+    await client.query(`
+      INSERT INTO bom_deleted (id, branch_id, dish_id, dish_name, dish_unit, dish_price, material_id, quantity_per_dish, updated_at)
+      SELECT id, branch_id, dish_id, dish_name, dish_unit, dish_price, material_id, quantity_per_dish, updated_at
+      FROM bill_of_materials WHERE branch_id = $1 AND dish_id = ANY($2)
+    `, [branchId, ids]);
+    const del = await client.query('DELETE FROM bill_of_materials WHERE branch_id = $1 AND dish_id = ANY($2)', [branchId, ids]);
+    await client.query('COMMIT');
+    return res.json({
+      success: true, message: 'Đã xóa định lượng không có trong thực đơn',
+      data: { deletedDishes: ids.length, deletedRows: del.rowCount, kept: rows.length - ids.length }
+    });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     return res.status(500).json({ success: false, message: error.message });
