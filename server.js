@@ -1301,6 +1301,162 @@ app.get('/api/purchase-orders/:branchId/:id', async (req, res) => {
   }
 });
 
+// ====== SỔ MUA HÀNG (từ dữ liệu mua hàng đồng bộ từ CUKCUK + đơn đặt hàng đã xuất) ======
+const SMALL_UNITS_SQL = "lower(p.unit_name) IN ('gram', 'gr', 'g', 'ml')";
+const dateOnly = (s, fallback) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? s : fallback);
+
+// Dòng nhập hàng đã chuẩn hóa đơn vị (gram -> kg, ml -> lít): dùng cho sổ nhập hàng và báo cáo từng ngày
+app.get('/api/purchase-books/lines/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  const from = dateOnly(req.query.from, '1970-01-01');
+  const to = dateOnly(req.query.to, '2999-12-31');
+  try {
+    const rows = (await pool.query(`
+      SELECT p.purchase_date AS date, p.ref_no, p.supplier_code, p.supplier_name, p.item_code, p.item_name,
+             CASE WHEN ${SMALL_UNITS_SQL} THEN p.qty / 1000.0 ELSE p.qty END AS qty,
+             CASE WHEN lower(p.unit_name) IN ('gram', 'gr', 'g') THEN 'kg' WHEN lower(p.unit_name) = 'ml' THEN 'lít' ELSE p.unit_name END AS unit,
+             CASE WHEN ${SMALL_UNITS_SQL} THEN p.unit_price * 1000 ELSE p.unit_price END AS price,
+             p.amount, m.material_id
+      FROM supplier_purchases p
+      LEFT JOIN stock_code_map m ON m.branch_id = p.branch_id AND m.cukcuk_code = p.item_code
+      WHERE p.branch_id = $1 AND p.purchase_date BETWEEN $2 AND $3
+      ORDER BY p.purchase_date DESC, p.supplier_name, p.item_name`, [branchId, from, to])).rows;
+    const range = (await pool.query('SELECT MIN(purchase_date) AS min_date, MAX(purchase_date) AS max_date FROM supplier_purchases WHERE branch_id = $1', [branchId])).rows[0];
+    return res.json({ success: true, data: { range, rows } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Số lượng nhập thực tế theo NVL của app (quy về đơn vị mua của app), có thể lọc nhà cung cấp
+async function receivedByMaterial(db, branchId, from, to, supplierCode) {
+  const params = [branchId, from, to];
+  let supSql = '';
+  if (supplierCode) { params.push(supplierCode); supSql = ' AND p.supplier_code = $4'; }
+  return (await db.query(`
+    SELECT m.material_id, rm.material_name, rm.unit_purchase AS unit,
+           SUM(p.qty * CASE WHEN ${SMALL_UNITS_SQL} AND rm.conversion_rate > 1 THEN 1.0 / rm.conversion_rate ELSE 1.0 END) AS qty,
+           SUM(p.amount) AS amount
+    FROM supplier_purchases p
+    JOIN stock_code_map m ON m.branch_id = p.branch_id AND m.cukcuk_code = p.item_code AND m.material_id IS NOT NULL
+    JOIN raw_materials rm ON rm.material_id = m.material_id
+    WHERE p.branch_id = $1 AND p.purchase_date BETWEEN $2 AND $3${supSql}
+    GROUP BY m.material_id, rm.material_name, rm.unit_purchase`, params)).rows;
+}
+
+async function orderedByMaterial(db, branchId, year, month, supplierCode) {
+  const params = [branchId, year, month];
+  let supSql = '';
+  if (supplierCode) { params.push(supplierCode); supSql = ' AND o.supplier_code = $4'; }
+  return (await db.query(`
+    SELECT l->>'code' AS material_id, MAX(l->>'name') AS name, MAX(l->>'unit') AS unit, SUM((l->>'qty')::numeric) AS qty
+    FROM purchase_orders o, jsonb_array_elements(o.payload->'lines') l
+    WHERE o.branch_id = $1 AND o.order_year = $2 AND o.order_month = $3${supSql}
+    GROUP BY l->>'code'`, params)).rows;
+}
+
+// So sánh số lượng thực nhập (ngày/tuần/tháng) với tổng đặt hàng trong tháng
+app.get('/api/purchase-books/compare/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  const period = ['day', 'week', 'month'].includes(req.query.period) ? req.query.period : 'month';
+  const today = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+  const date = dateOnly(req.query.date, today);
+  const supplier = String(req.query.supplier || '').trim();
+  try {
+    const d = new Date(date + 'T00:00:00Z');
+    const year = d.getUTCFullYear();
+    const month = d.getUTCMonth() + 1;
+    const monthStart = new Date(Date.UTC(year, month - 1, 1)).toISOString().slice(0, 10);
+    let from = date;
+    let to = date;
+    if (period === 'week') {
+      const dow = (d.getUTCDay() + 6) % 7; // thứ Hai = 0
+      from = new Date(d.getTime() - dow * 86400000).toISOString().slice(0, 10);
+      to = new Date(d.getTime() + (6 - dow) * 86400000).toISOString().slice(0, 10);
+    } else if (period === 'month') {
+      from = monthStart;
+      to = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+    }
+    const ordered = await orderedByMaterial(pool, branchId, year, month, supplier);
+    const inPeriod = await receivedByMaterial(pool, branchId, from < monthStart ? monthStart : from, to, supplier);
+    const cumulative = await receivedByMaterial(pool, branchId, monthStart, to, supplier);
+    const rows = new Map();
+    const get = (id, name, unit) => {
+      if (!rows.has(id)) rows.set(id, { material_id: id, material_name: name || id, unit: unit || '', ordered: 0, received_period: 0, received_cum: 0 });
+      return rows.get(id);
+    };
+    ordered.forEach(o => { const r = get(o.material_id, o.name, o.unit); r.ordered = Number(o.qty) || 0; });
+    inPeriod.forEach(o => { const r = get(o.material_id, o.material_name, o.unit); r.received_period = Number(o.qty) || 0; });
+    cumulative.forEach(o => { const r = get(o.material_id, o.material_name, o.unit); r.received_cum = Number(o.qty) || 0; });
+    const out = Array.from(rows.values()).map(r => ({
+      ...r,
+      remaining: Math.max(0, r.ordered - r.received_cum),
+      pct: r.ordered > 0 ? Math.round((r.received_cum / r.ordered) * 1000) / 10 : null,
+      status: r.ordered === 0 ? 'Nhập ngoài đơn' : r.received_cum === 0 ? 'Chưa nhập' : r.received_cum + 1e-9 >= r.ordered * 0.95 ? 'Đã đủ' : 'Nhập một phần'
+    })).sort((a, b) => a.material_name.localeCompare(b.material_name, 'vi'));
+    return res.json({ success: true, data: { period, date, from, to, monthStart, year, month, rows: out } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Sổ theo dõi đơn đặt hàng đã xuất, kèm tỷ lệ đã nhận (tính các lần nhập từ ngày lập đơn đến 10 ngày sau)
+const RECEIVE_WINDOW_DAYS = 10;
+async function orderFulfilment(db, branchId, order) {
+  const p = order.payload || {};
+  const lines = Array.isArray(p.lines) ? p.lines : [];
+  const created = new Date(new Date(order.created_at).getTime() + 7 * 3600 * 1000);
+  const from = created.toISOString().slice(0, 10);
+  const to = new Date(created.getTime() + RECEIVE_WINDOW_DAYS * 86400000).toISOString().slice(0, 10);
+  const received = await receivedByMaterial(db, branchId, from, to, order.supplier_code || '');
+  const recMap = Object.fromEntries(received.map(r => [r.material_id, Number(r.qty) || 0]));
+  let ordered = 0;
+  let got = 0;
+  const detail = lines.map(l => {
+    const q = Number(l.qty) || 0;
+    const r = recMap[l.code] || 0;
+    ordered += q;
+    got += Math.min(q, r);
+    return { code: l.code, name: l.name, group: l.group, unit: l.unit, ordered: q, received: Math.round(r * 1000) / 1000, missing: Math.max(0, Math.round((q - r) * 1000) / 1000) };
+  });
+  const pct = ordered > 0 ? Math.round((got / ordered) * 1000) / 10 : 0;
+  return { pct, status: pct === 0 ? 'Chưa nhận' : pct >= 95 ? 'Đã nhận đủ' : 'Nhận một phần', detail, from, to };
+}
+
+app.get('/api/purchase-books/orders/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    const orders = (await pool.query(`
+      SELECT id, order_no, created_at, buyer_company, supplier_code, supplier_name, total_amount, line_count, payload
+      FROM purchase_orders WHERE branch_id = $1 ORDER BY created_at DESC LIMIT 300`, [branchId])).rows;
+    const out = [];
+    for (const o of orders) {
+      const f = await orderFulfilment(pool, branchId, o);
+      out.push({
+        id: o.id, order_no: o.order_no, created_at: o.created_at, buyer_company: o.buyer_company, supplier_name: o.supplier_name,
+        total_amount: o.total_amount, line_count: o.line_count, cycle_label: (o.payload || {}).cycleLabel || '',
+        fulfil_pct: f.pct, status: f.status
+      });
+    }
+    return res.json({ success: true, data: { windowDays: RECEIVE_WINDOW_DAYS, orders: out } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/purchase-books/orders/:branchId/:id/detail', async (req, res) => {
+  const { branchId, id } = req.params;
+  try {
+    const o = (await pool.query(
+      'SELECT id, order_no, created_at, buyer_company, supplier_code, supplier_name, payload FROM purchase_orders WHERE branch_id = $1 AND id = $2', [branchId, Number(id) || 0])).rows[0];
+    if (!o) return res.status(404).json({ success: false, message: 'Không tìm thấy đơn' });
+    const f = await orderFulfilment(pool, branchId, o);
+    return res.json({ success: true, data: { order_no: o.order_no, supplier_name: o.supplier_name, created_at: o.created_at, ...f, windowDays: RECEIVE_WINDOW_DAYS } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // 7. API Tạo kế hoạch mua hàng
 app.post('/api/purchase-plans/generate', async (req, res) => {
   const { branchId } = req.body;
