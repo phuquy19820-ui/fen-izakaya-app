@@ -69,7 +69,7 @@ function DailyTab({ lines }) {
           filters={filters} onFiltersChange={setFilters} sort={sort} onSortChange={setSort} maxHeight="calc(100vh - 330px)"
           footer={[
             <td key="l" colSpan={2} className="px-2 py-1 text-right">Tổng cộng:</td>,
-            ...dates.map((d) => <td key={d} className="px-2 py-1 text-right">{metric === 'qty' ? num(tot(d)) : money(tot(d))}</td>),
+            ...dates.map((d) => <td key={d} className="px-2 py-1 text-right">{metric === 'qty' ? '' : money(tot(d))}</td>),
             <td key="t" className="px-2 py-1 text-right">{metric === 'qty' ? '' : money(visible.reduce((s, r) => s + r.amount, 0))}</td>
           ]}
         />
