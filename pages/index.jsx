@@ -159,19 +159,39 @@ export default function Dashboard() {
                         CUKCUK: <span className="text-gray-700">{branch.cukcuk_company_code}</span>
                       </p>
                     )}
-                    <div className="flex gap-2 flex-wrap">
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                       <Link href={`/purchase-plan?branch=${branch.branch_id}`}>
-                        <a className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-bold text-center text-sm">
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded font-bold text-sm">
                           📊 Kế Hoạch Mua
                         </a>
                       </Link>
                       <Link href={`/sales-report?branch=${branch.branch_id}`}>
-                        <a className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-bold text-center text-sm">
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded font-bold text-sm">
                           💰 Doanh Thu
                         </a>
                       </Link>
+                      <Link href={`/stock-report?branch=${branch.branch_id}`}>
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded font-bold text-sm">
+                          📦 Tồn Kho
+                        </a>
+                      </Link>
+                      <Link href={`/purchase-books?branch=${branch.branch_id}`}>
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded font-bold text-sm">
+                          📒 Sổ Mua Hàng
+                        </a>
+                      </Link>
+                      <Link href={`/suppliers?branch=${branch.branch_id}`}>
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded font-bold text-sm">
+                          🚚 Nhà Cung Cấp
+                        </a>
+                      </Link>
+                      <Link href={`/payables?branch=${branch.branch_id}`}>
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-pink-600 hover:bg-pink-700 text-white px-3 py-2 rounded font-bold text-sm">
+                          💳 Công Nợ
+                        </a>
+                      </Link>
                       <Link href={`/sync-cukcuk?branch=${branch.branch_id}`}>
-                        <a className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded font-bold text-center text-sm">
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px', gridColumn: '1 / -1' }} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded font-bold text-sm">
                           🔄 Đồng Bộ
                         </a>
                       </Link>
