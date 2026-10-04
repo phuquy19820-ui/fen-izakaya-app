@@ -1326,7 +1326,7 @@ app.get('/api/payables/:branchId', async (req, res) => {
   const to = dateRe.test(String(req.query.to || '')) ? req.query.to : '2999-12-31';
   try {
     const sups = (await pool.query('SELECT code, name FROM suppliers WHERE branch_id = $1', [branchId])).rows;
-    const opens = (await pool.query('SELECT name_key, name, amount, as_of FROM supplier_opening_debt WHERE branch_id = $1', [branchId])).rows;
+    const opens = (await pool.query("SELECT name_key, name, amount, to_char(as_of, 'YYYY-MM-DD') AS as_of FROM supplier_opening_debt WHERE branch_id = $1", [branchId])).rows;
     const asOf = opens.length ? String(opens[0].as_of).slice(0, 10) : null;
     // Chỉ tính phát sinh sau ngày chốt nợ đầu kỳ
     const floor = asOf || '1900-01-01';
@@ -1339,7 +1339,7 @@ app.get('/api/payables/:branchId', async (req, res) => {
       FROM supplier_purchases WHERE branch_id = $1 AND purchase_date > $4 AND purchase_date <= $3 GROUP BY supplier_code`,
     [branchId, from, to, floor])).rows;
     const snap = (await pool.query('SELECT * FROM supplier_debt_snapshot WHERE branch_id = $1', [branchId])).rows;
-    const pays = (await pool.query(`SELECT ref_id, ref_no, pay_date, source, type_name, amount, reason, budget_item, manual_supplier_code, ignored
+    const pays = (await pool.query(`SELECT ref_id, ref_no, to_char(pay_date, 'YYYY-MM-DD') AS pay_date, source, type_name, amount, reason, budget_item, manual_supplier_code, ignored
       FROM supplier_payments WHERE branch_id = $1 AND pay_date > $3 AND pay_date <= $2 ORDER BY pay_date DESC, ref_no DESC`, [branchId, to, floor])).rows;
 
     const keys = sups.map((s) => ({ code: s.code, key: supplierKey(s.name) })).filter((k) => k.key.length >= 4).sort((a, b) => b.key.length - a.key.length);
