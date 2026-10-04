@@ -17,6 +17,7 @@ const TABS = [
   { key: 'book', label: '📒 Sổ nhập hàng theo NCC & NVL' },
   { key: 'orders', label: '🧾 Sổ theo dõi đơn đặt hàng' },
   { key: 'compare', label: '⚖️ Nhập thực tế so với đơn đặt hàng' },
+  { key: 'price', label: '📈 So sánh đơn giá mua' },
   { key: 'units', label: '📐 Đơn vị tính quy đổi' }
 ];
 
@@ -377,6 +378,177 @@ function CompareTab({ branch, suppliers, from, to, version }) {
   );
 }
 
+// ---------- Tab: so sánh đơn giá mua theo ngày / tuần / tháng / nhiều tháng ----------
+const addD = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+const mondayOf = (d) => { const dow = (new Date(d + 'T00:00:00Z').getUTCDay() + 6) % 7; return addD(d, -dow); };
+const MODES = [['day', 'Theo ngày'], ['week', 'Theo tuần'], ['month', 'Theo tháng'], ['months', 'So sánh nhiều tháng']];
+
+function PriceCompareTab({ branch, version }) {
+  const [all, setAll] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState('month');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [picked, setPicked] = useState([]);
+  const [supplier, setSupplier] = useState('');
+  const [showPct, setShowPct] = useState(true);
+  const [filters, setFilters] = useState({});
+  const [sort, setSort] = useState(null);
+
+  useEffect(() => {
+    if (!branch) return;
+    setLoading(true);
+    fetch(`/api/purchase-books/lines/${branch}`).then((r) => r.json()).then((j) => {
+      if (j.success) {
+        setAll(j.data.rows);
+        if (j.data.range && j.data.range.max_date) {
+          setTo(iso(j.data.range.max_date));
+          setFrom(iso(j.data.range.min_date));
+          const ms = Array.from(new Set(j.data.rows.map((l) => iso(l.date).slice(0, 7)))).sort();
+          setPicked(ms.slice(-3));
+        }
+      }
+    }).finally(() => setLoading(false));
+  }, [branch, version]);
+
+  const months = useMemo(() => Array.from(new Set(all.map((l) => iso(l.date).slice(0, 7)))).sort(), [all]);
+  const supplierNames = useMemo(() => Array.from(new Set(all.map((l) => l.supplier_name).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')), [all]);
+  const minD = useMemo(() => all.reduce((m, x) => (iso(x.date) < m ? iso(x.date) : m), '9999-12-31'), [all]);
+  const maxD = useMemo(() => all.reduce((m, x) => (iso(x.date) > m ? iso(x.date) : m), '0000-01-01'), [all]);
+
+  const periodLabel = (k) => (mode === 'day' ? short(k) : mode === 'week' ? 'Tuần ' + short(k) : 'T' + k.slice(5, 7) + '/' + k.slice(0, 4));
+
+  const { rows, periods } = useMemo(() => {
+    const pset = new Set();
+    const map = new Map();
+    all.forEach((l) => {
+      const d = iso(l.date);
+      if (supplier && l.supplier_name !== supplier) return;
+      let pk;
+      if (mode === 'months') {
+        if (!picked.includes(d.slice(0, 7))) return;
+        pk = d.slice(0, 7);
+      } else {
+        if ((from && d < from) || (to && d > to)) return;
+        pk = mode === 'day' ? d : mode === 'week' ? mondayOf(d) : d.slice(0, 7);
+      }
+      const qty = Number(l.qty_large) || 0;
+      if (qty <= 0) return;
+      pset.add(pk);
+      const key = l.item_code + '|' + l.large_unit;
+      const cur = map.get(key) || { key, name: l.item_name, unit: l.large_unit, cells: {}, amount: 0, qty: 0, min: Infinity, max: 0 };
+      const c = cur.cells[pk] || { amount: 0, qty: 0 };
+      c.amount += Number(l.amount) || 0;
+      c.qty += qty;
+      cur.cells[pk] = c;
+      cur.amount += Number(l.amount) || 0;
+      cur.qty += qty;
+      const pl = Number(l.price_large) || 0;
+      if (pl > 0) { cur.min = Math.min(cur.min, pl); cur.max = Math.max(cur.max, pl); }
+      map.set(key, cur);
+    });
+    const periods = Array.from(pset).sort().slice(-60);
+    const rows = Array.from(map.values()).map((r) => {
+      const prices = periods.map((p) => (r.cells[p] ? r.cells[p].amount / r.cells[p].qty : null));
+      const seen = prices.filter((x) => x !== null);
+      const change = seen.length > 1 && seen[0] > 0 ? ((seen[seen.length - 1] - seen[0]) / seen[0]) * 100 : null;
+      return { ...r, prices, avg: r.qty ? r.amount / r.qty : 0, min: r.min === Infinity ? 0 : r.min, change };
+    });
+    return { rows, periods };
+  }, [all, mode, from, to, picked, supplier]);
+
+  const columns = [
+    { key: 'name', label: 'Nguyên vật liệu', width: 260, type: 'text', render: (r) => <span className="font-medium">{r.name}</span> },
+    { key: 'unit', label: 'ĐVT lớn', width: 66, type: 'select', align: 'center' },
+    ...periods.map((p, i) => ({
+      key: 'p' + i, label: periodLabel(p), width: 92, type: 'number', align: 'right', get: (r) => (r.prices[i] === null ? 0 : r.prices[i]),
+      render: (r) => {
+        const v = r.prices[i];
+        if (v === null) return <span className="text-gray-300">—</span>;
+        let prev = null;
+        for (let k = i - 1; k >= 0; k--) { if (r.prices[k] !== null) { prev = r.prices[k]; break; } }
+        const pct = prev && prev > 0 ? ((v - prev) / prev) * 100 : null;
+        return (
+          <span>
+            <b>{money(v)}</b>
+            {showPct && pct !== null && Math.abs(pct) >= 0.05 && <span className={pct > 0 ? 'text-red-600' : 'text-green-700'} style={{ fontSize: 10 }}> {pct > 0 ? '▲' : '▼'}{Math.abs(pct).toFixed(1)}%</span>}
+          </span>
+        );
+      }
+    })),
+    { key: 'avg', label: 'Giá TB', width: 90, type: 'number', align: 'right', render: (r) => money(r.avg) },
+    { key: 'min', label: 'Thấp nhất', width: 90, type: 'number', align: 'right', render: (r) => money(r.min) },
+    { key: 'max', label: 'Cao nhất', width: 90, type: 'number', align: 'right', render: (r) => money(r.max) },
+    {
+      key: 'change', label: 'Đầu → cuối kỳ', width: 112, type: 'number', align: 'right', get: (r) => (r.change === null ? 0 : r.change),
+      render: (r) => (r.change === null ? <span className="text-gray-300">—</span> : <b className={r.change > 0 ? 'text-red-600' : r.change < 0 ? 'text-green-700' : ''}>{r.change > 0 ? '▲ +' : r.change < 0 ? '▼ ' : ''}{r.change.toFixed(1)}%</b>)
+    }
+  ];
+  const visible = useMemo(() => sortRows(filterRows(rows, columns, filters), columns, sort),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, periods, filters, sort, showPct]);
+
+  const exportCsv = () => {
+    const header = ['Nguyên vật liệu', 'ĐVT lớn', ...periods.map(periodLabel), 'Giá TB', 'Thấp nhất', 'Cao nhất', 'Đầu→cuối kỳ %'];
+    const lines = visible.map((r) => [r.name, r.unit, ...r.prices.map((p) => (p === null ? '' : Math.round(p))), Math.round(r.avg), Math.round(r.min), Math.round(r.max), r.change === null ? '' : r.change.toFixed(1)]
+      .map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['﻿' + [header.join(','), ...lines].join('\n')], { type: 'text/csv;charset=utf-8' }));
+    a.download = `so-sanh-don-gia-${mode}.csv`;
+    a.click();
+  };
+
+  const togglePick = (m) => setPicked((p) => (p.includes(m) ? p.filter((x) => x !== m) : [...p, m].sort()));
+  const up = visible.filter((r) => r.change !== null && r.change > 0.05).length;
+  const down = visible.filter((r) => r.change !== null && r.change < -0.05).length;
+  const lastN = (n) => { setTo(maxD); setFrom(addD(maxD, -(n - 1))); };
+
+  return (
+    <div className="space-y-2">
+      <div className="bg-white rounded border px-3 py-2 flex flex-wrap items-end gap-3">
+        <div className="flex gap-1">
+          {MODES.map(([k, label]) => <button key={k} onClick={() => setMode(k)} className={`px-3 py-1.5 rounded font-bold border ${mode === k ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>{label}</button>)}
+        </div>
+        {mode !== 'months' && (
+          <>
+            <div><label className="block font-semibold mb-0.5">Từ ngày</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="border px-2 py-1 rounded" /></div>
+            <div><label className="block font-semibold mb-0.5">Đến ngày</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="border px-2 py-1 rounded" /></div>
+            <div className="flex gap-1">
+              <button onClick={() => lastN(7)} className="px-2 py-1 rounded border bg-gray-50 hover:bg-gray-100 font-semibold">7 ngày</button>
+              <button onClick={() => lastN(30)} className="px-2 py-1 rounded border bg-gray-50 hover:bg-gray-100 font-semibold">30 ngày</button>
+              <button onClick={() => lastN(90)} className="px-2 py-1 rounded border bg-gray-50 hover:bg-gray-100 font-semibold">90 ngày</button>
+              <button onClick={() => { setFrom(minD); setTo(maxD); }} className="px-2 py-1 rounded border bg-gray-50 hover:bg-gray-100 font-semibold">Toàn bộ</button>
+            </div>
+          </>
+        )}
+        <div>
+          <label className="block font-semibold mb-0.5">Nhà cung cấp</label>
+          <select value={supplier} onChange={(e) => setSupplier(e.target.value)} className="border px-2 py-1 rounded" style={{ maxWidth: 260 }}>
+            <option value="">Tất cả nhà cung cấp</option>
+            {supplierNames.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <label className="flex items-center gap-1 font-semibold"><input type="checkbox" checked={showPct} onChange={(e) => setShowPct(e.target.checked)} /> Hiện % so với kỳ trước</label>
+        <button onClick={exportCsv} className="ml-auto bg-gray-700 hover:bg-gray-800 text-white px-3 py-1.5 rounded font-bold">⬇ Xuất CSV</button>
+      </div>
+      {mode === 'months' && (
+        <div className="bg-white rounded border px-3 py-2 flex flex-wrap items-center gap-2">
+          <span className="font-semibold">Chọn các tháng muốn so sánh:</span>
+          {months.length === 0 ? <span className="text-gray-500">Chưa có dữ liệu mua hàng</span> : months.map((m) => (
+            <button key={m} onClick={() => togglePick(m)} className={`px-2 py-1 rounded border font-bold ${picked.includes(m) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>Tháng {m.slice(5, 7)}/{m.slice(0, 4)}</button>
+          ))}
+        </div>
+      )}
+      <p className="text-gray-600">Đơn giá = tiền hàng chưa VAT ÷ số lượng, theo ĐVT lớn của từng NVL (bình quân gia quyền nếu mua nhiều lần trong kỳ). ▲ đỏ = giá tăng, ▼ xanh = giá giảm so với kỳ có mua gần nhất trước đó. Đang có {visible.length} NVL: <b className="text-red-600">{up} tăng</b>, <b className="text-green-700">{down} giảm</b> (đầu → cuối kỳ).</p>
+      {loading ? <p className="p-4 text-gray-600">Đang tải…</p> : rows.length === 0 ? (
+        <p className="bg-white border rounded p-6 text-gray-600">Không có dữ liệu mua hàng trong khoảng ngày/tháng đã chọn.</p>
+      ) : (
+        <DataTable columns={columns} allRows={rows} rows={visible} rowKey={(r) => r.key} filters={filters} onFiltersChange={setFilters} sort={sort} onSortChange={setSort} maxHeight="calc(100vh - 430px)" />
+      )}
+    </div>
+  );
+}
+
 // ---------- Tab 5: đơn vị tính quy đổi ----------
 function UnitsTab({ branch }) {
   const [rows, setRows] = useState([]);
@@ -499,7 +671,7 @@ export default function PurchaseBooks() {
               <button key={t.key} onClick={() => setTab(t.key)} className={`px-3 py-1.5 rounded font-bold border ${tab === t.key ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>{t.label}</button>
             ))}
           </div>
-          {tab !== 'units' && (
+          {tab !== 'units' && tab !== 'price' && (
             <DateRangeBar from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} onApply={apply} minDate={minDate} maxDate={maxDate}>
               {range && range.min_date && <span className="text-gray-600">Dữ liệu mua hàng có từ {vn(range.min_date)} đến {vn(range.max_date)}{(tab === 'daily' || tab === 'book') ? ` · ${lines.length} dòng trong kỳ` : ''}</span>}
             </DateRangeBar>
@@ -508,7 +680,8 @@ export default function PurchaseBooks() {
             : tab === 'book' ? (loading ? <p className="p-4 text-gray-600">Đang tải…</p> : <BookTab lines={lines} />)
               : tab === 'orders' ? <OrdersTab branch={branch} branchInfo={branchInfo} from={applied.from} to={applied.to} version={version} />
                 : tab === 'compare' ? <CompareTab branch={branch} suppliers={suppliers} from={applied.from} to={applied.to} version={version} />
-                  : <UnitsTab branch={branch} />}
+                  : tab === 'price' ? <PriceCompareTab branch={branch} version={version} />
+                    : <UnitsTab branch={branch} />}
         </div>
       </div>
     </>
