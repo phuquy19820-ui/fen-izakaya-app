@@ -162,6 +162,10 @@ async function initializeDatabase() {
         manual_supplier_code VARCHAR(60), ignored BOOLEAN DEFAULT FALSE, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (branch_id, ref_id)
       )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS supplier_opening_debt (
+        branch_id VARCHAR(50) NOT NULL, name_key VARCHAR(255) NOT NULL, name VARCHAR(255), amount NUMERIC(18,2) DEFAULT 0,
+        as_of DATE NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, name_key)
+      )`);
       migrations.push(`CREATE TABLE IF NOT EXISTS supplier_debt_snapshot (
         branch_id VARCHAR(50) NOT NULL, vendor_code VARCHAR(60) NOT NULL, vendor_name VARCHAR(255),
         first_amount NUMERIC(18,2) DEFAULT 0, increase_amount NUMERIC(18,2) DEFAULT 0, decrease_amount NUMERIC(18,2) DEFAULT 0,
@@ -1284,6 +1288,37 @@ app.post('/api/payables/assign', async (req, res) => {
 const supplierKey = (s) => normalizeString(String(s || '').replace(/[-–]\s*[\d .]{8,}\s*$/, '')
   .replace(/c[oô]ng ty|tnhh|c[oô] ph[aầ]n|hkd|h[oộ] kinh doanh|\bcty\b|\btm\b|\bdv\b/gi, ' ')).replace(/\s+/g, ' ').trim();
 
+// Nợ đầu kỳ do người dùng nhập (theo tên NCC), tính đến cuối ngày as_of
+app.post('/api/payables/opening', async (req, res) => {
+  const { branchId, asOf, rows } = req.body;
+  if (!branchId || !/^\d{4}-\d{2}-\d{2}$/.test(String(asOf || '')) || !Array.isArray(rows)) {
+    return res.status(400).json({ success: false, message: 'Thiếu chi nhánh, ngày chốt hoặc danh sách nợ đầu kỳ' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM supplier_opening_debt WHERE branch_id = $1', [branchId]);
+    let n = 0;
+    for (const r of rows) {
+      const name = String(r.name || '').trim();
+      const key = supplierKey(name) || normalizeString(name);
+      const amount = Number(r.amount);
+      if (!name || !key || !Number.isFinite(amount) || amount === 0) continue;
+      await client.query(`INSERT INTO supplier_opening_debt (branch_id, name_key, name, amount, as_of) VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT (branch_id, name_key) DO UPDATE SET amount = supplier_opening_debt.amount + EXCLUDED.amount`,
+      [branchId, key.substring(0, 255), name.substring(0, 255), amount, asOf]);
+      n++;
+    }
+    await client.query('COMMIT');
+    return res.json({ success: true, data: { rows: n } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/payables/:branchId', async (req, res) => {
   const { branchId } = req.params;
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
@@ -1291,15 +1326,25 @@ app.get('/api/payables/:branchId', async (req, res) => {
   const to = dateRe.test(String(req.query.to || '')) ? req.query.to : '2999-12-31';
   try {
     const sups = (await pool.query('SELECT code, name FROM suppliers WHERE branch_id = $1', [branchId])).rows;
-    const purchases = (await pool.query(`SELECT supplier_code, SUM(amount) AS goods, SUM(vat_amount) AS vat, SUM(CASE WHEN total_amount > 0 THEN total_amount ELSE amount END) AS total, COUNT(DISTINCT ref_no) AS times FROM supplier_purchases
-      WHERE branch_id = $1 AND purchase_date BETWEEN $2 AND $3 GROUP BY supplier_code`, [branchId, from, to])).rows;
+    const opens = (await pool.query('SELECT name_key, name, amount, as_of FROM supplier_opening_debt WHERE branch_id = $1', [branchId])).rows;
+    const asOf = opens.length ? String(opens[0].as_of).slice(0, 10) : null;
+    // Chỉ tính phát sinh sau ngày chốt nợ đầu kỳ
+    const floor = asOf || '1900-01-01';
+    const purchases = (await pool.query(`SELECT supplier_code,
+        SUM(CASE WHEN purchase_date >= $2 THEN amount ELSE 0 END) AS goods,
+        SUM(CASE WHEN purchase_date >= $2 THEN vat_amount ELSE 0 END) AS vat,
+        SUM(CASE WHEN purchase_date >= $2 THEN (CASE WHEN total_amount > 0 THEN total_amount ELSE amount END) ELSE 0 END) AS total,
+        SUM(CASE WHEN purchase_date < $2 THEN (CASE WHEN total_amount > 0 THEN total_amount ELSE amount END) ELSE 0 END) AS before_total,
+        COUNT(DISTINCT CASE WHEN purchase_date >= $2 THEN ref_no END) AS times
+      FROM supplier_purchases WHERE branch_id = $1 AND purchase_date > $4 AND purchase_date <= $3 GROUP BY supplier_code`,
+    [branchId, from, to, floor])).rows;
     const snap = (await pool.query('SELECT * FROM supplier_debt_snapshot WHERE branch_id = $1', [branchId])).rows;
     const pays = (await pool.query(`SELECT ref_id, ref_no, pay_date, source, type_name, amount, reason, budget_item, manual_supplier_code, ignored
-      FROM supplier_payments WHERE branch_id = $1 AND pay_date BETWEEN $2 AND $3 ORDER BY pay_date DESC, ref_no DESC`, [branchId, from, to])).rows;
+      FROM supplier_payments WHERE branch_id = $1 AND pay_date > $3 AND pay_date <= $2 ORDER BY pay_date DESC, ref_no DESC`, [branchId, to, floor])).rows;
 
     const keys = sups.map((s) => ({ code: s.code, key: supplierKey(s.name) })).filter((k) => k.key.length >= 4).sort((a, b) => b.key.length - a.key.length);
     const supByCode = new Map(sups.map((s) => [s.code, s.name]));
-    const payments = pays.map((p) => {
+    const allPayments = pays.map((p) => {
       let code = null, how = '';
       if (p.ignored) how = 'ignored';
       else if (p.manual_supplier_code) { code = p.manual_supplier_code; how = 'manual'; }
@@ -1311,19 +1356,31 @@ app.get('/api/payables/:branchId', async (req, res) => {
       return { ref_id: p.ref_id, ref_no: p.ref_no, date: String(p.pay_date).slice(0, 10), source: p.source, type_name: p.type_name,
         amount: Number(p.amount) || 0, reason: p.reason, budget_item: p.budget_item, supplier_code: code, supplier_name: code ? (supByCode.get(code) || code) : '', how };
     });
+    const payments = allPayments.filter((p) => p.date >= from);
 
     const rows = new Map();
     const row = (code, name) => {
-      if (!rows.has(code)) rows.set(code, { code, name: name || supByCode.get(code) || code, goods: 0, vat: 0, purchases: 0, purchase_count: 0, paid: 0, cukcuk_open: null, cukcuk_inc: null, cukcuk_dec: null, cukcuk_close: null });
+      if (!rows.has(code)) rows.set(code, { code, name: name || supByCode.get(code) || code, opening_debt: 0, goods: 0, vat: 0, purchases: 0, purchase_count: 0, paid: 0, before_purchases: 0, before_paid: 0 });
       return rows.get(code);
     };
-    purchases.forEach((p) => { if (p.supplier_code) { const r = row(p.supplier_code); r.goods = Number(p.goods) || 0; r.vat = Number(p.vat) || 0; r.purchases = Number(p.total) || 0; r.purchase_count = Number(p.times) || 0; } });
-    payments.forEach((p) => { if (p.supplier_code) row(p.supplier_code).paid += p.amount; });
-    snap.forEach((s) => { const r = row(s.vendor_code, s.vendor_name); r.cukcuk_open = Number(s.first_amount); r.cukcuk_inc = Number(s.increase_amount); r.cukcuk_dec = Number(s.decrease_amount); r.cukcuk_close = Number(s.last_amount); });
-    const list = Array.from(rows.values()).map((r) => ({ ...r, balance: r.purchases - r.paid })).sort((a, b) => b.balance - a.balance);
+    purchases.forEach((p) => { if (p.supplier_code) { const r = row(p.supplier_code); r.goods = Number(p.goods) || 0; r.vat = Number(p.vat) || 0; r.purchases = Number(p.total) || 0; r.before_purchases = Number(p.before_total) || 0; r.purchase_count = Number(p.times) || 0; } });
+    allPayments.forEach((p) => { if (p.supplier_code) { const r = row(p.supplier_code); if (p.date >= from) r.paid += p.amount; else r.before_paid += p.amount; } });
+
+    // Ghép nợ đầu kỳ vào NCC theo tên (chứa nhau); không ghép được thì giữ dòng riêng
+    const unmatchedOpen = [];
+    opens.forEach((o) => {
+      const hit = keys.find((k) => k.key.includes(o.name_key) || o.name_key.includes(k.key));
+      if (hit && o.name_key.length >= 4) row(hit.code).opening_debt += Number(o.amount) || 0;
+      else unmatchedOpen.push(o);
+    });
+    unmatchedOpen.forEach((o) => { row('OPEN:' + o.name_key, o.name).opening_debt += Number(o.amount) || 0; });
+
+    const list = Array.from(rows.values()).map((r) => {
+      const open_at_from = r.opening_debt + r.before_purchases - r.before_paid;
+      return { code: r.code, name: r.name, opening: open_at_from, goods: r.goods, vat: r.vat, purchases: r.purchases, purchase_count: r.purchase_count, paid: r.paid, balance: open_at_from + r.purchases - r.paid };
+    }).sort((a, b) => b.balance - a.balance);
     return res.json({ success: true, data: {
-      suppliers: list, payments,
-      snapshotRange: snap.length ? { from: snap[0].from_date && String(snap[0].from_date).slice(0, 10), to: snap[0].to_date && String(snap[0].to_date).slice(0, 10) } : null,
+      suppliers: list, payments, openingAsOf: asOf,
       supplierOptions: sups.map((s) => ({ code: s.code, name: s.name })).sort((a, b) => String(a.name).localeCompare(String(b.name), 'vi'))
     } });
   } catch (error) {
