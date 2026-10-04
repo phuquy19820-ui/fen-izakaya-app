@@ -6,6 +6,7 @@ const ITEMS = [
   { key: 'stock', href: '/stock-report', label: '📦 Tồn kho' },
   { key: 'suppliers', href: '/suppliers', label: '🚚 Nhà cung cấp' },
   { key: 'books', href: '/purchase-books', label: '📒 Sổ mua hàng' },
+  { key: 'payables', href: '/payables', label: '💳 Công nợ NCC' },
   { key: 'sync', href: '/sync-cukcuk', label: '🔄 Đồng bộ & ghép món' }
 ];
 

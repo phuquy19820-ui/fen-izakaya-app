@@ -160,6 +160,66 @@
     }));
   }
 
+  // Công nợ nhà cung cấp (báo cáo DP_BYVENDOR) cho 180 ngày gần nhất
+  async function fetchVendorDebt(tpl, to) {
+    const from = new Date(Date.parse(to + 'T00:00:00Z') - 180 * 86400000).toISOString().slice(0, 10);
+    const obj = baseObj(tpl, {
+      FromDate: from + 'T00:00:00.0000' + TZ, ToDate: to + 'T23:59:59.9990' + TZ, ReportID: 'DP_BYVENDOR',
+      ReportName: 'Công nợ nhà cung cấp', VendorCategoryID: ALL_GUID, VendorCategoryName: 'Tất cả', VendorID: ALL_GUID, VendorName: 'Tất cả', branchID: tpl.BranchID
+    });
+    const data = await allPages(tpl, 'DP_BYVENDOR', obj);
+    return {
+      from, to,
+      debts: data.filter((d) => d.VendorCode).map((d) => ({ code: d.VendorCode, name: d.VendorName, first: Number(d.FirstDeptAmount) || 0,
+        increase: Number(d.IncreaseAmount) || 0, decrease: Number(d.DecreaseAmount) || 0, last: Number(d.LastDeptAmount) || 0 }))
+    };
+  }
+
+  // Chứng từ chi quỹ tiền mặt và tiền gửi ngân hàng (180 ngày gần nhất), kèm Mục chi ở chi tiết
+  async function fetchPayments(tpl, to) {
+    const fromIso = new Date(Date.parse(to + 'T00:00:00Z') - 180 * 86400000 - 7 * 3600 * 1000).toISOString();
+    const toIso = new Date(Date.parse(to + 'T00:00:00Z') + 86400000 - 7 * 3600 * 1000).toISOString();
+    const filter = encodeURIComponent(JSON.stringify([
+      { xtype: 'filter', property: 'RefDate', operator: '>=', value: fromIso, type: 'DateTime', group: 'RefDate' },
+      { xtype: 'filter', property: 'RefDate', operator: '<', value: toIso, type: 'DateTime', addition: 'and', group: 'RefDate' }
+    ]));
+    const headers = { 'X-Cukcuk-Branchid': tpl.BranchID, 'X-Requested-With': 'XMLHttpRequest' };
+    const get = async (url) => {
+      const res = await fetch(url, { credentials: 'same-origin', headers });
+      if (!res.ok) throw new Error('CUKCUK trả lỗi ' + res.status);
+      return res.json();
+    };
+    const out = [];
+    const sources = [
+      { source: 'CASH', list: 'CAService.svc/GetAllCAReceiptPaymentPaging', detail: (d) => 'CAService.svc/GetCAReceiptPaymentDetailById?receiptPaymentId=' + d.RefID + '&refType=' + d.RefType },
+      { source: 'BANK', list: 'BAService.svc/GetAllBADepositWithdrawPaging', detail: (d) => 'BAService.svc/GetBADepositWithdrawDetailById?depositWithdrawId=' + d.RefID + '&refType=' + d.RefType }
+    ];
+    for (const s of sources) {
+      let page = 1;
+      let total = 0;
+      let got = 0;
+      do {
+        const json = await get('Service/' + s.list + '?_dc=' + Date.now() + '&page=' + page + '&start=' + ((page - 1) * 100) + '&limit=100&filter=' + filter);
+        total = Number(json.total) || 0;
+        const data = json.data || [];
+        got += data.length;
+        for (const d of data) {
+          if (!/^chi/i.test(String(d.RefTypeName || ''))) continue;
+          let budget = '';
+          try {
+            const det = await get('Service/' + s.detail(d) + '&_dc=' + Date.now() + '&page=1&start=0&limit=100');
+            budget = (det.data || []).map((x) => [x.BudgetItemName, x.Description].filter(Boolean).join(': ')).join('; ');
+          } catch (e) { /* bỏ qua chi tiết */ }
+          out.push({ refId: d.RefID, refNo: d.RefNo, date: localDate(d.RefDate), source: s.source, typeName: d.RefTypeName,
+            amount: Number(d.TotalAmount) || 0, reason: d.Reason || '', budgetItem: budget });
+        }
+        page++;
+        if (data.length === 0) break;
+      } while (got < total);
+    }
+    return out;
+  }
+
   const localDate = (iso) => new Date(new Date(iso).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
   async function run(job) {
@@ -228,7 +288,15 @@
         extras.purchases = await fetchPurchases(tpl, job.toDate);
       } catch (e) { extras.warnings.push('Lịch sử mua: ' + e.message); }
 
+      try {
+        say('PROGRESS', { status: 'running', text: 'Đang lấy công nợ nhà cung cấp và chứng từ chi…' });
+        const vd = await fetchVendorDebt(tpl, job.toDate);
+        extras.debts = vd.debts; extras.debtFrom = vd.from; extras.debtTo = vd.to;
+        extras.payments = await fetchPayments(tpl, job.toDate);
+      } catch (e) { extras.warnings.push('Công nợ: ' + e.message); }
+
       say('ROWS', {
+        debts: extras.debts || [], debtFrom: extras.debtFrom, debtTo: extras.debtTo, payments: extras.payments || [],
         stock: extras.stock, suppliers: extras.suppliers, purchases: extras.purchases, warnings: extras.warnings,
         rows: Array.from(agg.values()),
         meta: { branchName: tpl.BranchName, invoices: invoices.size, itemRows, fromDate: job.fromDate, toDate: job.toDate }

@@ -78,6 +78,13 @@ async function finishWithRows(job, payload) {
         parts.push('Nhà cung cấp: ' + s.suppliers + ' NCC, ' + s.purchases + ' dòng mua');
       } catch (e) { warnings.push('Nhà cung cấp: ' + e.message); }
     }
+    if ((payload.payments && payload.payments.length) || (payload.debts && payload.debts.length)) {
+      try {
+        await update(job, { status: 'running', text: 'Đang gửi công nợ nhà cung cấp về app…' });
+        const s = await post('/api/payables/import', { branchId: job.branchId, payments: payload.payments, debts: payload.debts, debtFrom: payload.debtFrom, debtTo: payload.debtTo });
+        parts.push('Công nợ NCC: ' + s.debts + ' NCC, ' + s.payments + ' chứng từ chi');
+      } catch (e) { warnings.push('Công nợ: ' + e.message); }
+    }
     await update(job, {
       status: 'done',
       text: 'Hoàn tất. ' + parts.join(' · ') + (warnings.length ? ' · Cảnh báo: ' + warnings.join('; ') : '') + '.',

@@ -153,6 +153,18 @@ async function initializeDatabase() {
         small_unit VARCHAR(30), large_unit VARCHAR(30), ratio NUMERIC(18,4) DEFAULT 1, source VARCHAR(10) DEFAULT 'DEFAULT',
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, item_code)
       )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS supplier_payments (
+        branch_id VARCHAR(50) NOT NULL, ref_id VARCHAR(80) NOT NULL, ref_no VARCHAR(60), pay_date DATE NOT NULL,
+        source VARCHAR(10), type_name VARCHAR(80), amount NUMERIC(18,2) DEFAULT 0, reason TEXT, budget_item TEXT,
+        manual_supplier_code VARCHAR(60), ignored BOOLEAN DEFAULT FALSE, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (branch_id, ref_id)
+      )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS supplier_debt_snapshot (
+        branch_id VARCHAR(50) NOT NULL, vendor_code VARCHAR(60) NOT NULL, vendor_name VARCHAR(255),
+        first_amount NUMERIC(18,2) DEFAULT 0, increase_amount NUMERIC(18,2) DEFAULT 0, decrease_amount NUMERIC(18,2) DEFAULT 0,
+        last_amount NUMERIC(18,2) DEFAULT 0, from_date DATE, to_date DATE, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (branch_id, vendor_code)
+      )`);
       migrations.push('ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP');
       migrations.push('ALTER TABLE cukcuk_daily_sales ADD COLUMN IF NOT EXISTS revenue NUMERIC(16,2) DEFAULT 0');
       migrations.push('CREATE INDEX IF NOT EXISTS idx_sales_branch_date ON cukcuk_daily_sales (branch_id, sale_date)');
@@ -1201,6 +1213,117 @@ app.post('/api/suppliers/import', async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   } finally {
     client.release();
+  }
+});
+
+// ===== Công nợ nhà cung cấp: mua hàng + chứng từ chi quỹ tiền mặt / tiền gửi =====
+app.post('/api/payables/import', async (req, res) => {
+  const { branchId, payments, debts, debtFrom, debtTo } = req.body;
+  if (!branchId) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh' });
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let payCount = 0;
+    for (const p of Array.isArray(payments) ? payments : []) {
+      const refId = String(p.refId || '').trim();
+      if (!refId || !dateRe.test(String(p.date || ''))) continue;
+      await client.query(`
+        INSERT INTO supplier_payments (branch_id, ref_id, ref_no, pay_date, source, type_name, amount, reason, budget_item, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+        ON CONFLICT (branch_id, ref_id) DO UPDATE SET ref_no = EXCLUDED.ref_no, pay_date = EXCLUDED.pay_date, source = EXCLUDED.source,
+          type_name = EXCLUDED.type_name, amount = EXCLUDED.amount, reason = EXCLUDED.reason, budget_item = EXCLUDED.budget_item, updated_at = NOW()
+      `, [branchId, refId.substring(0, 80), String(p.refNo || '').substring(0, 60), p.date, p.source === 'BANK' ? 'BANK' : 'CASH',
+        String(p.typeName || '').substring(0, 80), Number(p.amount) || 0, String(p.reason || ''), String(p.budgetItem || '')]);
+      payCount++;
+    }
+    let debtCount = 0;
+    if (Array.isArray(debts) && debts.length) {
+      await client.query('DELETE FROM supplier_debt_snapshot WHERE branch_id = $1', [branchId]);
+      for (const d of debts) {
+        const code = String(d.code || '').trim();
+        if (!code) continue;
+        await client.query(`
+          INSERT INTO supplier_debt_snapshot (branch_id, vendor_code, vendor_name, first_amount, increase_amount, decrease_amount, last_amount, from_date, to_date)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [branchId, code.substring(0, 60), String(d.name || '').substring(0, 255), Number(d.first) || 0, Number(d.increase) || 0,
+          Number(d.decrease) || 0, Number(d.last) || 0, dateRe.test(String(debtFrom)) ? debtFrom : null, dateRe.test(String(debtTo)) ? debtTo : null]);
+        debtCount++;
+      }
+    }
+    await client.query("INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, 'PAYABLES', 'SUCCESS', $2)", [branchId, payCount + debtCount]);
+    await client.query('COMMIT');
+    return res.json({ success: true, data: { payments: payCount, debts: debtCount } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Payables import error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Gán thủ công một chứng từ chi cho nhà cung cấp (supplierCode rỗng = tự nhận diện; ignore = không phải trả NCC)
+app.post('/api/payables/assign', async (req, res) => {
+  const { branchId, refId, supplierCode, ignore } = req.body;
+  if (!branchId || !refId) return res.status(400).json({ success: false, message: 'Thiếu dữ liệu' });
+  try {
+    await pool.query('UPDATE supplier_payments SET manual_supplier_code = $3, ignored = $4 WHERE branch_id = $1 AND ref_id = $2',
+      [branchId, refId, supplierCode || null, !!ignore]);
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+const supplierKey = (s) => normalizeString(String(s || '').replace(/[-–]\s*[\d .]{8,}\s*$/, '')
+  .replace(/c[oô]ng ty|tnhh|c[oô] ph[aầ]n|hkd|h[oộ] kinh doanh|\bcty\b|\btm\b|\bdv\b/gi, ' ')).replace(/\s+/g, ' ').trim();
+
+app.get('/api/payables/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const from = dateRe.test(String(req.query.from || '')) ? req.query.from : '1900-01-01';
+  const to = dateRe.test(String(req.query.to || '')) ? req.query.to : '2999-12-31';
+  try {
+    const sups = (await pool.query('SELECT code, name FROM suppliers WHERE branch_id = $1', [branchId])).rows;
+    const purchases = (await pool.query(`SELECT supplier_code, SUM(amount) AS total, COUNT(DISTINCT ref_no) AS times FROM supplier_purchases
+      WHERE branch_id = $1 AND purchase_date BETWEEN $2 AND $3 GROUP BY supplier_code`, [branchId, from, to])).rows;
+    const snap = (await pool.query('SELECT * FROM supplier_debt_snapshot WHERE branch_id = $1', [branchId])).rows;
+    const pays = (await pool.query(`SELECT ref_id, ref_no, pay_date, source, type_name, amount, reason, budget_item, manual_supplier_code, ignored
+      FROM supplier_payments WHERE branch_id = $1 AND pay_date BETWEEN $2 AND $3 ORDER BY pay_date DESC, ref_no DESC`, [branchId, from, to])).rows;
+
+    const keys = sups.map((s) => ({ code: s.code, key: supplierKey(s.name) })).filter((k) => k.key.length >= 4).sort((a, b) => b.key.length - a.key.length);
+    const supByCode = new Map(sups.map((s) => [s.code, s.name]));
+    const payments = pays.map((p) => {
+      let code = null, how = '';
+      if (p.ignored) how = 'ignored';
+      else if (p.manual_supplier_code) { code = p.manual_supplier_code; how = 'manual'; }
+      else {
+        const text = normalizeString(`${p.reason || ''} ${p.budget_item || ''}`);
+        const hit = keys.find((k) => text.includes(k.key));
+        if (hit) { code = hit.code; how = 'auto'; }
+      }
+      return { ref_id: p.ref_id, ref_no: p.ref_no, date: String(p.pay_date).slice(0, 10), source: p.source, type_name: p.type_name,
+        amount: Number(p.amount) || 0, reason: p.reason, budget_item: p.budget_item, supplier_code: code, supplier_name: code ? (supByCode.get(code) || code) : '', how };
+    });
+
+    const rows = new Map();
+    const row = (code, name) => {
+      if (!rows.has(code)) rows.set(code, { code, name: name || supByCode.get(code) || code, purchases: 0, purchase_count: 0, paid: 0, cukcuk_open: null, cukcuk_inc: null, cukcuk_dec: null, cukcuk_close: null });
+      return rows.get(code);
+    };
+    purchases.forEach((p) => { if (p.supplier_code) { const r = row(p.supplier_code); r.purchases = Number(p.total) || 0; r.purchase_count = Number(p.times) || 0; } });
+    payments.forEach((p) => { if (p.supplier_code) row(p.supplier_code).paid += p.amount; });
+    snap.forEach((s) => { const r = row(s.vendor_code, s.vendor_name); r.cukcuk_open = Number(s.first_amount); r.cukcuk_inc = Number(s.increase_amount); r.cukcuk_dec = Number(s.decrease_amount); r.cukcuk_close = Number(s.last_amount); });
+    const list = Array.from(rows.values()).map((r) => ({ ...r, balance: r.purchases - r.paid })).sort((a, b) => b.balance - a.balance);
+    return res.json({ success: true, data: {
+      suppliers: list, payments,
+      snapshotRange: snap.length ? { from: snap[0].from_date && String(snap[0].from_date).slice(0, 10), to: snap[0].to_date && String(snap[0].to_date).slice(0, 10) } : null,
+      supplierOptions: sups.map((s) => ({ code: s.code, name: s.name })).sort((a, b) => String(a.name).localeCompare(String(b.name), 'vi'))
+    } });
+  } catch (error) {
+    console.error('Payables error:', error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 });
 
