@@ -141,7 +141,7 @@ export default function Payables() {
           {loading ? (
             <p className="p-4 text-gray-600">Đang tải…</p>
           ) : !data || (suppliers.length === 0 && payments.length === 0) ? (
-            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu công nợ. Vào mục <b>Đồng bộ & ghép món</b>, cài tiện ích bản <b>1.3.0</b> rồi bấm "Đồng bộ doanh số từ CUKCUK" để lấy công nợ và chứng từ chi.</p>
+            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu công nợ. Vào mục <b>Đồng bộ & ghép món</b>, cài tiện ích bản <b>1.3.1</b> rồi bấm "Đồng bộ doanh số từ CUKCUK" để lấy công nợ và chứng từ chi.</p>
           ) : tab === 'debt' ? (
             <DataTable
               columns={debtColumns} allRows={suppliers} rows={debtVisible} rowKey={(r) => r.code}

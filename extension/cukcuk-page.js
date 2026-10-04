@@ -156,7 +156,8 @@
     return data.filter((d) => d.InventoryItemCode && d.RefDetailID).map((d) => ({
       detailId: d.RefDetailID, refNo: d.RefNo, date: new Date(new Date(d.RefDate).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10),
       supplierCode: d.VendorCode, supplierName: d.VendorName, itemCode: d.InventoryItemCode, itemName: d.InventoryItemName,
-      unit: d.PUUnitName || d.UnitName, qty: Number(d.Quantity) || 0, price: Number(d.UnitPrice) || 0, amount: Number(d.Amount) || 0
+      unit: d.PUUnitName || d.UnitName, qty: Number(d.Quantity) || 0, price: Number(d.UnitPrice) || 0, amount: Number(d.Amount) || 0,
+      vatRate: Number(d.VATRate) || 0, vatAmount: Number(d.VATAmount) || 0, total: d.TotalAmount === undefined || d.TotalAmount === null ? Number(d.Amount) || 0 : Number(d.TotalAmount) || 0
     }));
   }
 

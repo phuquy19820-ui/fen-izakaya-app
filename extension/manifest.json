@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Fen Izakaya - Đồng bộ CUKCUK",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Nút đồng bộ doanh số từ CUKCUK về app kế hoạch mua NVL Fen Izakaya. Bạn tự đăng nhập CUKCUK, tiện ích chỉ đọc báo cáo doanh thu.",
   "permissions": ["storage"],
   "host_permissions": ["https://fen-izakaya-app-v2.onrender.com/*"],

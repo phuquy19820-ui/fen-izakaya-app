@@ -153,6 +153,9 @@ async function initializeDatabase() {
         small_unit VARCHAR(30), large_unit VARCHAR(30), ratio NUMERIC(18,4) DEFAULT 1, source VARCHAR(10) DEFAULT 'DEFAULT',
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, item_code)
       )`);
+      migrations.push('ALTER TABLE supplier_purchases ADD COLUMN IF NOT EXISTS vat_rate NUMERIC(6,2) DEFAULT 0');
+      migrations.push('ALTER TABLE supplier_purchases ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,2) DEFAULT 0');
+      migrations.push('ALTER TABLE supplier_purchases ADD COLUMN IF NOT EXISTS total_amount NUMERIC(18,2) DEFAULT 0');
       migrations.push(`CREATE TABLE IF NOT EXISTS supplier_payments (
         branch_id VARCHAR(50) NOT NULL, ref_id VARCHAR(80) NOT NULL, ref_no VARCHAR(60), pay_date DATE NOT NULL,
         source VARCHAR(10), type_name VARCHAR(80), amount NUMERIC(18,2) DEFAULT 0, reason TEXT, budget_item TEXT,
@@ -1182,7 +1185,8 @@ app.post('/api/suppliers/import', async (req, res) => {
           detailId: String(p.detailId || '').trim(), refNo: String(p.refNo || ''), date: String(p.date || ''),
           supplierCode: String(p.supplierCode || '').trim(), supplierName: String(p.supplierName || ''),
           itemCode: String(p.itemCode || '').trim(), itemName: String(p.itemName || ''), unit: String(p.unit || ''),
-          qty: Number(p.qty) || 0, price: Number(p.price) || 0, amount: Number(p.amount) || 0
+          qty: Number(p.qty) || 0, price: Number(p.price) || 0, amount: Number(p.amount) || 0,
+          vatRate: Number(p.vatRate) || 0, vatAmount: Number(p.vatAmount) || 0, total: p.total === undefined || p.total === null ? (Number(p.amount) || 0) : Number(p.total) || 0
         }))
         .filter(p => p.detailId && dateRe.test(p.date) && p.itemCode);
       if (clean.length) {
@@ -1190,12 +1194,13 @@ app.post('/api/suppliers/import', async (req, res) => {
         await client.query('DELETE FROM supplier_purchases WHERE branch_id = $1 AND purchase_date BETWEEN $2 AND $3', [branchId, ds[0], ds[ds.length - 1]]);
         for (const p of clean) {
           await client.query(`
-            INSERT INTO supplier_purchases (branch_id, detail_id, ref_no, purchase_date, supplier_code, supplier_name, item_code, item_name, unit_name, qty, unit_price, amount)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            INSERT INTO supplier_purchases (branch_id, detail_id, ref_no, purchase_date, supplier_code, supplier_name, item_code, item_name, unit_name, qty, unit_price, amount, vat_rate, vat_amount, total_amount)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
             ON CONFLICT (branch_id, detail_id) DO UPDATE SET purchase_date = EXCLUDED.purchase_date, supplier_code = EXCLUDED.supplier_code,
-              supplier_name = EXCLUDED.supplier_name, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount
+              supplier_name = EXCLUDED.supplier_name, qty = EXCLUDED.qty, unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount,
+              vat_rate = EXCLUDED.vat_rate, vat_amount = EXCLUDED.vat_amount, total_amount = EXCLUDED.total_amount
           `, [branchId, p.detailId.substring(0, 80), p.refNo.substring(0, 60), p.date, p.supplierCode.substring(0, 60), p.supplierName.substring(0, 255),
-            p.itemCode.substring(0, 100), p.itemName.substring(0, 255), p.unit.substring(0, 30), p.qty, p.price, p.amount]);
+            p.itemCode.substring(0, 100), p.itemName.substring(0, 255), p.unit.substring(0, 30), p.qty, p.price, p.amount, p.vatRate, p.vatAmount, p.total]);
           purCount++;
         }
         const uniq = new Map();
@@ -1286,7 +1291,7 @@ app.get('/api/payables/:branchId', async (req, res) => {
   const to = dateRe.test(String(req.query.to || '')) ? req.query.to : '2999-12-31';
   try {
     const sups = (await pool.query('SELECT code, name FROM suppliers WHERE branch_id = $1', [branchId])).rows;
-    const purchases = (await pool.query(`SELECT supplier_code, SUM(amount) AS total, COUNT(DISTINCT ref_no) AS times FROM supplier_purchases
+    const purchases = (await pool.query(`SELECT supplier_code, SUM(CASE WHEN total_amount > 0 THEN total_amount ELSE amount END) AS total, COUNT(DISTINCT ref_no) AS times FROM supplier_purchases
       WHERE branch_id = $1 AND purchase_date BETWEEN $2 AND $3 GROUP BY supplier_code`, [branchId, from, to])).rows;
     const snap = (await pool.query('SELECT * FROM supplier_debt_snapshot WHERE branch_id = $1', [branchId])).rows;
     const pays = (await pool.query(`SELECT ref_id, ref_no, pay_date, source, type_name, amount, reason, budget_item, manual_supplier_code, ignored
@@ -1522,7 +1527,8 @@ app.get('/api/purchase-books/lines/:branchId', async (req, res) => {
       SELECT b.purchase_date AS date, b.ref_no, b.supplier_code, b.supplier_name, b.item_code, b.item_name,
              b.small_unit, b.large_unit, b.ratio,
              b.qty AS qty_small, b.qty / b.ratio AS qty_large,
-             b.unit_price AS price_small, b.unit_price * b.ratio AS price_large, b.amount,
+             b.unit_price AS price_small, b.unit_price * b.ratio AS price_large, b.amount, COALESCE(b.vat_rate, 0) AS vat_rate, COALESCE(b.vat_amount, 0) AS vat_amount,
+             CASE WHEN COALESCE(b.total_amount, 0) > 0 THEN b.total_amount ELSE b.amount END AS total_amount,
              s.n AS history_count, s.avg_large, s.min_large, s.max_large,
              CASE WHEN s.n > 1 AND s.avg_large > 0 THEN (b.unit_price * b.ratio - s.avg_large) / s.avg_large * 100 END AS deviation_pct,
              m.material_id

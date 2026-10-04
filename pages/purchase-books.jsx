@@ -118,7 +118,9 @@ function BookTab({ lines }) {
         return <span className={bad ? 'text-red-600 font-bold' : 'text-gray-600'}>{bad ? (d > 0 ? '⚠ cao ' : '⚠ thấp ') : ''}{d > 0 ? '+' : ''}{d.toFixed(1)}%</span>;
       }
     },
-    { key: 'amount', label: 'Thành tiền', minWidth: 110, type: 'number', align: 'right', render: (r) => <b>{money(r.amount)}</b> }
+    { key: 'amount', label: 'Tiền hàng', minWidth: 100, type: 'number', align: 'right', render: (r) => money(r.amount) },
+    { key: 'vat_amount', label: 'VAT', width: 84, type: 'number', align: 'right', get: (r) => Number(r.vat_amount) || 0, render: (r) => (Number(r.vat_amount) ? <span title={`${r.vat_rate}%`}>{money(r.vat_amount)}</span> : <span className="text-gray-300">—</span>) },
+    { key: 'total_amount', label: 'Thanh toán', minWidth: 110, type: 'number', align: 'right', get: (r) => Number(r.total_amount) || 0, render: (r) => <b>{money(r.total_amount)}</b> }
   ];
   const detailVisible = useMemo(() => sortRows(filterRows(rows, detailCols, fD), detailCols, sD),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -173,7 +175,7 @@ function BookTab({ lines }) {
       </div>
       {lines.length === 0 ? <p className="bg-white border rounded p-6 text-gray-600">Chưa có dữ liệu mua hàng trong khoảng ngày này.</p> : view === 'detail' ? (
         <DataTable columns={detailCols} allRows={rows} rows={detailVisible} rowKey={(r, i) => r.ref_no + r.item_code + i} filters={fD} onFiltersChange={setFD} sort={sD} onSortChange={setSD} maxHeight="calc(100vh - 380px)"
-          footer={[<td key="l" colSpan={12} className="px-2 py-1 text-right">Tổng tiền ({detailVisible.length} dòng):</td>, <td key="a" className="px-2 py-1 text-right">{money(detailVisible.reduce((s, r) => s + Number(r.amount || 0), 0))}</td>]} />
+          footer={[<td key="l" colSpan={12} className="px-2 py-1 text-right">Tổng ({detailVisible.length} dòng):</td>, <td key="a" className="px-2 py-1 text-right">{money(detailVisible.reduce((s, r) => s + Number(r.amount || 0), 0))}</td>, <td key="v" className="px-2 py-1 text-right">{money(detailVisible.reduce((s, r) => s + Number(r.vat_amount || 0), 0))}</td>, <td key="t" className="px-2 py-1 text-right">{money(detailVisible.reduce((s, r) => s + Number(r.total_amount || 0), 0))}</td>]} />
       ) : (
         <DataTable columns={sumCols} allRows={summary} rows={sumVisible} rowKey={(r) => r.key} filters={fS} onFiltersChange={setFS} sort={sS} onSortChange={setSS} maxHeight="calc(100vh - 380px)"
           footer={[<td key="l" colSpan={10} className="px-2 py-1 text-right">Tổng tiền ({sumVisible.length} dòng):</td>, <td key="a" className="px-2 py-1 text-right">{money(sumVisible.reduce((s, r) => s + r.amount, 0))}</td>]} />
