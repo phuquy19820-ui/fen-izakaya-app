@@ -1291,7 +1291,7 @@ app.get('/api/payables/:branchId', async (req, res) => {
   const to = dateRe.test(String(req.query.to || '')) ? req.query.to : '2999-12-31';
   try {
     const sups = (await pool.query('SELECT code, name FROM suppliers WHERE branch_id = $1', [branchId])).rows;
-    const purchases = (await pool.query(`SELECT supplier_code, SUM(CASE WHEN total_amount > 0 THEN total_amount ELSE amount END) AS total, COUNT(DISTINCT ref_no) AS times FROM supplier_purchases
+    const purchases = (await pool.query(`SELECT supplier_code, SUM(amount) AS goods, SUM(vat_amount) AS vat, SUM(CASE WHEN total_amount > 0 THEN total_amount ELSE amount END) AS total, COUNT(DISTINCT ref_no) AS times FROM supplier_purchases
       WHERE branch_id = $1 AND purchase_date BETWEEN $2 AND $3 GROUP BY supplier_code`, [branchId, from, to])).rows;
     const snap = (await pool.query('SELECT * FROM supplier_debt_snapshot WHERE branch_id = $1', [branchId])).rows;
     const pays = (await pool.query(`SELECT ref_id, ref_no, pay_date, source, type_name, amount, reason, budget_item, manual_supplier_code, ignored
@@ -1314,10 +1314,10 @@ app.get('/api/payables/:branchId', async (req, res) => {
 
     const rows = new Map();
     const row = (code, name) => {
-      if (!rows.has(code)) rows.set(code, { code, name: name || supByCode.get(code) || code, purchases: 0, purchase_count: 0, paid: 0, cukcuk_open: null, cukcuk_inc: null, cukcuk_dec: null, cukcuk_close: null });
+      if (!rows.has(code)) rows.set(code, { code, name: name || supByCode.get(code) || code, goods: 0, vat: 0, purchases: 0, purchase_count: 0, paid: 0, cukcuk_open: null, cukcuk_inc: null, cukcuk_dec: null, cukcuk_close: null });
       return rows.get(code);
     };
-    purchases.forEach((p) => { if (p.supplier_code) { const r = row(p.supplier_code); r.purchases = Number(p.total) || 0; r.purchase_count = Number(p.times) || 0; } });
+    purchases.forEach((p) => { if (p.supplier_code) { const r = row(p.supplier_code); r.goods = Number(p.goods) || 0; r.vat = Number(p.vat) || 0; r.purchases = Number(p.total) || 0; r.purchase_count = Number(p.times) || 0; } });
     payments.forEach((p) => { if (p.supplier_code) row(p.supplier_code).paid += p.amount; });
     snap.forEach((s) => { const r = row(s.vendor_code, s.vendor_name); r.cukcuk_open = Number(s.first_amount); r.cukcuk_inc = Number(s.increase_amount); r.cukcuk_dec = Number(s.decrease_amount); r.cukcuk_close = Number(s.last_amount); });
     const list = Array.from(rows.values()).map((r) => ({ ...r, balance: r.purchases - r.paid })).sort((a, b) => b.balance - a.balance);

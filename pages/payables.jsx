@@ -64,13 +64,11 @@ export default function Payables() {
   const debtColumns = [
     { key: 'code', label: 'Mã NCC', width: 96, type: 'text', render: (r) => <span className="font-mono text-blue-700">{r.code}</span> },
     { key: 'name', label: 'Nhà cung cấp', type: 'text', render: (r) => <span className="font-medium">{r.name}</span> },
-    { key: 'purchases', label: 'Mua hàng trong kỳ', width: 130, type: 'number', align: 'right', render: (r) => money(r.purchases) },
+    { key: 'goods', label: 'Tiền hàng', width: 118, type: 'number', align: 'right', render: (r) => money(r.goods) },
+    { key: 'vat', label: 'Tiền VAT', width: 100, type: 'number', align: 'right', render: (r) => (r.vat ? money(r.vat) : <span className="text-gray-300">—</span>) },
+    { key: 'purchases', label: 'Tổng cộng (hàng + VAT)', width: 150, type: 'number', align: 'right', render: (r) => <b>{money(r.purchases)}</b> },
     { key: 'paid', label: 'Đã chi trả (quỹ TM/NH)', width: 150, type: 'number', align: 'right', render: (r) => <span className="text-green-700">{money(r.paid)}</span> },
-    { key: 'balance', label: 'Còn nợ trong kỳ', width: 130, type: 'number', align: 'right', render: (r) => <b className={r.balance > 0 ? 'text-red-600' : ''}>{money(r.balance)}</b> },
-    { key: 'cukcuk_open', label: 'CUKCUK: nợ đầu', width: 120, type: 'number', align: 'right', get: (r) => (r.cukcuk_open === null ? '' : r.cukcuk_open), render: (r) => (r.cukcuk_open === null ? '—' : money(r.cukcuk_open)) },
-    { key: 'cukcuk_inc', label: 'CUKCUK: phát sinh', width: 120, type: 'number', align: 'right', get: (r) => (r.cukcuk_inc === null ? '' : r.cukcuk_inc), render: (r) => (r.cukcuk_inc === null ? '—' : money(r.cukcuk_inc)) },
-    { key: 'cukcuk_dec', label: 'CUKCUK: đã trả', width: 120, type: 'number', align: 'right', get: (r) => (r.cukcuk_dec === null ? '' : r.cukcuk_dec), render: (r) => (r.cukcuk_dec === null ? '—' : money(r.cukcuk_dec)) },
-    { key: 'cukcuk_close', label: 'CUKCUK: nợ cuối', width: 120, type: 'number', align: 'right', get: (r) => (r.cukcuk_close === null ? '' : r.cukcuk_close), render: (r) => (r.cukcuk_close === null ? '—' : <b>{money(r.cukcuk_close)}</b>) }
+    { key: 'balance', label: 'Còn nợ', width: 124, type: 'number', align: 'right', render: (r) => <b className={r.balance > 0 ? 'text-red-600' : ''}>{money(r.balance)}</b> }
   ];
   const debtVisible = useMemo(
     () => sortRows(filterRows(suppliers, debtColumns, debtFilters), debtColumns, debtSort),
@@ -100,10 +98,11 @@ export default function Payables() {
   );
 
   const totals = useMemo(() => ({
+    goods: debtVisible.reduce((s, r) => s + r.goods, 0),
+    vat: debtVisible.reduce((s, r) => s + r.vat, 0),
     purchases: debtVisible.reduce((s, r) => s + r.purchases, 0),
     paid: debtVisible.reduce((s, r) => s + r.paid, 0),
-    balance: debtVisible.reduce((s, r) => s + r.balance, 0),
-    cukcuk: debtVisible.reduce((s, r) => s + (r.cukcuk_close || 0), 0)
+    balance: debtVisible.reduce((s, r) => s + r.balance, 0)
   }), [debtVisible]);
   const unassigned = payments.filter((p) => !p.supplier_code && p.how !== 'ignored');
 
@@ -122,14 +121,15 @@ export default function Payables() {
 
         <div className="p-4 space-y-2" style={{ maxWidth: 1500, margin: '0 auto' }}>
           <DateRangeBar from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} onApply={(f, t) => load(f, t)}>
-            <span className="text-gray-600">Còn nợ trong kỳ = Mua hàng − Chi trả đã gán cho NCC. Cột CUKCUK là số công nợ CUKCUK tại lần đồng bộ gần nhất{data && data.snapshotRange ? ` (${fmtDate(data.snapshotRange.from)} → ${fmtDate(data.snapshotRange.to)})` : ''}.</span>
+            <span className="text-gray-600">Tổng cộng = Tiền hàng + VAT. Còn nợ = Tổng cộng − Chi trả đã gán cho NCC (quỹ tiền mặt / tiền gửi).</span>
           </DateRangeBar>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <div className="bg-white rounded border px-3 py-2"><p className="text-gray-500">Mua hàng trong kỳ</p><p className="text-lg font-bold text-blue-700">{money(totals.purchases)} ₫</p></div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <div className="bg-white rounded border px-3 py-2"><p className="text-gray-500">Tiền hàng</p><p className="text-lg font-bold">{money(totals.goods)} ₫</p></div>
+            <div className="bg-white rounded border px-3 py-2"><p className="text-gray-500">Tiền VAT</p><p className="text-lg font-bold">{money(totals.vat)} ₫</p></div>
+            <div className="bg-white rounded border px-3 py-2"><p className="text-gray-500">Tổng cộng phải trả</p><p className="text-lg font-bold text-blue-700">{money(totals.purchases)} ₫</p></div>
             <div className="bg-white rounded border px-3 py-2"><p className="text-gray-500">Đã chi trả</p><p className="text-lg font-bold text-green-700">{money(totals.paid)} ₫</p></div>
-            <div className="bg-white rounded border px-3 py-2"><p className="text-gray-500">Còn nợ trong kỳ</p><p className="text-lg font-bold text-red-600">{money(totals.balance)} ₫</p></div>
-            <div className="bg-white rounded border px-3 py-2"><p className="text-gray-500">Nợ cuối theo CUKCUK</p><p className="text-lg font-bold">{money(totals.cukcuk)} ₫</p></div>
+            <div className="bg-white rounded border px-3 py-2"><p className="text-gray-500">Còn nợ</p><p className="text-lg font-bold text-red-600">{money(totals.balance)} ₫</p></div>
           </div>
 
           <div className="bg-white rounded border px-3 py-2 flex flex-wrap items-center gap-2">
@@ -149,11 +149,11 @@ export default function Payables() {
               maxHeight="calc(100vh - 380px)"
               footer={[
                 <td key="l" colSpan={2} className="px-2 py-1 text-right">Tổng ({debtVisible.length} NCC):</td>,
+                <td key="g" className="px-2 py-1 text-right">{money(totals.goods)}</td>,
+                <td key="v" className="px-2 py-1 text-right">{money(totals.vat)}</td>,
                 <td key="a" className="px-2 py-1 text-right">{money(totals.purchases)}</td>,
                 <td key="b" className="px-2 py-1 text-right">{money(totals.paid)}</td>,
-                <td key="c" className="px-2 py-1 text-right">{money(totals.balance)}</td>,
-                <td key="d" colSpan={3}></td>,
-                <td key="e" className="px-2 py-1 text-right">{money(totals.cukcuk)}</td>
+                <td key="c" className="px-2 py-1 text-right">{money(totals.balance)}</td>
               ]}
             />
           ) : (
