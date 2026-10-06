@@ -18,7 +18,13 @@ export default function SyncCukcuk() {
   const [salesStatus, setSalesStatus] = useState(null);
   const [savingCode, setSavingCode] = useState('');
   const [ext, setExt] = useState({ installed: false, status: 'idle', text: '' });
-  const [rangeDays, setRangeDays] = useState(7);
+  const [rangeKey, setRangeKey] = useState('m0');
+  const monthOptions = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - i);
+    return { key: 'm' + i, year: d.getFullYear(), month: d.getMonth() + 1 };
+  });
   const [dishModal, setDishModal] = useState({ open: false, item: null });
   const [matModalOpen, setMatModalOpen] = useState(false);
 
@@ -51,8 +57,16 @@ export default function SyncCukcuk() {
     }
     const p = (n) => String(n).padStart(2, '0');
     const fmt = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-    const to = new Date();
-    const from = new Date(Date.now() - (rangeDays - 1) * 86400000);
+    let from;
+    let to = new Date();
+    const mo = monthOptions.find((m) => m.key === rangeKey);
+    if (mo) {
+      from = new Date(mo.year, mo.month - 1, 1);
+      const last = new Date(mo.year, mo.month, 0);
+      if (last < to) to = last;
+    } else {
+      from = new Date(Date.now() - (Number(rangeKey.slice(1)) - 1) * 86400000);
+    }
     setExt((x) => ({ ...x, status: 'waiting_login', text: 'Đang mở CUKCUK…', result: null }));
     window.postMessage({
       source: 'FEN_APP', type: 'START_SYNC',
@@ -231,11 +245,16 @@ export default function SyncCukcuk() {
                   >
                     🔄 Đồng bộ từ CUKCUK (doanh số, tồn kho, nhà cung cấp)
                   </button>
-                  <select value={rangeDays} onChange={(e) => setRangeDays(Number(e.target.value))} className="border p-2 rounded text-sm">
-                    <option value={3}>3 ngày gần nhất</option>
-                    <option value={7}>7 ngày gần nhất</option>
-                    <option value={14}>14 ngày gần nhất</option>
-                    <option value={30}>30 ngày gần nhất</option>
+                  <select value={rangeKey} onChange={(e) => setRangeKey(e.target.value)} className="border p-2 rounded text-sm">
+                    <optgroup label="Theo tháng">
+                      {monthOptions.map((m) => <option key={m.key} value={m.key}>Tháng {String(m.month).padStart(2, '0')}/{m.year}{m.key === 'm0' ? ' (đến hôm nay)' : ''}</option>)}
+                    </optgroup>
+                    <optgroup label="Gần đây">
+                      <option value="d3">3 ngày gần nhất</option>
+                      <option value="d7">7 ngày gần nhất</option>
+                      <option value="d14">14 ngày gần nhất</option>
+                      <option value="d30">30 ngày gần nhất</option>
+                    </optgroup>
                   </select>
                   <span className="text-xs text-gray-500">Bấm nút → CUKCUK tự mở → bạn đăng nhập → app tự lấy doanh số, tồn kho theo ngày, nhà cung cấp và lịch sử mua.</span>
                 </div>
