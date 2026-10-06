@@ -20,13 +20,19 @@ export default function SyncCukcuk() {
   const [ext, setExt] = useState({ installed: false, status: 'idle', text: '' });
   const [cukBranchName, setCukBranchName] = useState('');
   const [cukBranchMsg, setCukBranchMsg] = useState('');
-  const [rangeKey, setRangeKey] = useState('m0');
-  const monthOptions = Array.from({ length: 12 }, (_, i) => {
+  const p2 = (n) => String(n).padStart(2, '0');
+  const isoLocal = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  const now0 = new Date();
+  const [syncFrom, setSyncFrom] = useState(isoLocal(new Date(now0.getFullYear(), now0.getMonth(), 1)));
+  const [syncTo, setSyncTo] = useState(isoLocal(now0));
+  const setMonthRange = (offset) => {
     const d = new Date();
-    d.setDate(1);
-    d.setMonth(d.getMonth() - i);
-    return { key: 'm' + i, year: d.getFullYear(), month: d.getMonth() + 1 };
-  });
+    const first = new Date(d.getFullYear(), d.getMonth() + offset, 1);
+    const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+    setSyncFrom(isoLocal(first));
+    setSyncTo(isoLocal(offset === 0 && last > d ? d : last));
+  };
+  const setLastDays = (n) => { setSyncFrom(isoLocal(new Date(Date.now() - (n - 1) * 86400000))); setSyncTo(isoLocal(new Date())); };
   const [dishModal, setDishModal] = useState({ open: false, item: null });
   const [matModalOpen, setMatModalOpen] = useState(false);
 
@@ -66,20 +72,14 @@ export default function SyncCukcuk() {
     }
     const p = (n) => String(n).padStart(2, '0');
     const fmt = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-    let from;
-    let to = new Date();
-    const mo = monthOptions.find((m) => m.key === rangeKey);
-    if (mo) {
-      from = new Date(mo.year, mo.month - 1, 1);
-      const last = new Date(mo.year, mo.month, 0);
-      if (last < to) to = last;
-    } else {
-      from = new Date(Date.now() - (Number(rangeKey.slice(1)) - 1) * 86400000);
+    if (!syncFrom || !syncTo || syncFrom > syncTo) {
+      alert('Khoảng ngày không hợp lệ: "Từ ngày" phải nhỏ hơn hoặc bằng "Đến ngày".');
+      return;
     }
     setExt((x) => ({ ...x, status: 'waiting_login', text: 'Đang mở CUKCUK…', result: null }));
     window.postMessage({
       source: 'FEN_APP', type: 'START_SYNC',
-      job: { branchId: branch, cukcukUrl: url, fromDate: fmt(from), toDate: fmt(to), cukcukBranchName: (cukBranchName || '').trim() }
+      job: { branchId: branch, cukcukUrl: url, fromDate: syncFrom, toDate: syncTo, cukcukBranchName: (cukBranchName || '').trim() }
     }, '*');
   };
 
@@ -254,17 +254,14 @@ export default function SyncCukcuk() {
                   >
                     🔄 Đồng bộ từ CUKCUK (doanh số, tồn kho, nhà cung cấp)
                   </button>
-                  <select value={rangeKey} onChange={(e) => setRangeKey(e.target.value)} className="border p-2 rounded text-sm">
-                    <optgroup label="Theo tháng">
-                      {monthOptions.map((m) => <option key={m.key} value={m.key}>Tháng {String(m.month).padStart(2, '0')}/{m.year}{m.key === 'm0' ? ' (đến hôm nay)' : ''}</option>)}
-                    </optgroup>
-                    <optgroup label="Gần đây">
-                      <option value="d3">3 ngày gần nhất</option>
-                      <option value="d7">7 ngày gần nhất</option>
-                      <option value="d14">14 ngày gần nhất</option>
-                      <option value="d30">30 ngày gần nhất</option>
-                    </optgroup>
-                  </select>
+                  <label className="text-sm font-semibold">Từ ngày <input type="date" value={syncFrom} onChange={(e) => setSyncFrom(e.target.value)} className="border p-2 rounded text-sm font-normal" /></label>
+                  <label className="text-sm font-semibold">Đến ngày <input type="date" value={syncTo} onChange={(e) => setSyncTo(e.target.value)} className="border p-2 rounded text-sm font-normal" /></label>
+                  <div className="flex flex-wrap gap-1 text-xs">
+                    <button onClick={() => setMonthRange(0)} className="px-2 py-1 rounded border bg-gray-50 hover:bg-gray-100 font-semibold">Tháng này</button>
+                    <button onClick={() => setMonthRange(-1)} className="px-2 py-1 rounded border bg-gray-50 hover:bg-gray-100 font-semibold">Tháng trước</button>
+                    <button onClick={() => setLastDays(7)} className="px-2 py-1 rounded border bg-gray-50 hover:bg-gray-100 font-semibold">7 ngày</button>
+                    <button onClick={() => setLastDays(30)} className="px-2 py-1 rounded border bg-gray-50 hover:bg-gray-100 font-semibold">30 ngày</button>
+                  </div>
                   <span className="text-xs text-gray-500">Bấm nút → CUKCUK tự mở → bạn đăng nhập → app tự lấy doanh số, tồn kho theo ngày, nhà cung cấp và lịch sử mua.</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-sm">
