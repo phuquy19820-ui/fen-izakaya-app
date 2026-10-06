@@ -18,6 +18,8 @@ export default function SyncCukcuk() {
   const [salesStatus, setSalesStatus] = useState(null);
   const [savingCode, setSavingCode] = useState('');
   const [ext, setExt] = useState({ installed: false, status: 'idle', text: '' });
+  const [cukBranchName, setCukBranchName] = useState('');
+  const [cukBranchMsg, setCukBranchMsg] = useState('');
   const [rangeKey, setRangeKey] = useState('m0');
   const monthOptions = Array.from({ length: 12 }, (_, i) => {
     const d = new Date();
@@ -49,6 +51,13 @@ export default function SyncCukcuk() {
     return c.includes('.') ? `https://${c}` : `https://${c}.cukcuk.vn`;
   };
 
+  useEffect(() => { setCukBranchName((currentBranch && currentBranch.cukcuk_branch_name) || ''); }, [currentBranch]);
+  const saveCukBranch = async () => {
+    const j = await (await fetch('/api/branches/cukcuk-branch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branchId: branch, name: cukBranchName }) })).json();
+    setCukBranchMsg(j.success ? '✅ Đã lưu' : '❌ ' + j.message);
+    setTimeout(() => setCukBranchMsg(''), 2500);
+  };
+
   const startExtSync = () => {
     const url = cukcukUrl();
     if (!url) {
@@ -70,7 +79,7 @@ export default function SyncCukcuk() {
     setExt((x) => ({ ...x, status: 'waiting_login', text: 'Đang mở CUKCUK…', result: null }));
     window.postMessage({
       source: 'FEN_APP', type: 'START_SYNC',
-      job: { branchId: branch, cukcukUrl: url, fromDate: fmt(from), toDate: fmt(to) }
+      job: { branchId: branch, cukcukUrl: url, fromDate: fmt(from), toDate: fmt(to), cukcukBranchName: (cukBranchName || '').trim() }
     }, '*');
   };
 
@@ -257,6 +266,13 @@ export default function SyncCukcuk() {
                     </optgroup>
                   </select>
                   <span className="text-xs text-gray-500">Bấm nút → CUKCUK tự mở → bạn đăng nhập → app tự lấy doanh số, tồn kho theo ngày, nhà cung cấp và lịch sử mua.</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <label className="font-semibold">Tên chi nhánh trên CUKCUK:</label>
+                  <input value={cukBranchName} onChange={(e) => setCukBranchName(e.target.value)} placeholder="Để trống nếu CUKCUK chỉ có 1 chi nhánh" className="border p-2 rounded" style={{ width: 300 }} />
+                  <button onClick={saveCukBranch} className="px-3 py-2 rounded border bg-white hover:bg-gray-50 font-bold">Lưu</button>
+                  {cukBranchMsg && <span className="font-bold">{cukBranchMsg}</span>}
+                  <span className="text-xs text-gray-500">Khi nhiều chi nhánh dùng chung một phần mềm bán hàng (ví dụ "FEN RESTAURANT", "Tiệm Yến"), nhập đúng tên chi nhánh như ở ô chọn chi nhánh trên CUKCUK để tiện ích lấy đúng số liệu.</span>
                 </div>
                 {ext.status !== 'idle' && (
                   <p className={`text-sm font-medium ${ext.status === 'error' ? 'text-red-700' : ext.status === 'done' ? 'text-green-700' : 'text-purple-800'}`}>

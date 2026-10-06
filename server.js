@@ -57,7 +57,7 @@ async function initializeDatabase() {
         }
       }
       const addCols = {
-        branches: ['buyer_company VARCHAR(255)', 'cukcuk_company_code VARCHAR(100)', 'cukcuk_domain VARCHAR(255)', 'cukcuk_auth_token TEXT',
+        branches: ['buyer_company VARCHAR(255)', 'cukcuk_company_code VARCHAR(100)', 'cukcuk_domain VARCHAR(255)', 'cukcuk_branch_name VARCHAR(255)', 'cukcuk_auth_token TEXT',
           'cukcuk_token_expires_at TIMESTAMP', 'is_active BOOLEAN DEFAULT TRUE',
           'created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP', 'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'],
         raw_materials: ['branch_id VARCHAR(50)', 'category VARCHAR(50)', 'category_group VARCHAR(50)',
@@ -240,6 +240,18 @@ app.post('/api/branches/create', async (req, res) => {
         branch_name = $2, cukcuk_company_code = $3, cukcuk_domain = $4, is_active = TRUE
     `, [branchId, branchName, cukcukCompanyCode || '', cukcukDomain || '']);
     return res.json({ success: true, message: `Đã tạo/cập nhật chi nhánh ${branchName}` });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Tên chi nhánh trên CUKCUK (khi nhiều chi nhánh dùng chung một phần mềm bán hàng)
+app.post('/api/branches/cukcuk-branch', async (req, res) => {
+  const { branchId, name } = req.body;
+  if (!branchId) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh' });
+  try {
+    await pool.query('UPDATE branches SET cukcuk_branch_name = $2 WHERE branch_id = $1', [branchId, String(name || '').trim().substring(0, 255)]);
+    return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
