@@ -145,9 +145,8 @@
     return out;
   }
 
-  // Lịch sử mua theo nhà cung cấp và NVL: 180 ngày gần nhất
-  async function fetchPurchases(tpl, to) {
-    const from = new Date(Date.parse(to + 'T00:00:00Z') - 180 * 86400000).toISOString().slice(0, 10);
+  // Lịch sử mua theo nhà cung cấp và NVL: đúng khoảng ngày đang đồng bộ
+  async function fetchPurchases(tpl, from, to) {
     const obj = baseObj(tpl, {
       FromDate: from + 'T00:00:00.0000' + TZ, ToDate: to + 'T23:59:59.9990' + TZ, ReportID: 'PU_BYVENDORANDMATERIALS',
       ReportName: 'Mua hàng chi tiết theo NCC và NVL', VendorCategoryID: ALL_GUID, VendorCategoryName: 'Tất cả', VendorID: ALL_GUID, VendorName: 'Tất cả'
@@ -161,9 +160,8 @@
     }));
   }
 
-  // Công nợ nhà cung cấp (báo cáo DP_BYVENDOR) cho 180 ngày gần nhất
-  async function fetchVendorDebt(tpl, to) {
-    const from = new Date(Date.parse(to + 'T00:00:00Z') - 180 * 86400000).toISOString().slice(0, 10);
+  // Công nợ nhà cung cấp (báo cáo DP_BYVENDOR) trong khoảng ngày đang đồng bộ
+  async function fetchVendorDebt(tpl, from, to) {
     const obj = baseObj(tpl, {
       FromDate: from + 'T00:00:00.0000' + TZ, ToDate: to + 'T23:59:59.9990' + TZ, ReportID: 'DP_BYVENDOR',
       ReportName: 'Công nợ nhà cung cấp', VendorCategoryID: ALL_GUID, VendorCategoryName: 'Tất cả', VendorID: ALL_GUID, VendorName: 'Tất cả', branchID: tpl.BranchID
@@ -176,9 +174,9 @@
     };
   }
 
-  // Chứng từ chi quỹ tiền mặt và tiền gửi ngân hàng (180 ngày gần nhất), kèm Mục chi ở chi tiết
-  async function fetchPayments(tpl, to) {
-    const fromIso = new Date(Date.parse(to + 'T00:00:00Z') - 180 * 86400000 - 7 * 3600 * 1000).toISOString();
+  // Chứng từ chi quỹ tiền mặt và tiền gửi ngân hàng (đúng khoảng ngày đang đồng bộ), kèm Mục chi ở chi tiết
+  async function fetchPayments(tpl, from, to) {
+    const fromIso = new Date(Date.parse(from + 'T00:00:00Z') - 7 * 3600 * 1000).toISOString();
     const toIso = new Date(Date.parse(to + 'T00:00:00Z') + 86400000 - 7 * 3600 * 1000).toISOString();
     const filter = encodeURIComponent(JSON.stringify([
       { xtype: 'filter', property: 'RefDate', operator: '>=', value: fromIso, type: 'DateTime', group: 'RefDate' },
@@ -286,14 +284,14 @@
       } catch (e) { extras.warnings.push('Nhà cung cấp: ' + e.message); }
       try {
         say('PROGRESS', { status: 'running', text: 'Đang lấy lịch sử mua theo nhà cung cấp…' });
-        extras.purchases = await fetchPurchases(tpl, job.toDate);
+        extras.purchases = await fetchPurchases(tpl, job.fromDate, job.toDate);
       } catch (e) { extras.warnings.push('Lịch sử mua: ' + e.message); }
 
       try {
         say('PROGRESS', { status: 'running', text: 'Đang lấy công nợ nhà cung cấp và chứng từ chi…' });
-        const vd = await fetchVendorDebt(tpl, job.toDate);
+        const vd = await fetchVendorDebt(tpl, job.fromDate, job.toDate);
         extras.debts = vd.debts; extras.debtFrom = vd.from; extras.debtTo = vd.to;
-        extras.payments = await fetchPayments(tpl, job.toDate);
+        extras.payments = await fetchPayments(tpl, job.fromDate, job.toDate);
       } catch (e) { extras.warnings.push('Công nợ: ' + e.message); }
 
       say('ROWS', {
