@@ -39,24 +39,30 @@ async function startSync(msg, sender) {
   }
   const tab = await chrome.tabs.create({ url: j.cukcukUrl, active: true });
   await update({
-    branchId: j.branchId, fromDate: j.fromDate, toDate: j.toDate, cukcukUrl: j.cukcukUrl,
+    branchId: j.branchId, fromDate: j.fromDate, toDate: j.toDate, cukcukUrl: j.cukcukUrl, cukcukBranchName: String(j.cukcukBranchName || '').slice(0, 255),
     appOrigin: origin, appTabId: sender.tab.id, cukcukTabId: tab.id, createdAt: Date.now()
   }, { status: 'waiting_login', text: 'Đã mở CUKCUK. Hãy đăng nhập, tiện ích sẽ tự lấy số liệu.' });
   return { ok: true };
 }
 
 async function finishWithRows(job, payload) {
-  await update(job, { status: 'running', text: 'Đang gửi ' + payload.rows.length + ' dòng doanh số về app…' });
   try {
-    const res = await fetch(job.appOrigin + '/api/sales/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branchId: job.branchId, rows: payload.rows, source: 'EXTENSION' })
-    });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.message || 'App từ chối dữ liệu');
-    const d = json.data;
-    const parts = ['Doanh số: ' + payload.meta.invoices + ' hóa đơn, ' + d.salesRecords + ' dòng món/ngày (' + payload.meta.fromDate + ' → ' + payload.meta.toDate + ')'];
+    let d = { salesRecords: 0, matched_codes: 0, total_codes: 0 };
+    let parts;
+    if (payload.rows.length) {
+      await update(job, { status: 'running', text: 'Đang gửi ' + payload.rows.length + ' dòng doanh số về app…' });
+      const res = await fetch(job.appOrigin + '/api/sales/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branchId: job.branchId, rows: payload.rows, source: 'EXTENSION' })
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message || 'App từ chối dữ liệu');
+      d = json.data;
+      parts = ['Doanh số: ' + payload.meta.invoices + ' hóa đơn, ' + d.salesRecords + ' dòng món/ngày (' + payload.meta.fromDate + ' → ' + payload.meta.toDate + ')'];
+    } else {
+      parts = ['Doanh số: không có số liệu trong kỳ (bỏ qua)'];
+    }
     const warnings = [...(payload.warnings || [])];
     const post = async (path, body) => {
       const r = await fetch(job.appOrigin + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

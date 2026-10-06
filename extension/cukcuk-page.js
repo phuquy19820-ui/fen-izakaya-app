@@ -36,6 +36,22 @@
     return !/login/i.test(location.hash);
   }
 
+  const norm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').replace(/[^a-z0-9]/g, '');
+
+  // Danh sách chi nhánh của tài khoản CUKCUK, tìm theo tên hoặc mã chi nhánh
+  async function resolveBranch(tpl, wanted) {
+    const res = await fetch('Service/SettingService.svc/GetBranch?_dc=' + Date.now() + '&loadType=0&page=1&start=0&limit=100', {
+      credentials: 'same-origin', headers: { 'X-Cukcuk-Branchid': tpl.BranchID, 'X-Requested-With': 'XMLHttpRequest' }
+    });
+    if (!res.ok) throw new Error('Không đọc được danh sách chi nhánh CUKCUK (lỗi ' + res.status + ')');
+    const list = ((await res.json()).data || []).filter((b) => b.BranchID && !b.Inactive);
+    const w = norm(wanted);
+    const hit = list.find((b) => norm(b.BranchName) === w) || list.find((b) => norm(b.BranchCode) === w) ||
+      list.find((b) => norm(b.BranchName).includes(w) || (w && w.includes(norm(b.BranchName))));
+    if (!hit) throw new Error('Không tìm thấy chi nhánh "' + wanted + '" trên CUKCUK. Các chi nhánh có: ' + list.map((b) => b.BranchName).join(', ') + '. Hãy sửa lại "Tên chi nhánh trên CUKCUK" trong app.');
+    return { id: hit.BranchID, name: hit.BranchName };
+  }
+
   async function fetchPage(tpl, from, to, page) {
     const obj = {
       FromDate: from, ToDate: to, ReportCode: null, ReportName: 'Chi tiết doanh thu theo hóa đơn và mặt hàng',
@@ -203,14 +219,15 @@
         const data = json.data || [];
         got += data.length;
         for (const d of data) {
-          if (!/^chi/i.test(String(d.RefTypeName || ''))) continue;
+          if (d.BranchID && d.BranchID !== tpl.BranchID) continue;
+          if (!/chi/i.test(String(d.RefTypeName || '')) || /^(phiếu )?thu/i.test(String(d.RefTypeName || ''))) continue;
           let budget = '';
           try {
             const det = await get('Service/' + s.detail(d) + '&_dc=' + Date.now() + '&page=1&start=0&limit=100');
             budget = (det.data || []).map((x) => [x.BudgetItemName, x.Description].filter(Boolean).join(': ')).join('; ');
           } catch (e) { /* bỏ qua chi tiết */ }
           out.push({ refId: d.RefID, refNo: d.RefNo, date: localDate(d.RefDate), source: s.source, typeName: d.RefTypeName,
-            amount: Number(d.TotalAmount) || 0, reason: d.Reason || '', budgetItem: budget });
+            amount: Number(d.TotalAmount) || 0, reason: ((d.ObjectName ? '[' + d.ObjectName + '] ' : '') + (d.Reason || '')).trim(), budgetItem: budget });
         }
         page++;
         if (data.length === 0) break;
@@ -241,6 +258,13 @@
         await sleep(1500);
       }
       if (!tpl) throw new Error('Hết thời gian chờ đăng nhập/mở báo cáo CUKCUK. Hãy bấm đồng bộ lại.');
+
+      // Nhiều chi nhánh dùng chung một phần mềm bán hàng: chọn đúng chi nhánh theo tên đã lưu trong app
+      if (job.cukcukBranchName) {
+        say('PROGRESS', { status: 'running', text: 'Đang chọn chi nhánh "' + job.cukcukBranchName + '" trên CUKCUK…' });
+        const target = await resolveBranch(tpl, job.cukcukBranchName);
+        tpl = Object.assign({}, tpl, { BranchID: target.id, BranchName: target.name, BranchIDs: target.id + ',' });
+      }
 
       const from = job.fromDate + 'T00:00:00.0000' + TZ;
       const to = job.toDate + 'T23:59:59.9990' + TZ;
