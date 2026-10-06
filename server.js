@@ -249,6 +249,7 @@ app.post('/api/branches/create', async (req, res) => {
 app.post('/api/branches/cukcuk-branch', async (req, res) => {
   const { branchId, name } = req.body;
   if (!branchId) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh' });
+  if (/^https?:\/\/|cukcuk\.vn/i.test(String(name || ''))) return res.status(400).json({ success: false, message: 'Hãy nhập TÊN chi nhánh (ví dụ FEN RESTAURANT, Tiệm Yến), không nhập địa chỉ web' });
   try {
     await pool.query('UPDATE branches SET cukcuk_branch_name = $2 WHERE branch_id = $1', [branchId, String(name || '').trim().substring(0, 255)]);
     return res.json({ success: true });
@@ -325,15 +326,17 @@ app.post('/api/sales/rematch/:branchId', async (req, res) => {
 // Doanh số lưu theo MÃ MÓN CUKCUK; bảng dish_code_map ghép sang mã món trong file định lượng (BOM).
 app.post('/api/sales/import', async (req, res) => {
   const { branchId, rows, source } = req.body;
-  if (!branchId || !Array.isArray(rows) || rows.length === 0) {
+  if (!branchId || !Array.isArray(rows)) {
     return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc dữ liệu doanh số' });
   }
+  // Kỳ không có doanh số: bỏ qua, không coi là lỗi
+  if (rows.length === 0) return res.json({ success: true, message: 'Không có doanh số trong kỳ', data: { salesRecords: 0, matched_codes: 0, total_codes: 0 } });
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
   const clean = rows
     .map(r => ({ date: String(r.date || ''), code: String(r.code || '').trim(), name: String(r.name || '').trim(), kind: String(r.kind || '').trim(), qty: Number(r.qty), amount: Number(r.amount) || 0 }))
     .filter(r => dateRe.test(r.date) && r.code && Number.isFinite(r.qty) && r.qty !== 0);
   if (clean.length === 0) {
-    return res.status(400).json({ success: false, message: 'Không có dòng doanh số hợp lệ (cần date YYYY-MM-DD, code, qty)' });
+    return res.json({ success: true, message: 'Không có doanh số hợp lệ trong kỳ', data: { salesRecords: 0, matched_codes: 0, total_codes: 0 } });
   }
 
   const client = await pool.connect();
