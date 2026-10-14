@@ -78,11 +78,12 @@ export default function StockReport() {
     { key: 'amount', label: 'Thành tiền cuối kỳ', width: 112, type: 'number', align: 'right', render: (r) => money(r.amount) },
     {
       key: 'warn', label: 'Cảnh báo lệch giá', width: 170, type: 'number', align: 'left', noTitle: true,
-      get: (r) => Math.max(Math.abs(r.dev_buy || 0), Math.abs(r.dev_close || 0)),
+      get: (r) => Math.max(Math.abs(r.dev_buy || 0), Math.abs(r.dev_close || 0), Math.abs(r.dev_hist || 0)),
       render: (r) => {
         const msgs = [];
         if (r.dev_buy !== null && r.dev_buy !== undefined && Math.abs(r.dev_buy) > threshold) msgs.push(`giá mua ${r.dev_buy > 0 ? 'cao' : 'thấp'} hơn đầu kỳ ${r.dev_buy > 0 ? '+' : ''}${r.dev_buy.toFixed(0)}%`);
         if (r.dev_close !== null && r.dev_close !== undefined && Math.abs(r.dev_close) > threshold) msgs.push(`giá cuối kỳ ${r.dev_close > 0 ? 'tăng' : 'giảm'} ${r.dev_close > 0 ? '+' : ''}${r.dev_close.toFixed(0)}% so với đầu kỳ`);
+        if (r.dev_hist !== null && r.dev_hist !== undefined && Math.abs(r.dev_hist) > threshold) msgs.push(`giá mua ${r.dev_hist > 0 ? 'cao' : 'thấp'} hơn giá các lần mua trước ${r.dev_hist > 0 ? '+' : ''}${r.dev_hist.toFixed(0)}%`);
         return msgs.length ? <span className="text-red-600 font-bold" title={msgs.join('; ')}>⚠ {msgs.join('; ')}</span> : <span className="text-gray-300">—</span>;
       }
     },
@@ -110,7 +111,7 @@ export default function StockReport() {
   const totalValue = visible.reduce((s, r) => s + Number(r.amount || 0), 0);
   const totalOpen = visible.reduce((s, r) => s + Number(r.open_amount || 0), 0);
   const totalBuy = visible.reduce((s, r) => s + Number(r.buy_amount || 0), 0);
-  const warnCount = visible.filter((r) => Math.max(Math.abs(r.dev_buy || 0), Math.abs(r.dev_close || 0)) > threshold).length;
+  const warnCount = visible.filter((r) => Math.max(Math.abs(r.dev_buy || 0), Math.abs(r.dev_close || 0), Math.abs(r.dev_hist || 0)) > threshold).length;
   const fmtDate = (d) => (d ? d.split('-').reverse().join('/') : '');
 
   return (

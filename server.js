@@ -1116,6 +1116,9 @@ app.get('/api/stock/report/:branchId', async (req, res) => {
       f1 AS (SELECT DISTINCT ON (item_code) item_code, closing AS first_closing, closing_amount AS first_amount FROM r ORDER BY item_code, stock_date ASC),
       prev AS (SELECT DISTINCT ON (item_code) item_code, closing AS prev_closing, closing_amount AS prev_amount
                FROM cukcuk_stock_daily WHERE branch_id = $1 AND stock_date < $2 ORDER BY item_code, stock_date DESC),
+      hist AS (SELECT p.item_code, SUM(p.amount) / NULLIF(SUM(p.qty), 0) AS hist_price
+               FROM supplier_purchases p JOIN lasts l ON l.item_code = p.item_code AND lower(p.unit_name) = lower(l.unit_name)
+               WHERE p.branch_id = $1 AND p.purchase_date < $2 GROUP BY p.item_code),
       buys AS (SELECT p.item_code, SUM(p.amount) AS buy_amount,
                       SUM(CASE WHEN lower(p.unit_name) = lower(l.unit_name) THEN p.qty END) AS buy_qty_same,
                       SUM(CASE WHEN lower(p.unit_name) = lower(l.unit_name) THEN p.amount END) AS buy_amount_same
@@ -1124,11 +1127,12 @@ app.get('/api/stock/report/:branchId', async (req, res) => {
       SELECT l.item_code AS code, l.item_name AS name, l.category_name AS category, l.unit_name AS unit,
              f.opening, s.qty_in, s.qty_out, l.closing, l.closing_amount AS amount,
              f1.first_closing, f1.first_amount, pv.prev_amount, pv.prev_closing IS NOT NULL AS has_prev,
-             b.buy_amount, b.buy_qty_same, b.buy_amount_same,
+             b.buy_amount, b.buy_qty_same, b.buy_amount_same, h.hist_price,
              m.material_id, m.match_type, rm.material_name
       FROM lasts l JOIN firsts f USING (item_code) JOIN sums s USING (item_code) JOIN f1 USING (item_code)
       LEFT JOIN prev pv ON pv.item_code = l.item_code
       LEFT JOIN buys b ON b.item_code = l.item_code
+      LEFT JOIN hist h ON h.item_code = l.item_code
       LEFT JOIN stock_code_map m ON m.branch_id = $1 AND m.cukcuk_code = l.item_code
       LEFT JOIN raw_materials rm ON rm.material_id = m.material_id
       ORDER BY l.category_name, l.item_name`, [branchId, from, to])).rows;
@@ -1144,7 +1148,7 @@ app.get('/api/stock/report/:branchId', async (req, res) => {
       const buyPrice = n(raw.buy_qty_same) > 0 ? n(raw.buy_amount_same) / n(raw.buy_qty_same) : (qtyIn > 0 && buyAmount > 0 ? buyAmount / qtyIn : 0);
       const pct = (a, b) => (a > 0 && b > 0 ? ((b - a) / a) * 100 : null);
       const it = { ...raw, open_amount: openAmount, open_price: openPrice, close_price: closePrice, buy_amount: buyAmount, buy_price: buyPrice,
-        dev_buy: pct(openPrice, buyPrice), dev_close: pct(openPrice, closePrice) };
+        dev_buy: pct(openPrice, buyPrice), dev_close: pct(openPrice, closePrice), hist_price: n(raw.hist_price), dev_hist: pct(n(raw.hist_price), buyPrice) };
       delete it.first_closing; delete it.first_amount; delete it.prev_amount; delete it.prev_closing; delete it.buy_qty_same; delete it.buy_amount_same;
       if (it.material_id) return it;
       const s = suggest(it.name, mats, 1, { minContain: 2 })[0];
