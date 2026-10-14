@@ -292,7 +292,7 @@ function buildReport(rawInvoices, rawItems, menu, params) {
   const speedMap = new Map(sold.map((x) => [x.code, { ...x, inMenu: menuMap.has(x.code) }]));
   (menu || []).forEach((m) => {
     if (m.inactive || speedMap.has(m.item_code)) return;
-    const kind = m.item_type || 'Khác';
+    const kind = /^đồ uống/i.test(m.item_type || '') ? 'Đồ uống' : (m.item_type || 'Khác');
     const category = m.category_name || '(Không có nhóm)';
     if (fKind && kind !== fKind) return;
     if (fCat && category !== fCat) return;
