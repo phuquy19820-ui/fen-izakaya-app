@@ -123,6 +123,16 @@ async function initializeDatabase() {
         qty_out NUMERIC(18,4) DEFAULT 0, closing NUMERIC(18,4) DEFAULT 0, closing_amount NUMERIC(18,2) DEFAULT 0,
         PRIMARY KEY (branch_id, stock_date, item_code)
       )`);
+      migrations.push("ALTER TABLE cukcuk_stock_daily ADD COLUMN IF NOT EXISTS stock_id VARCHAR(60) NOT NULL DEFAULT ''");
+      migrations.push("ALTER TABLE cukcuk_stock_daily ADD COLUMN IF NOT EXISTS stock_name VARCHAR(120) DEFAULT ''");
+      migrations.push('ALTER TABLE cukcuk_stock_daily ADD COLUMN IF NOT EXISTS opening_amount NUMERIC(18,2)');
+      migrations.push('ALTER TABLE cukcuk_stock_daily ADD COLUMN IF NOT EXISTS in_amount NUMERIC(18,2)');
+      migrations.push(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'cukcuk_stock_daily'::regclass AND contype = 'p' AND pg_get_constraintdef(oid) LIKE '%stock_id%') THEN
+          ALTER TABLE cukcuk_stock_daily DROP CONSTRAINT IF EXISTS cukcuk_stock_daily_pkey;
+          ALTER TABLE cukcuk_stock_daily ADD PRIMARY KEY (branch_id, stock_date, item_code, stock_id);
+        END IF;
+      END $$`);
       migrations.push(`CREATE TABLE IF NOT EXISTS stock_code_map (
         branch_id VARCHAR(50) NOT NULL, cukcuk_code VARCHAR(100) NOT NULL, cukcuk_name VARCHAR(255), unit_name VARCHAR(30),
         material_id VARCHAR(50), match_type VARCHAR(20) DEFAULT 'NONE', match_score NUMERIC(4,3) DEFAULT 0,
@@ -1040,7 +1050,10 @@ app.post('/api/inventory/import', async (req, res) => {
       date: String(r.date || ''), code: String(r.code || '').trim(), name: String(r.name || '').trim(),
       category: String(r.category || '').trim(), unit: String(r.unit || '').trim(),
       opening: Number(r.opening) || 0, qtyIn: Number(r.qtyIn) || 0, qtyOut: Number(r.qtyOut) || 0,
-      closing: Number(r.closing) || 0, amount: Number(r.amount) || 0
+      closing: Number(r.closing) || 0, amount: Number(r.amount) || 0,
+      stockId: String(r.stockId || '').trim().substring(0, 60), stockName: String(r.stockName || '').trim().substring(0, 120),
+      openingAmount: r.openingAmount === undefined || r.openingAmount === null ? null : Number(r.openingAmount) || 0,
+      inAmount: r.inAmount === undefined || r.inAmount === null ? null : Number(r.inAmount) || 0
     }))
     .filter(r => dateRe.test(r.date) && r.code);
   if (clean.length === 0) return res.status(400).json({ success: false, message: 'Không có dòng tồn kho hợp lệ' });
@@ -1073,12 +1086,15 @@ app.post('/api/inventory/import', async (req, res) => {
     await client.query('DELETE FROM cukcuk_stock_daily WHERE branch_id = $1 AND stock_date BETWEEN $2 AND $3', [branchId, minDate, maxDate]);
     for (const r of clean) {
       await client.query(`
-        INSERT INTO cukcuk_stock_daily (branch_id, stock_date, item_code, item_name, category_name, unit_name, opening, qty_in, qty_out, closing, closing_amount)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-        ON CONFLICT (branch_id, stock_date, item_code) DO UPDATE SET item_name = EXCLUDED.item_name, category_name = EXCLUDED.category_name,
+        INSERT INTO cukcuk_stock_daily (branch_id, stock_date, item_code, item_name, category_name, unit_name, opening, qty_in, qty_out, closing, closing_amount,
+          stock_id, stock_name, opening_amount, in_amount)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        ON CONFLICT (branch_id, stock_date, item_code, stock_id) DO UPDATE SET item_name = EXCLUDED.item_name, category_name = EXCLUDED.category_name,
           unit_name = EXCLUDED.unit_name, opening = EXCLUDED.opening, qty_in = EXCLUDED.qty_in, qty_out = EXCLUDED.qty_out,
-          closing = EXCLUDED.closing, closing_amount = EXCLUDED.closing_amount
-      `, [branchId, r.date, r.code, r.name.substring(0, 255), r.category.substring(0, 100), r.unit.substring(0, 30), r.opening, r.qtyIn, r.qtyOut, r.closing, r.amount]);
+          closing = EXCLUDED.closing, closing_amount = EXCLUDED.closing_amount, stock_name = EXCLUDED.stock_name,
+          opening_amount = EXCLUDED.opening_amount, in_amount = EXCLUDED.in_amount
+      `, [branchId, r.date, r.code, r.name.substring(0, 255), r.category.substring(0, 100), r.unit.substring(0, 30), r.opening, r.qtyIn, r.qtyOut, r.closing, r.amount,
+        r.stockId, r.stockName, r.openingAmount, r.inAmount]);
     }
     await rebuildInventory(client, branchId);
     await client.query(
@@ -1103,19 +1119,30 @@ app.get('/api/stock/report/:branchId', async (req, res) => {
   const { branchId } = req.params;
   try {
     const dates = (await pool.query('SELECT DISTINCT stock_date FROM cukcuk_stock_daily WHERE branch_id = $1 ORDER BY stock_date', [branchId])).rows.map(r => r.stock_date);
-    if (dates.length === 0) return res.json({ success: true, data: { dates: [], items: [], materials: [] } });
+    if (dates.length === 0) return res.json({ success: true, data: { dates: [], items: [], materials: [], stocks: [] } });
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
     const iso = (d) => new Date(d).toISOString().slice(0, 10);
     const from = dateRe.test(req.query.from || '') ? req.query.from : iso(dates[0]);
     const to = dateRe.test(req.query.to || '') ? req.query.to : iso(dates[dates.length - 1]);
+    const stockId = String(req.query.stock || '');
+    // Danh sách kho (đúng như trên CUKCUK) có dữ liệu
+    const stocks = (await pool.query(`SELECT stock_id AS id, MAX(stock_name) AS name FROM cukcuk_stock_daily
+      WHERE branch_id = $1 AND stock_id <> '' GROUP BY stock_id ORDER BY MAX(stock_name)`, [branchId])).rows;
     const items = (await pool.query(`
-      WITH r AS (SELECT * FROM cukcuk_stock_daily WHERE branch_id = $1 AND stock_date BETWEEN $2 AND $3),
-      firsts AS (SELECT DISTINCT ON (item_code) item_code, opening FROM r ORDER BY item_code, stock_date ASC),
+      WITH r AS (
+        SELECT stock_date, item_code, MAX(item_name) AS item_name, MAX(category_name) AS category_name, MAX(unit_name) AS unit_name,
+               SUM(opening) AS opening, SUM(qty_in) AS qty_in, SUM(qty_out) AS qty_out, SUM(closing) AS closing, SUM(closing_amount) AS closing_amount,
+               SUM(opening_amount) AS opening_amount, SUM(in_amount) AS in_amount
+        FROM cukcuk_stock_daily WHERE branch_id = $1 AND stock_date BETWEEN $2 AND $3 AND ($4 = '' OR stock_id = $4)
+        GROUP BY stock_date, item_code),
+      firsts AS (SELECT DISTINCT ON (item_code) item_code, opening, opening_amount FROM r ORDER BY item_code, stock_date ASC),
       lasts AS (SELECT DISTINCT ON (item_code) item_code, item_name, category_name, unit_name, closing, closing_amount FROM r ORDER BY item_code, stock_date DESC),
-      sums AS (SELECT item_code, SUM(qty_in) AS qty_in, SUM(qty_out) AS qty_out FROM r GROUP BY item_code),
+      sums AS (SELECT item_code, SUM(qty_in) AS qty_in, SUM(qty_out) AS qty_out, SUM(in_amount) AS in_amount FROM r GROUP BY item_code),
       f1 AS (SELECT DISTINCT ON (item_code) item_code, closing AS first_closing, closing_amount AS first_amount FROM r ORDER BY item_code, stock_date ASC),
-      prev AS (SELECT DISTINCT ON (item_code) item_code, closing AS prev_closing, closing_amount AS prev_amount
-               FROM cukcuk_stock_daily WHERE branch_id = $1 AND stock_date < $2 ORDER BY item_code, stock_date DESC),
+      prev AS (SELECT DISTINCT ON (item_code) item_code, closing AS prev_closing, closing_amount AS prev_amount FROM (
+                 SELECT stock_date, item_code, SUM(closing) AS closing, SUM(closing_amount) AS closing_amount FROM cukcuk_stock_daily
+                 WHERE branch_id = $1 AND stock_date < $2 AND ($4 = '' OR stock_id = $4) GROUP BY stock_date, item_code) x
+               ORDER BY item_code, stock_date DESC),
       hist AS (SELECT p.item_code, SUM(p.amount) / NULLIF(SUM(p.qty), 0) AS hist_price
                FROM supplier_purchases p JOIN lasts l ON l.item_code = p.item_code AND lower(p.unit_name) = lower(l.unit_name)
                WHERE p.branch_id = $1 AND p.purchase_date < $2 GROUP BY p.item_code),
@@ -1125,7 +1152,7 @@ app.get('/api/stock/report/:branchId', async (req, res) => {
                FROM supplier_purchases p JOIN lasts l ON l.item_code = p.item_code
                WHERE p.branch_id = $1 AND p.purchase_date BETWEEN $2 AND $3 GROUP BY p.item_code)
       SELECT l.item_code AS code, l.item_name AS name, l.category_name AS category, l.unit_name AS unit,
-             f.opening, s.qty_in, s.qty_out, l.closing, l.closing_amount AS amount,
+             f.opening, f.opening_amount, s.qty_in, s.qty_out, s.in_amount, l.closing, l.closing_amount AS amount,
              f1.first_closing, f1.first_amount, pv.prev_amount, pv.prev_closing IS NOT NULL AS has_prev,
              b.buy_amount, b.buy_qty_same, b.buy_amount_same, h.hist_price,
              m.material_id, m.match_type, rm.material_name
@@ -1135,28 +1162,32 @@ app.get('/api/stock/report/:branchId', async (req, res) => {
       LEFT JOIN hist h ON h.item_code = l.item_code
       LEFT JOIN stock_code_map m ON m.branch_id = $1 AND m.cukcuk_code = l.item_code
       LEFT JOIN raw_materials rm ON rm.material_id = m.material_id
-      ORDER BY l.category_name, l.item_name`, [branchId, from, to])).rows;
+      ORDER BY l.category_name, l.item_name`, [branchId, from, to, stockId])).rows;
     const mats = await branchMaterials(pool, branchId);
     const result = items.map(raw => {
       const n = (v) => Number(v) || 0;
       const opening = n(raw.opening), closing = n(raw.closing), qtyIn = n(raw.qty_in);
-      // Giá trị đầu kỳ: số dư cuối ngày trước kỳ; nếu chưa có dữ liệu ngày trước thì ước tính theo giá ngày đầu tiên
-      const openAmount = raw.has_prev ? n(raw.prev_amount) : (n(raw.first_closing) > 0 ? opening * (n(raw.first_amount) / n(raw.first_closing)) : 0);
+      // Giá trị đầu kỳ: ưu tiên "Giá trị tồn đầu kỳ" CUKCUK; không có thì lấy số dư cuối ngày trước kỳ; cuối cùng ước tính theo giá ngày đầu
+      const openAmount = raw.opening_amount !== null && raw.opening_amount !== undefined ? n(raw.opening_amount)
+        : raw.has_prev ? n(raw.prev_amount) : (n(raw.first_closing) > 0 ? opening * (n(raw.first_amount) / n(raw.first_closing)) : 0);
       const openPrice = opening > 0 ? openAmount / opening : 0;
       const closePrice = closing > 0 ? n(raw.amount) / closing : 0;
-      const buyAmount = n(raw.buy_amount);
-      const buyPrice = n(raw.buy_qty_same) > 0 ? n(raw.buy_amount_same) / n(raw.buy_qty_same) : (qtyIn > 0 && buyAmount > 0 ? buyAmount / qtyIn : 0);
+      // Đã mua: giá trị nhập kho theo CUKCUK (theo từng kho); chưa có thì lấy từ phiếu mua
+      const hasIn = raw.in_amount !== null && raw.in_amount !== undefined;
+      const buyAmount = hasIn ? n(raw.in_amount) : n(raw.buy_amount);
+      const buyPrice = hasIn ? (qtyIn > 0 ? buyAmount / qtyIn : 0)
+        : (n(raw.buy_qty_same) > 0 ? n(raw.buy_amount_same) / n(raw.buy_qty_same) : (qtyIn > 0 && buyAmount > 0 ? buyAmount / qtyIn : 0));
       const pct = (a, b) => (a > 0 && b > 0 ? ((b - a) / a) * 100 : null);
       const it = { ...raw, open_amount: openAmount, open_price: openPrice, close_price: closePrice, buy_amount: buyAmount, buy_price: buyPrice,
         dev_buy: pct(openPrice, buyPrice), dev_close: pct(openPrice, closePrice), hist_price: n(raw.hist_price), dev_hist: pct(n(raw.hist_price), buyPrice) };
-      delete it.first_closing; delete it.first_amount; delete it.prev_amount; delete it.prev_closing; delete it.buy_qty_same; delete it.buy_amount_same;
+      ['first_closing', 'first_amount', 'prev_amount', 'prev_closing', 'buy_qty_same', 'buy_amount_same', 'opening_amount', 'in_amount'].forEach((k) => delete it[k]);
       if (it.material_id) return it;
-      const s = suggest(it.name, mats, 1, { minContain: 2 })[0];
-      return { ...it, suggestion: s && s.score >= 0.5 ? { material_id: s.dish_id, material_name: s.dish_name, score: Math.round(s.score * 100) / 100 } : null };
+      const sg = suggest(it.name, mats, 1, { minContain: 2 })[0];
+      return { ...it, suggestion: sg && sg.score >= 0.5 ? { material_id: sg.dish_id, material_name: sg.dish_name, score: Math.round(sg.score * 100) / 100 } : null };
     });
     return res.json({
       success: true,
-      data: { dates: dates.map(iso), from, to, items: result, materials: mats.map(m => ({ material_id: m.dish_id, material_name: m.dish_name })) }
+      data: { dates: dates.map(iso), from, to, stock: stockId, stocks, items: result, materials: mats.map(m => ({ material_id: m.dish_id, material_name: m.dish_name })) }
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

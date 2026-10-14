@@ -119,21 +119,40 @@
     return out;
   };
 
-  // Tồn kho theo từng ngày (báo cáo Tổng hợp nhập - xuất - tồn kho)
+  // Danh sách kho đúng như trên CUKCUK
+  async function fetchStocks(tpl) {
+    const res = await fetch('Service/DictionaryService.svc/GetINStock?_dc=' + Date.now() + '&loadType=0&branchId=' + tpl.BranchID + '&page=1&start=0&limit=100', {
+      credentials: 'same-origin', headers: { 'X-Cukcuk-Branchid': tpl.BranchID, 'X-Requested-With': 'XMLHttpRequest' }
+    });
+    if (!res.ok) throw new Error('lỗi ' + res.status);
+    return ((await res.json()).data || []).filter((x) => x.StockID && !x.Inactive).map((x) => ({ id: x.StockID, name: x.StockName }));
+  }
+
+  // Tồn kho theo từng ngày và từng kho (báo cáo Tổng hợp nhập - xuất - tồn kho)
   async function fetchStock(tpl, from, to) {
+    let stocks = [];
+    try { stocks = await fetchStocks(tpl); } catch (e) { stocks = []; }
+    if (!stocks.length) stocks = [{ id: '', name: 'Tất cả' }];
     const rows = [];
     for (const day of eachDay(from, to)) {
-      const obj = baseObj(tpl, {
-        FromDate: day + 'T00:00:00.0000' + TZ, ToDate: day + 'T23:59:59.9990' + TZ,
-        InventoryItemCategoryID: null, InventoryItemCategoryName: 'Tất cả', ReportID: 'ST_STOCKGENERAL',
-        ReportName: 'Tổng hợp nhập - xuất - tồn kho', StockName: 'Tất cả', UnitName: '', branchID: tpl.BranchID
-      });
-      const data = await allPages(tpl, 'ST_STOCKGENERAL', obj);
-      for (const d of data) {
-        const r = { date: day, code: d.InventoryItemCode, name: d.InventoryItemName, category: d.InventoryCategoryName, unit: d.UnitName,
-          opening: Number(d.QuantityInTerm) || 0, qtyIn: Number(d.QuantityIn) || 0, qtyOut: Number(d.QuantityOut) || 0,
-          closing: Number(d.QuantityInStock) || 0, amount: Number(d.ClosingAmount) || 0 };
-        if (r.code && (r.opening || r.qtyIn || r.qtyOut || r.closing)) rows.push(r);
+      const parts = await Promise.all(stocks.map(async (st) => {
+        const extra = {
+          FromDate: day + 'T00:00:00.0000' + TZ, ToDate: day + 'T23:59:59.9990' + TZ,
+          InventoryItemCategoryID: null, InventoryItemCategoryName: 'Tất cả', ReportID: 'ST_STOCKGENERAL',
+          ReportName: 'Tổng hợp nhập - xuất - tồn kho', StockName: st.name, UnitName: '', branchID: tpl.BranchID
+        };
+        if (st.id) extra.StockID = st.id;
+        return { st, data: await allPages(tpl, 'ST_STOCKGENERAL', baseObj(tpl, extra)) };
+      }));
+      for (const { st, data } of parts) {
+        for (const d of data) {
+          const r = { date: day, code: d.InventoryItemCode, name: d.InventoryItemName, category: d.InventoryCategoryName, unit: d.UnitName,
+            opening: Number(d.QuantityInTerm) || 0, qtyIn: Number(d.QuantityIn) || 0, qtyOut: Number(d.QuantityOut) || 0,
+            closing: Number(d.QuantityInStock) || 0, amount: Number(d.ClosingAmount) || 0,
+            openingAmount: Number(d.InTermAmount) || 0, inAmount: Number(d.InwardAmount) || 0,
+            stockId: st.id, stockName: st.id ? st.name : '' };
+          if (r.code && (r.opening || r.qtyIn || r.qtyOut || r.closing)) rows.push(r);
+        }
       }
     }
     return rows;

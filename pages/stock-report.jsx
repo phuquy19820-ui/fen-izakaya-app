@@ -22,14 +22,17 @@ export default function StockReport() {
   const [sort, setSort] = useState(null);
   const [saving, setSaving] = useState('');
   const [threshold, setThreshold] = useState(30);
+  const [stock, setStock] = useState('');
 
-  const load = async (f, t) => {
+  const load = async (f, t, st) => {
     if (!branch) return;
     setLoading(true);
     try {
       const qs = new URLSearchParams();
       if (f) qs.set('from', f);
       if (t) qs.set('to', t);
+      const useStock = st === undefined ? stock : st;
+      if (useStock) qs.set('stock', useStock);
       const json = await (await fetch(`/api/stock/report/${branch}?${qs.toString()}`)).json();
       if (json.success) {
         setData(json.data);
@@ -128,8 +131,20 @@ export default function StockReport() {
         <BranchNav branch={branch} active="stock" branchName={branchInfo?.branch_name} />
 
         <div className="p-4 space-y-2" style={{ maxWidth: 1600, margin: '0 auto' }}>
+          {data && data.stocks && data.stocks.length > 0 && (
+            <div className="bg-white rounded border px-3 py-2 flex flex-wrap items-center gap-2">
+              <span className="font-semibold">Kho:</span>
+              <button onClick={() => { setStock(''); load(from, to, ''); }} className={`px-3 py-1.5 rounded font-bold border ${stock === '' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>📦 Tất cả kho</button>
+              {data.stocks.map((st) => (
+                <button key={st.id} onClick={() => { setStock(st.id); load(from, to, st.id); }} className={`px-3 py-1.5 rounded font-bold border ${stock === st.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>{st.name}</button>
+              ))}
+            </div>
+          )}
+          {data && data.dates.length > 0 && data.stocks && data.stocks.length === 0 && (
+            <p className="bg-yellow-50 border border-yellow-300 text-yellow-900 rounded p-2">Dữ liệu tồn kho hiện chưa chia theo kho. Cài tiện ích bản <b>1.6.0</b> rồi đồng bộ lại để xem từng kho như trên CUKCUK.</p>
+          )}
           {data && data.dates.length > 0 && (
-            <DateRangeBar from={from} to={to} onChange={(f, tt) => { setFrom(f); setTo(tt); }} onApply={(f, tt) => load(f, tt)} minDate={data.dates[0]} maxDate={data.dates[data.dates.length - 1]}>
+            <DateRangeBar from={from} to={to} onChange={(f, tt) => { setFrom(f); setTo(tt); }} onApply={(f, tt) => load(f, tt, stock)} minDate={data.dates[0]} maxDate={data.dates[data.dates.length - 1]}>
               <span className="text-gray-600">Tồn đầu kỳ = đầu ngày {fmtDate(data.from)}; Đã mua/Xuất = cộng dồn trong kỳ; Tồn cuối = cuối ngày {fmtDate(data.to)}. Đơn giá mua lấy từ phiếu mua (chưa VAT), đơn giá tồn = giá trị ÷ số lượng. Có dữ liệu từ {fmtDate(data.dates[0])} đến {fmtDate(data.dates[data.dates.length - 1])}.</span>
               <label className="font-semibold">Cảnh báo khi giá lệch quá <input type="number" min="1" value={threshold} onChange={(e) => setThreshold(Math.max(1, Number(e.target.value) || 30))} className="border rounded px-1 text-right" style={{ width: 52 }} /> %</label>
               <span className="text-red-600 font-bold">⚠ {warnCount} NVL lệch giá</span>
