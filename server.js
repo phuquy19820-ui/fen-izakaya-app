@@ -275,10 +275,18 @@ app.post('/api/revenue/import', async (req, res) => {
   const { branchId, invoices, items } = req.body;
   if (!branchId || !Array.isArray(invoices)) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc dữ liệu hóa đơn' });
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-  const inv = invoices.filter((r) => r && r.refNo && dateRe.test(String(r.date || '')));
-  if (inv.length === 0) return res.json({ success: true, message: 'Không có hóa đơn trong kỳ (bỏ qua)', data: { invoices: 0, items: 0 } });
+  const inv0 = invoices.filter((r) => r && r.refNo && dateRe.test(String(r.date || '')));
+  if (inv0.length === 0) return res.json({ success: true, message: 'Không có hóa đơn trong kỳ (bỏ qua)', data: { invoices: 0, items: 0 } });
+  // Cùng số hóa đơn nhưng khác ngày (số bị dùng lại) vẫn là hóa đơn khác nhau: bản đầu giữ nguyên số, các bản sau thêm hậu tố ngày
+  const firstDate = new Map();
+  const inv = inv0.map((r) => {
+    const ref = String(r.refNo);
+    if (!firstDate.has(ref)) { firstDate.set(ref, r.date); return { ...r, refNo: ref }; }
+    return { ...r, refNo: firstDate.get(ref) === r.date ? ref : `${ref}~${r.date}` };
+  });
   const refSet = new Set(inv.map((r) => String(r.refNo)));
-  const its = (Array.isArray(items) ? items : []).filter((r) => r && refSet.has(String(r.refNo)));
+  const keyOf = (r) => { const ref = String(r.refNo); const alt = `${ref}~${r.date}`; return r.date && refSet.has(alt) ? alt : ref; };
+  const its = (Array.isArray(items) ? items : []).filter((r) => r && refSet.has(String(r.refNo))).map((r) => ({ ...r, refNo: keyOf(r) }));
   const dates = inv.map((r) => r.date).sort();
   const client = await pool.connect();
   try {
@@ -331,7 +339,8 @@ app.get('/api/revenue/report/:branchId', async (req, res) => {
     const year = Number(q.year) || Number(last.slice(0, 4));
     const month = Number(q.month) || Number(last.slice(5, 7));
     const ym = `${year}-${String(month).padStart(2, '0')}`;
-    const cmp = /^\d{4}-\d{2}$/.test(String(q.cmp || '')) ? String(q.cmp) : '';
+    const prevYm = month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
+    const cmp = q.cmp === 'auto' ? prevYm : (/^\d{4}-\d{2}$/.test(String(q.cmp || '')) ? String(q.cmp) : '');
     const minYear = Math.min(year, cmp ? Number(cmp.slice(0, 4)) : year);
     const itemMode = !!(q.kind || q.category);
     const invoices = (await pool.query(`SELECT ref_no, to_char(inv_date, 'YYYY-MM-DD') AS d, time_in, area, shift, customer_name, people, amount, discount, service_fee, tax_reduction

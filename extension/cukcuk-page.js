@@ -310,7 +310,7 @@
               serviceFee: Number(r.CostAmount) || 0, taxReduction: Number(r.TaxReductionAmount) || 0, vat: Number(r.VATAmount) || 0 });
           }
           if (r.RefNo && r.InventoryItemCode && r.Quantity !== null && r.Quantity !== undefined) {
-            invItems.push({ refNo: r.RefNo, code: r.InventoryItemCode, name: r.ItemName, kind: r.InventoryItemKind || '', category: r.ListInventoryItemCategoryName || '',
+            invItems.push({ refNo: r.RefNo, date: localDate(r.RefDate), code: r.InventoryItemCode, name: r.ItemName, kind: r.InventoryItemKind || '', category: r.ListInventoryItemCategoryName || '',
               qty: Number(r.Quantity) || 0, amount: Number(r.Amount) || 0, discount: Number(r.DiscountAmount) || 0 });
           }
           if (!r.InventoryItemCode || r.Quantity === null || r.Quantity === undefined) continue;

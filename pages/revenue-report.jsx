@@ -95,7 +95,7 @@ export default function RevenueReport() {
   const [tab, setTab] = useState('dash');
   const [year, setYear] = useState('');
   const [month, setMonth] = useState('');
-  const [cmp, setCmp] = useState('');
+  const [cmp, setCmp] = useState('auto');
   const [kind, setKind] = useState('');
   const [category, setCategory] = useState('');
   const [group, setGroup] = useState('');
@@ -118,7 +118,7 @@ export default function RevenueReport() {
     const qs = new URLSearchParams();
     if (year) qs.set('year', year);
     if (month) qs.set('month', month);
-    if (cmp) qs.set('cmp', cmp);
+    qs.set('cmp', cmp === 'none' ? '' : cmp);
     if (kind) qs.set('kind', kind);
     if (category) qs.set('category', category);
     if (group) qs.set('group', group);
@@ -217,11 +217,11 @@ export default function RevenueReport() {
           {/* bộ lọc */}
           <div className="bg-white rounded border px-3 py-2 flex flex-wrap items-end gap-3">
             <div><label className="block font-semibold mb-0.5">Cửa hàng</label>
-              <select value={branch || ''} onChange={(e) => { setYear(''); setMonth(''); setCmp(''); setKind(''); setCategory(''); setGroup(''); router.push(`/revenue-report?branch=${e.target.value}`); }} className="border px-2 py-1 rounded">
+              <select value={branch || ''} onChange={(e) => { setYear(''); setMonth(''); setCmp('auto'); setKind(''); setCategory(''); setGroup(''); router.push(`/revenue-report?branch=${e.target.value}`); }} className="border px-2 py-1 rounded">
                 {branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}
               </select></div>
             <div><label className="block font-semibold mb-0.5">Năm</label>
-              <select value={year} onChange={(e) => { setYear(e.target.value); setCmp(''); }} className="border px-2 py-1 rounded">
+              <select value={year} onChange={(e) => { setYear(e.target.value); setCmp('auto'); }} className="border px-2 py-1 rounded">
                 {(years.length ? years : [year]).filter(Boolean).map((y) => <option key={y} value={y}>{y}</option>)}
               </select></div>
             <div><label className="block font-semibold mb-0.5">Tháng</label>
@@ -230,7 +230,8 @@ export default function RevenueReport() {
               </select></div>
             <div><label className="block font-semibold mb-0.5">So sánh với tháng</label>
               <select value={cmp} onChange={(e) => setCmp(e.target.value)} className="border px-2 py-1 rounded">
-                <option value="">Không so sánh</option>
+                <option value="auto">Tháng trước (tự động)</option>
+                <option value="none">Không so sánh</option>
                 {meta && meta.months.filter((m) => !(year && month && m === `${year}-${String(month).padStart(2, '0')}`)).map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
               </select></div>
             <div><label className="block font-semibold mb-0.5">Nhóm món ăn</label>
@@ -247,7 +248,7 @@ export default function RevenueReport() {
               </select></div>
             <div><label className="block font-semibold mb-0.5">Bán ít khi SL &lt;</label>
               <input type="number" min="1" value={lowQty} onChange={(e) => setLowQty(Math.max(1, Number(e.target.value) || 5))} className="border px-2 py-1 rounded text-right" style={{ width: 60 }} /></div>
-            {(kind || category || group || cmp) && <button onClick={() => { setKind(''); setCategory(''); setGroup(''); setCmp(''); }} className="px-2 py-1 rounded border bg-white text-red-600 font-bold">✕ Xóa lọc</button>}
+            {(kind || category || group || cmp !== 'auto') && <button onClick={() => { setKind(''); setCategory(''); setGroup(''); setCmp('auto'); }} className="px-2 py-1 rounded border bg-white text-red-600 font-bold">✕ Xóa lọc</button>}
             <button onClick={() => window.print()} className="ml-auto px-3 py-1.5 rounded border bg-white font-bold">🖨 In / lưu PDF</button>
           </div>
           {data && !empty && data.itemMode && <p className="bg-yellow-50 border border-yellow-300 text-yellow-900 rounded p-2">Đang lọc theo nhóm món: doanh thu là tiền hàng của các món được lọc (đã trừ khuyến mại món), số HĐ là số hóa đơn có món đó, chưa cộng phí dịch vụ.</p>}
@@ -259,7 +260,7 @@ export default function RevenueReport() {
           {loading && <p className="p-4 text-gray-600">Đang tải…</p>}
           {error && <p className="p-3 bg-red-50 text-red-700 rounded border border-red-300">❌ {error}</p>}
           {!loading && empty && (
-            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu hóa đơn. Cài tiện ích Chrome bản <b>1.7.0</b> rồi vào <b>Đồng bộ & ghép món</b>, chọn tháng và bấm Đồng bộ để lấy dữ liệu hóa đơn từ CUKCUK.</p>
+            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu hóa đơn. Cài tiện ích Chrome bản <b>1.7.1</b> rồi vào <b>Đồng bộ & ghép món</b>, chọn tháng và bấm Đồng bộ để lấy dữ liệu hóa đơn từ CUKCUK.</p>
           )}
 
           {!loading && data && !empty && (
