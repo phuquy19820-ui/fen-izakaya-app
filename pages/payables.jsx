@@ -27,6 +27,10 @@ export default function Payables() {
   const [openText, setOpenText] = useState('');
   const [openAsOf, setOpenAsOf] = useState('2026-09-30');
   const [openMsg, setOpenMsg] = useState('');
+  const [openSearch, setOpenSearch] = useState('');
+  const [onlyDebt, setOnlyDebt] = useState(true);
+  const [showPaste, setShowPaste] = useState(false);
+  const [rowMsg, setRowMsg] = useState('');
 
   const load = async (f, t) => {
     if (!branch) return;
@@ -78,6 +82,24 @@ export default function Payables() {
     setOpenMsg('');
     await load(from, to);
   };
+
+  const dayBefore = (d) => (d ? new Date(Date.parse(d + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10) : '');
+  const saveOpeningRow = async (r, patch) => {
+    const amount = patch.amount !== undefined ? patch.amount : r.amount;
+    const asOf = patch.as_of || r.as_of || dayBefore(from);
+    if (!asOf) { setRowMsg('❌ Hãy chọn ngày chốt nợ'); return; }
+    const j = await (await fetch('/api/payables/opening/set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branchId: branch, code: r.code, name: r.name, amount, asOf }) })).json();
+    setRowMsg(j.success ? '✅ Đã lưu nợ đầu kỳ ' + r.name : '❌ ' + j.message);
+    await load(from, to);
+  };
+  const resetOpeningRow = async (r) => {
+    await fetch('/api/payables/opening/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branchId: branch, code: r.code }) });
+    setRowMsg('↺ Đã quay về số đồng bộ từ CUKCUK: ' + r.name);
+    await load(from, to);
+  };
+  const SRC = { CUKCUK: ['Đồng bộ CUKCUK', 'text-blue-700'], IMPORT: ['Dán từ Excel', 'text-purple-700'], MANUAL: ['Sửa tay', 'text-orange-600'] };
+  const openingRows = data ? data.openingRows || [] : [];
+  const openingShown = openingRows.filter((r) => (!onlyDebt || r.amount) && (!openSearch || String(r.name).toLowerCase().includes(openSearch.toLowerCase())));
 
   const suppliers = data ? data.suppliers : [];
   const payments = data ? data.payments : [];
@@ -145,7 +167,7 @@ export default function Payables() {
 
         <div className="p-4 space-y-2" style={{ maxWidth: 1500, margin: '0 auto' }}>
           <DateRangeBar from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} onApply={(f, t) => load(f, t)}>
-            <span className="text-gray-600">Nợ cuối kỳ = Nợ đầu kỳ + Tổng cộng (tiền hàng + VAT) − Chi trả đã gán cho NCC (quỹ tiền mặt / tiền gửi).{data && data.openingAsOf ? ` Nợ đầu kỳ chốt đến hết ngày ${fmtDate(data.openingAsOf)}.` : ' Chưa nhập nợ đầu kỳ.'}</span>
+            <span className="text-gray-600">Nợ cuối kỳ = Nợ đầu kỳ + Tổng cộng (tiền hàng + VAT) − Chi trả đã gán cho NCC (quỹ tiền mặt / tiền gửi). Nợ đầu kỳ tự lấy từ công nợ CUKCUK khi đồng bộ (hoặc bạn sửa tay trong nút "Nợ đầu kỳ").</span>
           </DateRangeBar>
 
           <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
@@ -159,7 +181,7 @@ export default function Payables() {
 
           <div className="bg-white rounded border px-3 py-2 flex flex-wrap items-center gap-2">
             <button onClick={() => setTab('debt')} className={`px-3 py-1.5 rounded font-bold border ${tab === 'debt' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>📋 Công nợ theo NCC</button>
-            <button onClick={() => { setOpenModal(true); setOpenMsg(''); }} className="px-3 py-1.5 rounded font-bold border bg-white text-gray-700 ml-auto">📥 Nhập nợ đầu kỳ</button>
+            <button onClick={() => { setOpenModal(true); setOpenMsg(''); }} className="px-3 py-1.5 rounded font-bold border bg-white text-gray-700 ml-auto">✏️ Nợ đầu kỳ (tự đồng bộ / sửa)</button>
             <button onClick={() => setTab('pay')} className={`px-3 py-1.5 rounded font-bold border ${tab === 'pay' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>💵 Chứng từ chi ({payments.length})</button>
             {unassigned.length > 0 && <span className="text-orange-600 font-bold">⚠ {unassigned.length} chứng từ chi chưa gán NCC ({money(unassigned.reduce((s, p) => s + p.amount, 0))} ₫)</span>}
           </div>
@@ -192,16 +214,45 @@ export default function Payables() {
           )}
           {openModal && (
             <div className="fixed inset-0 z-50 bg-black bg-opacity-40 flex items-center justify-center p-4">
-              <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-5 space-y-3">
-                <h3 className="text-lg font-bold">Nhập nợ đầu kỳ nhà cung cấp</h3>
-                <p className="text-gray-600">Dán từ Excel: mỗi dòng gồm <b>Tên nhà cung cấp</b> và <b>số tiền nợ</b> (ví dụ cột "Cuối kỳ" của bảng công nợ tháng trước). Dán lại sẽ thay toàn bộ nợ đầu kỳ cũ. App ghép theo tên NCC; NCC nào không trùng tên với danh sách trên CUKCUK vẫn được hiện thành dòng riêng.</p>
-                <div><label className="block font-semibold mb-0.5">Nợ chốt đến hết ngày</label><input type="date" value={openAsOf} onChange={(e) => setOpenAsOf(e.target.value)} className="border px-2 py-1 rounded" /></div>
-                <textarea value={openText} onChange={(e) => setOpenText(e.target.value)} rows={12} className="w-full border rounded p-2 font-mono" placeholder={'NHẬT VƯỢNG\t40,674,750\nSIMBA\t34,345,032'} />
-                {openMsg && <p className="text-red-600 font-bold">{openMsg}</p>}
-                <p className="text-gray-500">Đọc được {parseOpening(openText).length} dòng.</p>
-                <div className="flex justify-end gap-2">
-                  <button onClick={() => setOpenModal(false)} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300 font-bold">Hủy</button>
-                  <button onClick={saveOpening} className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold">Lưu nợ đầu kỳ</button>
+              <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl p-5 space-y-3 max-h-screen overflow-auto">
+                <h3 className="text-lg font-bold">Nợ đầu kỳ nhà cung cấp</h3>
+                <p className="text-gray-600">Mỗi lần bấm <b>Đồng bộ</b>, app tự lấy nợ đầu kỳ của từng NCC từ công nợ trên CUKCUK (số dư tại ngày trước "Từ ngày" của lần đồng bộ). Bạn có thể <b>sửa tay</b> số tiền hoặc ngày chốt nợ, số sửa tay luôn được ưu tiên và không bị đồng bộ ghi đè. Bấm ↺ để quay về số của CUKCUK.</p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <input value={openSearch} onChange={(e) => setOpenSearch(e.target.value)} placeholder="Tìm nhà cung cấp…" className="border px-2 py-1 rounded" style={{ width: 240 }} />
+                  <label className="flex items-center gap-1 font-semibold"><input type="checkbox" checked={onlyDebt} onChange={(e) => setOnlyDebt(e.target.checked)} /> Chỉ NCC có nợ đầu kỳ</label>
+                  <span className="text-gray-500">{openingShown.length}/{openingRows.length} NCC</span>
+                  {rowMsg && <span className="font-bold">{rowMsg}</span>}
+                </div>
+                <div className="border rounded overflow-auto" style={{ maxHeight: 380 }}>
+                  <table className="w-full border-collapse">
+                    <thead><tr className="bg-gray-100 sticky top-0">{['Nhà cung cấp', 'Nợ đầu kỳ (đ)', 'Chốt đến hết ngày', 'Nguồn', ''].map((h) => <th key={h} className="border px-2 py-1 text-left">{h}</th>)}</tr></thead>
+                    <tbody>
+                      {openingShown.map((r) => (
+                        <tr key={r.code + String(r.amount) + String(r.as_of) + r.source}>
+                          <td className="border px-2 py-1 font-medium">{r.name}</td>
+                          <td className="border px-1 py-0.5"><input type="number" step="any" defaultValue={Number(r.amount) || 0} onBlur={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v) && v !== Number(r.amount)) saveOpeningRow(r, { amount: v }); }} className="w-full border rounded text-right" style={{ height: 24, padding: '0 4px' }} /></td>
+                          <td className="border px-1 py-0.5"><input type="date" defaultValue={r.as_of || ''} onBlur={(e) => { if (e.target.value && e.target.value !== r.as_of) saveOpeningRow(r, { as_of: e.target.value }); }} className="border rounded" style={{ height: 24 }} /></td>
+                          <td className={`border px-2 py-1 font-semibold ${r.source && SRC[r.source] ? SRC[r.source][1] : 'text-gray-400'}`}>{r.source && SRC[r.source] ? SRC[r.source][0] : 'Chưa có'}</td>
+                          <td className="border px-2 py-1 text-center">{r.source === 'MANUAL' && <button onClick={() => resetOpeningRow(r)} title="Bỏ số sửa tay, quay về số CUKCUK" className="px-2 rounded border bg-white text-blue-600 font-bold">↺</button>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <button onClick={() => setShowPaste((v) => !v)} className="font-bold text-blue-700 underline">{showPaste ? '▼' : '▶'} Dán nhanh từ Excel (tên NCC + số tiền)</button>
+                  {showPaste && (
+                    <div className="space-y-2 mt-2">
+                      <p className="text-gray-600">Mỗi dòng gồm <b>Tên nhà cung cấp</b> và <b>số tiền nợ</b>. Dán lại sẽ thay các số đã dán trước đó (số sửa tay không bị ảnh hưởng). App ghép theo tên NCC.</p>
+                      <div><label className="block font-semibold mb-0.5">Nợ chốt đến hết ngày</label><input type="date" value={openAsOf} onChange={(e) => setOpenAsOf(e.target.value)} className="border px-2 py-1 rounded" /></div>
+                      <textarea value={openText} onChange={(e) => setOpenText(e.target.value)} rows={8} className="w-full border rounded p-2 font-mono" placeholder={'NHẬT VƯỢNG\t40,674,750\nSIMBA\t34,345,032'} />
+                      {openMsg && <p className="text-red-600 font-bold">{openMsg}</p>}
+                      <div className="flex items-center gap-3"><span className="text-gray-500">Đọc được {parseOpening(openText).length} dòng.</span><button onClick={saveOpening} className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold">Lưu số đã dán</button></div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={() => setOpenModal(false)} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300 font-bold">Đóng</button>
                 </div>
               </div>
             </div>
