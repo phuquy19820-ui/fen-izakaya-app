@@ -7,6 +7,7 @@ import SearchSelect from '../components/SearchSelect';
 import DateRangeBar from '../components/DateRangeBar';
 
 const num = (n) => (Number(n) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
+const price = (n) => (Number(n) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 2 });
 const money = (n) => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 
 export default function StockReport() {
@@ -20,6 +21,7 @@ export default function StockReport() {
   const [filters, setFilters] = useState({});
   const [sort, setSort] = useState(null);
   const [saving, setSaving] = useState('');
+  const [threshold, setThreshold] = useState(30);
 
   const load = async (f, t) => {
     if (!branch) return;
@@ -64,11 +66,26 @@ export default function StockReport() {
     { key: 'name', label: 'Tên NVL trên CUKCUK', width: 280, type: 'text', render: (r) => <span className="font-medium">{r.name}</span> },
     { key: 'category', label: 'Nhóm', width: 130, type: 'select' },
     { key: 'unit', label: 'ĐVT', width: 60, type: 'select', align: 'center' },
-    { key: 'opening', label: 'Tồn đầu kỳ', width: 96, type: 'number', align: 'right', render: (r) => num(r.opening) },
-    { key: 'qty_in', label: 'Đã mua (nhập)', width: 104, type: 'number', align: 'right', render: (r) => <b className="text-green-700">{num(r.qty_in)}</b> },
-    { key: 'qty_out', label: 'Xuất', width: 84, type: 'number', align: 'right', render: (r) => num(r.qty_out) },
-    { key: 'closing', label: 'Tồn cuối kỳ', width: 100, type: 'number', align: 'right', render: (r) => <b>{num(r.closing)}</b> },
-    { key: 'amount', label: 'Giá trị tồn (đ)', width: 110, type: 'number', align: 'right', render: (r) => money(r.amount) },
+    { key: 'opening', label: 'Tồn đầu kỳ', width: 90, type: 'number', align: 'right', render: (r) => num(r.opening) },
+    { key: 'open_price', label: 'Đơn giá đầu kỳ', width: 96, type: 'number', align: 'right', render: (r) => (r.open_price ? price(r.open_price) : <span className="text-gray-300">—</span>) },
+    { key: 'open_amount', label: 'Thành tiền đầu kỳ', width: 108, type: 'number', align: 'right', render: (r) => money(r.open_amount) },
+    { key: 'qty_in', label: 'Đã mua (nhập)', width: 98, type: 'number', align: 'right', render: (r) => <b className="text-green-700">{num(r.qty_in)}</b> },
+    { key: 'buy_price', label: 'Đơn giá mua', width: 92, type: 'number', align: 'right', render: (r) => (r.buy_price ? price(r.buy_price) : <span className="text-gray-300">—</span>) },
+    { key: 'buy_amount', label: 'Thành tiền đã mua', width: 108, type: 'number', align: 'right', render: (r) => money(r.buy_amount) },
+    { key: 'qty_out', label: 'Xuất', width: 78, type: 'number', align: 'right', render: (r) => num(r.qty_out) },
+    { key: 'closing', label: 'Tồn cuối kỳ', width: 92, type: 'number', align: 'right', render: (r) => <b>{num(r.closing)}</b> },
+    { key: 'close_price', label: 'Đơn giá cuối kỳ', width: 98, type: 'number', align: 'right', render: (r) => (r.close_price ? price(r.close_price) : <span className="text-gray-300">—</span>) },
+    { key: 'amount', label: 'Thành tiền cuối kỳ', width: 112, type: 'number', align: 'right', render: (r) => money(r.amount) },
+    {
+      key: 'warn', label: 'Cảnh báo lệch giá', width: 170, type: 'number', align: 'left', noTitle: true,
+      get: (r) => Math.max(Math.abs(r.dev_buy || 0), Math.abs(r.dev_close || 0)),
+      render: (r) => {
+        const msgs = [];
+        if (r.dev_buy !== null && r.dev_buy !== undefined && Math.abs(r.dev_buy) > threshold) msgs.push(`giá mua ${r.dev_buy > 0 ? 'cao' : 'thấp'} hơn đầu kỳ ${r.dev_buy > 0 ? '+' : ''}${r.dev_buy.toFixed(0)}%`);
+        if (r.dev_close !== null && r.dev_close !== undefined && Math.abs(r.dev_close) > threshold) msgs.push(`giá cuối kỳ ${r.dev_close > 0 ? 'tăng' : 'giảm'} ${r.dev_close > 0 ? '+' : ''}${r.dev_close.toFixed(0)}% so với đầu kỳ`);
+        return msgs.length ? <span className="text-red-600 font-bold" title={msgs.join('; ')}>⚠ {msgs.join('; ')}</span> : <span className="text-gray-300">—</span>;
+      }
+    },
     {
       key: 'match', label: 'NVL trong app (để tính kế hoạch)', minWidth: 280, type: 'text', get: (r) => r.material_name || '(chưa ghép)', noTitle: true,
       render: (r) => (
@@ -87,10 +104,13 @@ export default function StockReport() {
   const visible = useMemo(
     () => sortRows(filterRows(items, columns, filters), columns, sort),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [items, filters, sort, saving, matOptions]
+    [items, filters, sort, saving, matOptions, threshold]
   );
   const matched = items.filter((r) => r.material_id).length;
   const totalValue = visible.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalOpen = visible.reduce((s, r) => s + Number(r.open_amount || 0), 0);
+  const totalBuy = visible.reduce((s, r) => s + Number(r.buy_amount || 0), 0);
+  const warnCount = visible.filter((r) => Math.max(Math.abs(r.dev_buy || 0), Math.abs(r.dev_close || 0)) > threshold).length;
   const fmtDate = (d) => (d ? d.split('-').reverse().join('/') : '');
 
   return (
@@ -109,7 +129,9 @@ export default function StockReport() {
         <div className="p-4 space-y-2" style={{ maxWidth: 1600, margin: '0 auto' }}>
           {data && data.dates.length > 0 && (
             <DateRangeBar from={from} to={to} onChange={(f, tt) => { setFrom(f); setTo(tt); }} onApply={(f, tt) => load(f, tt)} minDate={data.dates[0]} maxDate={data.dates[data.dates.length - 1]}>
-              <span className="text-gray-600">Tồn đầu kỳ = đầu ngày {fmtDate(data.from)}; Đã mua/Xuất = cộng dồn trong kỳ; Tồn cuối = cuối ngày {fmtDate(data.to)}. Có dữ liệu từ {fmtDate(data.dates[0])} đến {fmtDate(data.dates[data.dates.length - 1])}.</span>
+              <span className="text-gray-600">Tồn đầu kỳ = đầu ngày {fmtDate(data.from)}; Đã mua/Xuất = cộng dồn trong kỳ; Tồn cuối = cuối ngày {fmtDate(data.to)}. Đơn giá mua lấy từ phiếu mua (chưa VAT), đơn giá tồn = giá trị ÷ số lượng. Có dữ liệu từ {fmtDate(data.dates[0])} đến {fmtDate(data.dates[data.dates.length - 1])}.</span>
+              <label className="font-semibold">Cảnh báo khi giá lệch quá <input type="number" min="1" value={threshold} onChange={(e) => setThreshold(Math.max(1, Number(e.target.value) || 30))} className="border rounded px-1 text-right" style={{ width: 52 }} /> %</label>
+              <span className="text-red-600 font-bold">⚠ {warnCount} NVL lệch giá</span>
               <span className="ml-auto text-gray-700 font-bold">Đã ghép với NVL trong app: {matched}/{items.length}</span>
             </DateRangeBar>
           )}
@@ -123,9 +145,13 @@ export default function StockReport() {
               filters={filters} onFiltersChange={setFilters} sort={sort} onSortChange={setSort}
               maxHeight="calc(100vh - 260px)"
               footer={[
-                <td key="l" colSpan={8} className="px-2 py-1 text-right">Tổng giá trị tồn ({visible.length} NVL):</td>,
+                <td key="l" colSpan={6} className="px-2 py-1 text-right">Tổng ({visible.length} NVL):</td>,
+                <td key="o" className="px-2 py-1 text-right">{money(totalOpen)}</td>,
+                <td key="m1" colSpan={2}></td>,
+                <td key="b" className="px-2 py-1 text-right">{money(totalBuy)}</td>,
+                <td key="m2" colSpan={3}></td>,
                 <td key="a" className="px-2 py-1 text-right">{money(totalValue)}</td>,
-                <td key="n"></td>
+                <td key="n" colSpan={2}></td>
               ]}
             />
           )}
