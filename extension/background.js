@@ -70,6 +70,13 @@ async function finishWithRows(job, payload) {
       if (!j.success) throw new Error(j.message || 'App từ chối dữ liệu');
       return j.data;
     };
+    if (payload.invoices && payload.invoices.length) {
+      try {
+        await update(job, { status: 'running', text: 'Đang gửi dữ liệu hóa đơn (báo cáo doanh thu) về app…' });
+        const iv = await post('/api/revenue/import', { branchId: job.branchId, invoices: payload.invoices, items: payload.invoiceItems });
+        parts.push('Hóa đơn: ' + iv.invoices + ' hóa đơn, ' + iv.items + ' dòng món');
+      } catch (e) { warnings.push('Hóa đơn: ' + e.message); }
+    }
     if (payload.stock && payload.stock.length) {
       try {
         await update(job, { status: 'running', text: 'Đang gửi tồn kho về app…' });

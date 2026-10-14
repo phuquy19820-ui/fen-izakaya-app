@@ -291,6 +291,8 @@
 
       const agg = new Map();
       const invoices = new Set();
+      const invDocs = new Map();
+      const invItems = [];
       let page = 1;
       let total = 0;
       let collected = 0;
@@ -302,6 +304,15 @@
         collected += data.length;
         for (const r of data) {
           if (r.RefNo) invoices.add(r.RefNo);
+          if (r.RefNo && !r.InventoryItemCode && r.RefDetailType === 0 && !invDocs.has(r.RefNo)) {
+            invDocs.set(r.RefNo, { refNo: r.RefNo, date: localDate(r.RefDate), timeIn: r.TimeInOut || '', area: r.AreaName || '', shift: r.ShiftName || '',
+              customer: r.CustomerName || '', people: Number(r.NumberOfPeople) || 0, amount: Number(r.Amount) || 0, discount: Number(r.DiscountAmount) || 0,
+              serviceFee: Number(r.CostAmount) || 0, taxReduction: Number(r.TaxReductionAmount) || 0, vat: Number(r.VATAmount) || 0 });
+          }
+          if (r.RefNo && r.InventoryItemCode && r.Quantity !== null && r.Quantity !== undefined) {
+            invItems.push({ refNo: r.RefNo, code: r.InventoryItemCode, name: r.ItemName, kind: r.InventoryItemKind || '', category: r.ListInventoryItemCategoryName || '',
+              qty: Number(r.Quantity) || 0, amount: Number(r.Amount) || 0, discount: Number(r.DiscountAmount) || 0 });
+          }
           if (!r.InventoryItemCode || r.Quantity === null || r.Quantity === undefined) continue;
           itemRows++;
           const date = localDate(r.RefDate);
@@ -338,6 +349,7 @@
       } catch (e) { extras.warnings.push('Công nợ: ' + e.message); }
 
       say('ROWS', {
+        invoices: Array.from(invDocs.values()), invoiceItems: invItems,
         debts: extras.debts || [], debtFrom: extras.debtFrom, debtTo: extras.debtTo, payments: extras.payments || [],
         stock: extras.stock, suppliers: extras.suppliers, purchases: extras.purchases, warnings: extras.warnings,
         rows: Array.from(agg.values()),

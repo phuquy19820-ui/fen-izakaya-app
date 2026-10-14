@@ -3,6 +3,7 @@ import React from 'react';
 const ITEMS = [
   { key: 'plan', href: '/purchase-plan', label: '📊 Kế hoạch mua' },
   { key: 'sales', href: '/sales-report', label: '💰 Doanh thu theo món' },
+  { key: 'revenue', href: '/revenue-report', label: '📈 Báo cáo doanh thu' },
   { key: 'stock', href: '/stock-report', label: '📦 Tồn kho' },
   { key: 'suppliers', href: '/suppliers', label: '🚚 Nhà cung cấp' },
   { key: 'books', href: '/purchase-books', label: '📒 Sổ mua hàng' },

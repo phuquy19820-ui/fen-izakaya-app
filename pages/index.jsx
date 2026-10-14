@@ -185,6 +185,11 @@ export default function Dashboard() {
                           🚚 Nhà Cung Cấp
                         </a>
                       </Link>
+                      <Link href={`/revenue-report?branch=${branch.branch_id}`}>
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-teal-700 hover:bg-teal-800 text-white px-3 py-2 rounded font-bold text-sm">
+                          📈 Báo Cáo DT
+                        </a>
+                      </Link>
                       <Link href={`/payables?branch=${branch.branch_id}`}>
                         <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-gray-700 hover:bg-gray-800 text-white px-3 py-2 rounded font-bold text-sm">
                           💳 Công Nợ NCC

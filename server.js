@@ -16,6 +16,7 @@ const { defaultConversion } = require('./services/unitService');
 const { parseAndSaveBOM } = require('./services/bomService');
 const { classifyMaterial } = require('./services/materialClassificationService');
 const PurchasePlanService = require('./services/purchasePlanService');
+const { buildReport } = require('./services/revenueService');
 
 const dev = process.env.NODE_ENV !== 'production';
 const nextApp = next({ dev });
@@ -133,6 +134,18 @@ async function initializeDatabase() {
           ALTER TABLE cukcuk_stock_daily ADD PRIMARY KEY (branch_id, stock_date, item_code, stock_id);
         END IF;
       END $$`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS cukcuk_invoices (
+        branch_id VARCHAR(50) NOT NULL, ref_no VARCHAR(60) NOT NULL, inv_date DATE NOT NULL, time_in VARCHAR(20), area VARCHAR(100),
+        shift VARCHAR(60), customer_name VARCHAR(255), people INT DEFAULT 0, amount NUMERIC(18,2) DEFAULT 0, discount NUMERIC(18,2) DEFAULT 0,
+        service_fee NUMERIC(18,2) DEFAULT 0, tax_reduction NUMERIC(18,2) DEFAULT 0, vat NUMERIC(18,2) DEFAULT 0,
+        PRIMARY KEY (branch_id, ref_no)
+      )`);
+      migrations.push('CREATE INDEX IF NOT EXISTS idx_cukcuk_invoices_date ON cukcuk_invoices (branch_id, inv_date)');
+      migrations.push(`CREATE TABLE IF NOT EXISTS cukcuk_invoice_items (
+        branch_id VARCHAR(50) NOT NULL, ref_no VARCHAR(60) NOT NULL, line_no INT NOT NULL, item_code VARCHAR(100), item_name VARCHAR(255),
+        kind VARCHAR(60), category VARCHAR(120), qty NUMERIC(18,4) DEFAULT 0, amount NUMERIC(18,2) DEFAULT 0, discount NUMERIC(18,2) DEFAULT 0,
+        PRIMARY KEY (branch_id, ref_no, line_no)
+      )`);
       migrations.push(`CREATE TABLE IF NOT EXISTS stock_code_map (
         branch_id VARCHAR(50) NOT NULL, cukcuk_code VARCHAR(100) NOT NULL, cukcuk_name VARCHAR(255), unit_name VARCHAR(30),
         material_id VARCHAR(50), match_type VARCHAR(20) DEFAULT 'NONE', match_score NUMERIC(4,3) DEFAULT 0,
@@ -253,6 +266,97 @@ app.post('/api/branches/create', async (req, res) => {
     `, [branchId, branchName, cukcukCompanyCode || '', cukcukDomain || '']);
     return res.json({ success: true, message: `Đã tạo/cập nhật chi nhánh ${branchName}` });
   } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ====== BÁO CÁO DOANH THU THEO HÓA ĐƠN (nhóm khách, khung giờ, khu vực, so sánh tháng...) ======
+app.post('/api/revenue/import', async (req, res) => {
+  const { branchId, invoices, items } = req.body;
+  if (!branchId || !Array.isArray(invoices)) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc dữ liệu hóa đơn' });
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const inv = invoices.filter((r) => r && r.refNo && dateRe.test(String(r.date || '')));
+  if (inv.length === 0) return res.json({ success: true, message: 'Không có hóa đơn trong kỳ (bỏ qua)', data: { invoices: 0, items: 0 } });
+  const refSet = new Set(inv.map((r) => String(r.refNo)));
+  const its = (Array.isArray(items) ? items : []).filter((r) => r && refSet.has(String(r.refNo)));
+  const dates = inv.map((r) => r.date).sort();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM cukcuk_invoice_items WHERE branch_id = $1 AND ref_no IN
+      (SELECT ref_no FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date BETWEEN $2 AND $3)`, [branchId, dates[0], dates[dates.length - 1]]);
+    await client.query('DELETE FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date BETWEEN $2 AND $3', [branchId, dates[0], dates[dates.length - 1]]);
+    const seen = new Set();
+    const uniq = inv.filter((r) => (seen.has(r.refNo) ? false : (seen.add(r.refNo), true)));
+    const CH = 500;
+    for (let i = 0; i < uniq.length; i += CH) {
+      const c = uniq.slice(i, i + CH);
+      await client.query(`INSERT INTO cukcuk_invoices (branch_id, ref_no, inv_date, time_in, area, shift, customer_name, people, amount, discount, service_fee, tax_reduction, vat)
+        SELECT $1, * FROM unnest($2::text[], $3::date[], $4::text[], $5::text[], $6::text[], $7::text[], $8::int[], $9::numeric[], $10::numeric[], $11::numeric[], $12::numeric[], $13::numeric[])
+        ON CONFLICT (branch_id, ref_no) DO NOTHING`,
+      [branchId, c.map((r) => String(r.refNo).substring(0, 60)), c.map((r) => r.date), c.map((r) => String(r.timeIn || '').substring(0, 20)),
+        c.map((r) => String(r.area || '').substring(0, 100)), c.map((r) => String(r.shift || '').substring(0, 60)), c.map((r) => String(r.customer || '').substring(0, 255)),
+        c.map((r) => Math.round(Number(r.people) || 0)), c.map((r) => Number(r.amount) || 0), c.map((r) => Number(r.discount) || 0),
+        c.map((r) => Number(r.serviceFee) || 0), c.map((r) => Number(r.taxReduction) || 0), c.map((r) => Number(r.vat) || 0)]);
+    }
+    const lineNo = new Map();
+    const rowsI = its.map((r) => { const k = String(r.refNo); const n = (lineNo.get(k) || 0) + 1; lineNo.set(k, n); return { ...r, n }; });
+    for (let i = 0; i < rowsI.length; i += CH) {
+      const c = rowsI.slice(i, i + CH);
+      await client.query(`INSERT INTO cukcuk_invoice_items (branch_id, ref_no, line_no, item_code, item_name, kind, category, qty, amount, discount)
+        SELECT $1, * FROM unnest($2::text[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::numeric[], $9::numeric[], $10::numeric[])
+        ON CONFLICT (branch_id, ref_no, line_no) DO NOTHING`,
+      [branchId, c.map((r) => String(r.refNo).substring(0, 60)), c.map((r) => r.n), c.map((r) => String(r.code || '').substring(0, 100)),
+        c.map((r) => String(r.name || '').substring(0, 255)), c.map((r) => String(r.kind || '').substring(0, 60)), c.map((r) => String(r.category || '').substring(0, 120)),
+        c.map((r) => Number(r.qty) || 0), c.map((r) => Number(r.amount) || 0), c.map((r) => Number(r.discount) || 0)]);
+    }
+    await client.query("INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, 'INVOICES', 'SUCCESS', $2)", [branchId, uniq.length]);
+    await client.query('COMMIT');
+    return res.json({ success: true, data: { invoices: uniq.length, items: rowsI.length } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Revenue import error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/revenue/report/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    const q = req.query;
+    const last = (await pool.query("SELECT to_char(MAX(inv_date), 'YYYY-MM-DD') AS d FROM cukcuk_invoices WHERE branch_id = $1", [branchId])).rows[0].d;
+    if (!last) return res.json({ success: true, data: { empty: true } });
+    const year = Number(q.year) || Number(last.slice(0, 4));
+    const month = Number(q.month) || Number(last.slice(5, 7));
+    const ym = `${year}-${String(month).padStart(2, '0')}`;
+    const cmp = /^\d{4}-\d{2}$/.test(String(q.cmp || '')) ? String(q.cmp) : '';
+    const minYear = Math.min(year, cmp ? Number(cmp.slice(0, 4)) : year);
+    const itemMode = !!(q.kind || q.category);
+    const invoices = (await pool.query(`SELECT ref_no, to_char(inv_date, 'YYYY-MM-DD') AS d, time_in, area, shift, customer_name, people, amount, discount, service_fee, tax_reduction
+      FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date >= $2 AND inv_date <= $3`, [branchId, `${minYear}-01-01`, `${year}-12-31`])).rows;
+    const months = itemMode ? null : [ym, cmp].filter(Boolean);
+    const items = (await pool.query(`SELECT i.ref_no, i.item_code, i.item_name, i.kind, i.category, i.qty, i.amount, i.discount
+      FROM cukcuk_invoice_items i JOIN cukcuk_invoices v ON v.branch_id = i.branch_id AND v.ref_no = i.ref_no
+      WHERE v.branch_id = $1 AND v.inv_date >= $2 AND v.inv_date <= $3 AND ($4::text[] IS NULL OR to_char(v.inv_date, 'YYYY-MM') = ANY($4))`,
+    [branchId, `${minYear}-01-01`, `${year}-12-31`, months])).rows;
+    const menu = (await pool.query('SELECT item_code, item_name, item_type, category_name, inactive FROM cukcuk_menu WHERE branch_id = $1', [branchId])).rows;
+    // danh mục lọc: lấy từ toàn bộ món của năm, không phụ thuộc bộ lọc đang chọn
+    const report = buildReport(invoices, items, menu, { year, month, cmp, kind: q.kind, category: q.category, group: q.group, lowQty: q.lowQty });
+    if (!itemMode) {
+      const cats = (await pool.query(`SELECT DISTINCT kind, category FROM cukcuk_invoice_items WHERE branch_id = $1`, [branchId])).rows;
+      report.meta.kinds = Array.from(new Set(cats.map((c) => c.kind || 'Khác'))).sort();
+      report.meta.categories = Array.from(new Set(cats.map((c) => c.category || '(Không có nhóm)'))).sort((a, b) => a.localeCompare(b, 'vi'));
+    } else {
+      const cats = (await pool.query(`SELECT DISTINCT kind, category FROM cukcuk_invoice_items WHERE branch_id = $1`, [branchId])).rows;
+      report.meta.kinds = Array.from(new Set(cats.map((c) => c.kind || 'Khác'))).sort();
+      report.meta.categories = Array.from(new Set(cats.map((c) => c.category || '(Không có nhóm)'))).sort((a, b) => a.localeCompare(b, 'vi'));
+    }
+    report.year = year; report.month = month;
+    return res.json({ success: true, data: report });
+  } catch (error) {
+    console.error('Revenue report error:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 });
