@@ -1437,17 +1437,21 @@ app.get('/api/payables/:branchId', async (req, res) => {
       r.source = chosen[0].source;
     });
 
+    // NCC chưa có dòng nợ đầu kỳ: coi như hết nợ tại ngày chốt chung (khi đã nhập số dán/sửa tay)
+    const fixedDates = opens.filter((o) => o.source !== 'CUKCUK').map((o) => o.as_of).sort();
+    const defaultFloor = fixedDates.length ? fixedDates[fixedDates.length - 1] : null;
+    const floorOf = (r) => r.as_of || defaultFloor;
     pur.forEach((p) => {
       if (!p.supplier_code) return;
       const r = row(p.supplier_code);
-      if (r.as_of && p.d <= r.as_of) return;
+      if (floorOf(r) && p.d <= floorOf(r)) return;
       if (p.d < from) r.before_purchases += Number(p.total) || 0;
       else { r.goods += Number(p.goods) || 0; r.vat += Number(p.vat) || 0; r.purchases += Number(p.total) || 0; r.purchase_count += Number(p.times) || 0; }
     });
     allPayments.forEach((p) => {
       if (!p.supplier_code) return;
       const r = row(p.supplier_code);
-      if (r.as_of && p.date <= r.as_of) return;
+      if (floorOf(r) && p.date <= floorOf(r)) return;
       if (p.date < from) r.before_paid += p.amount; else r.paid += p.amount;
     });
 
