@@ -72,11 +72,27 @@ export default function DataTable({ columns, allRows, rows, rowKey, filters, onF
   const headerBg = '#eef3f8';
   const cellBase = 'px-2 text-xs';
 
+  // Cố định cột tên (và các cột đứng trước nó như Mã) ở bên trái khi kéo ngang bảng
+  const NAME_KEYS = ['name', 'material_name', 'item_name', 'dish_name'];
+  const nameIdx = columns.findIndex((c) => c.sticky || NAME_KEYS.includes(c.key));
+  const widthOf = (c) => c.width || c.minWidth || 240;
+  const frozen = nameIdx >= 0 ? columns.slice(0, nameIdx + 1) : [];
+  const frozenWidth = frozen.reduce((a, c) => a + widthOf(c), 0);
+  const startIdx = frozenWidth > 520 && nameIdx > 0 ? nameIdx : 0; // cột đầu tiên được cố định
+  const leftOf = {};
+  let accLeft = 0;
+  columns.forEach((c, i) => {
+    if (nameIdx >= 0 && i >= startIdx && i <= nameIdx) { leftOf[c.key] = accLeft; accLeft += widthOf(c); }
+  });
+  const isFrozen = (c) => leftOf[c.key] !== undefined;
+  const isLastFrozen = (c) => nameIdx >= 0 && columns[nameIdx].key === c.key;
+  const frozenStyle = (c, z, bg) => (isFrozen(c) ? { position: 'sticky', left: leftOf[c.key], zIndex: z, background: bg, boxShadow: isLastFrozen(c) ? '2px 0 3px -1px rgba(0,0,0,0.25)' : undefined } : {});
+
   return (
     <div className="bg-white rounded shadow border" style={{ overflow: 'auto', maxHeight }}>
-      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: '100%', minWidth: columns.reduce((s, c) => s + (c.width || c.minWidth || 160), 0) }}>
+      <table className="border-collapse text-xs" style={{ tableLayout: 'fixed', width: '100%', minWidth: columns.reduce((s, c) => s + (isFrozen(c) ? widthOf(c) : (c.width || c.minWidth || 160)), 0) }}>
         <colgroup>
-          {columns.map((c) => <col key={c.key} style={c.width ? { width: c.width } : undefined} />)}
+          {columns.map((c) => <col key={c.key} style={isFrozen(c) ? { width: widthOf(c) } : (c.width ? { width: c.width } : undefined)} />)}
         </colgroup>
         <thead>
           <tr>
@@ -87,7 +103,7 @@ export default function DataTable({ columns, allRows, rows, rowKey, filters, onF
                   key={c.key}
                   onClick={() => onSortChange && onSortChange(isSorted ? { key: c.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: c.type === 'number' ? 'desc' : 'asc' })}
                   className={`${cellBase} font-bold text-gray-700 uppercase cursor-pointer select-none border-b border-r`}
-                  style={{ position: 'sticky', top: 0, zIndex: 3, background: headerBg, height: 30, textAlign: c.align || 'left' }}
+                  style={{ position: 'sticky', top: 0, zIndex: 3, background: headerBg, height: 30, textAlign: c.align || 'left', ...(isFrozen(c) ? { left: leftOf[c.key], zIndex: 6, boxShadow: isLastFrozen(c) ? '2px 0 3px -1px rgba(0,0,0,0.25)' : undefined } : {}) }}
                   title="Bấm để sắp xếp"
                 >
                   {c.label}{isSorted ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
@@ -99,7 +115,7 @@ export default function DataTable({ columns, allRows, rows, rowKey, filters, onF
             {columns.map((c) => {
               const f = filters[c.key] || {};
               return (
-                <th key={c.key} className="border-b border-r font-normal" style={{ position: 'sticky', top: 30, zIndex: 3, background: '#fafcfe', padding: '2px 3px' }}>
+                <th key={c.key} className="border-b border-r font-normal" style={{ position: 'sticky', top: 30, zIndex: 3, background: '#fafcfe', padding: '2px 3px', ...(isFrozen(c) ? { left: leftOf[c.key], zIndex: 6, boxShadow: isLastFrozen(c) ? '2px 0 3px -1px rgba(0,0,0,0.25)' : undefined } : {}) }}>
                   {c.filterable === false ? null : c.type === 'number' ? (
                     <div className="flex gap-0.5">
                       <select value={f.op || '>='} onChange={(e) => setFilter(c.key, { op: e.target.value })} className="border rounded text-xs" style={{ width: 38, padding: '1px 0' }}>
@@ -129,7 +145,7 @@ export default function DataTable({ columns, allRows, rows, rowKey, filters, onF
               {columns.map((c) => {
                 const v = valueOf(c, row);
                 return (
-                  <td key={c.key} className={`${cellBase} border-r`} style={{ textAlign: c.align || 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: c.wrap ? 'normal' : 'nowrap', paddingTop: 2, paddingBottom: 2 }} title={c.noTitle ? undefined : (typeof v === 'string' ? v : undefined)}>
+                  <td key={c.key} className={`${cellBase} border-r`} style={{ textAlign: c.align || 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: c.wrap ? 'normal' : 'nowrap', paddingTop: 2, paddingBottom: 2, ...frozenStyle(c, 2, '#ffffff') }} title={c.noTitle ? undefined : (typeof v === 'string' ? v : undefined)}>
                     {c.render ? c.render(row, v) : v}
                   </td>
                 );
