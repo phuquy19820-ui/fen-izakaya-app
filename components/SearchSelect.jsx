@@ -22,9 +22,15 @@ export default function SearchSelect({ options, value, onChange, placeholder = '
     const r = ref.current.getBoundingClientRect();
     const width = Math.max(300, r.width);
     const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-    const below = window.innerHeight - r.bottom;
-    const up = below < 340 && r.top > below;
-    setPos({ left, width, top: up ? undefined : r.bottom + 4, bottom: up ? window.innerHeight - r.top + 4 : undefined, maxList: Math.max(160, Math.min(320, (up ? r.top : below) - 110)) });
+    const spaceBelow = window.innerHeight - r.bottom - 12;
+    const spaceAbove = r.top - 12;
+    const up = spaceBelow < 300 && spaceAbove > spaceBelow;
+    const space = up ? spaceAbove : spaceBelow;
+    const maxList = Math.max(100, Math.min(320, space - 70));
+    const height = maxList + 70;
+    let top = up ? r.top - height - 4 : r.bottom + 4;
+    top = Math.max(8, Math.min(top, window.innerHeight - height - 8));
+    setPos({ left, width, top, maxList });
   };
 
   useEffect(() => {
@@ -70,7 +76,7 @@ export default function SearchSelect({ options, value, onChange, placeholder = '
         <span className="text-gray-400 text-xs">▼</span>
       </button>
       {open && pos && typeof document !== 'undefined' && createPortal(
-        <div ref={popRef} className="bg-white border rounded shadow-lg" style={{ position: 'fixed', zIndex: 1000, left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom }}>
+        <div ref={popRef} className="bg-white border rounded shadow-lg" style={{ position: 'fixed', zIndex: 1000, left: pos.left, width: pos.width, top: pos.top }}>
           <div className="p-2 border-b">
             <input
               autoFocus
