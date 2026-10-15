@@ -272,6 +272,13 @@ app.post('/api/branches/create', async (req, res) => {
 });
 
 // ====== SAO LƯU / KHÔI PHỤC TOÀN BỘ DỮ LIỆU ======
+function syncRange(body, minDate, maxDate) {
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  const f = re.test(String(body.rangeFrom || '')) ? body.rangeFrom : minDate;
+  const t = re.test(String(body.rangeTo || '')) ? body.rangeTo : maxDate;
+  return [f < minDate ? f : minDate, t > maxDate ? t : maxDate];
+}
+
 async function listPublicTables(db) {
   return (await db.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name"))
     .rows.map((r) => r.table_name).filter((t) => /^[A-Za-z0-9_]+$/.test(t));
@@ -385,9 +392,10 @@ app.post('/api/revenue/import', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const [delFrom, delTo] = syncRange(req.body, dates[0], dates[dates.length - 1]);
     await client.query(`DELETE FROM cukcuk_invoice_items WHERE branch_id = $1 AND ref_no IN
-      (SELECT ref_no FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date BETWEEN $2 AND $3)`, [branchId, dates[0], dates[dates.length - 1]]);
-    await client.query('DELETE FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date BETWEEN $2 AND $3', [branchId, dates[0], dates[dates.length - 1]]);
+      (SELECT ref_no FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date BETWEEN $2 AND $3)`, [branchId, delFrom, delTo]);
+    await client.query('DELETE FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date BETWEEN $2 AND $3', [branchId, delFrom, delTo]);
     const seen = new Set();
     const uniq = inv.filter((r) => (seen.has(r.refNo) ? false : (seen.add(r.refNo), true)));
     const CH = 500;
@@ -597,7 +605,8 @@ app.post('/api/sales/import', async (req, res) => {
     const dates = clean.map(r => r.date).sort();
     const minDate = dates[0];
     const maxDate = dates[dates.length - 1];
-    await client.query('DELETE FROM cukcuk_daily_sales WHERE branch_id = $1 AND sale_date BETWEEN $2 AND $3', [branchId, minDate, maxDate]);
+    const [delFrom, delTo] = syncRange(req.body, minDate, maxDate);
+    await client.query('DELETE FROM cukcuk_daily_sales WHERE branch_id = $1 AND sale_date BETWEEN $2 AND $3', [branchId, delFrom, delTo]);
     for (const r of agg.values()) {
       await client.query(
         'INSERT INTO cukcuk_daily_sales (branch_id, dish_id, dish_name, quantity_sold, sale_date, revenue) VALUES ($1,$2,$3,$4,$5,$6)',
@@ -1290,7 +1299,8 @@ app.post('/api/inventory/import', async (req, res) => {
     const dates = clean.map(r => r.date).sort();
     const minDate = dates[0];
     const maxDate = dates[dates.length - 1];
-    await client.query('DELETE FROM cukcuk_stock_daily WHERE branch_id = $1 AND stock_date BETWEEN $2 AND $3', [branchId, minDate, maxDate]);
+    const [delFrom, delTo] = syncRange(req.body, minDate, maxDate);
+    await client.query('DELETE FROM cukcuk_stock_daily WHERE branch_id = $1 AND stock_date BETWEEN $2 AND $3', [branchId, delFrom, delTo]);
     for (const r of clean) {
       await client.query(`
         INSERT INTO cukcuk_stock_daily (branch_id, stock_date, item_code, item_name, category_name, unit_name, opening, qty_in, qty_out, closing, closing_amount,
@@ -1478,7 +1488,8 @@ app.post('/api/suppliers/import', async (req, res) => {
         .filter(p => p.detailId && dateRe.test(p.date) && p.itemCode);
       if (clean.length) {
         const ds = clean.map(p => p.date).sort();
-        await client.query('DELETE FROM supplier_purchases WHERE branch_id = $1 AND purchase_date BETWEEN $2 AND $3', [branchId, ds[0], ds[ds.length - 1]]);
+        const [delFrom, delTo] = syncRange(req.body, ds[0], ds[ds.length - 1]);
+        await client.query('DELETE FROM supplier_purchases WHERE branch_id = $1 AND purchase_date BETWEEN $2 AND $3', [branchId, delFrom, delTo]);
         for (const p of clean) {
           await client.query(`
             INSERT INTO supplier_purchases (branch_id, detail_id, ref_no, purchase_date, supplier_code, supplier_name, item_code, item_name, unit_name, qty, unit_price, amount, vat_rate, vat_amount, total_amount)
@@ -1528,6 +1539,10 @@ app.post('/api/payables/import', async (req, res) => {
       `, [branchId, refId.substring(0, 80), String(p.refNo || '').substring(0, 60), p.date, p.source === 'BANK' ? 'BANK' : 'CASH',
         String(p.typeName || '').substring(0, 80), Number(p.amount) || 0, String(p.reason || ''), String(p.budgetItem || '')]);
       payCount++;
+    }
+    if (Array.isArray(payments) && payments.length && dateRe.test(String(req.body.rangeFrom || '')) && dateRe.test(String(req.body.rangeTo || ''))) {
+      const ids = payments.map((p) => String(p.refId || '').trim()).filter(Boolean);
+      await client.query('DELETE FROM supplier_payments WHERE branch_id = $1 AND pay_date BETWEEN $2 AND $3 AND ref_id <> ALL($4::text[])', [branchId, req.body.rangeFrom, req.body.rangeTo, ids]);
     }
     let debtCount = 0;
     if (Array.isArray(debts) && debts.length) {
@@ -1759,6 +1774,29 @@ app.get('/api/suppliers/:branchId', async (req, res) => {
 });
 
 // Mỗi NVL đã mua từ những nhà cung cấp nào (kèm đơn giá gần nhất quy về đơn vị mua của app)
+// Mọi mặt hàng đã mua theo từng NCC (kể cả chưa ghép với NVL trong app)
+app.get('/api/suppliers/items/:branchId', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    const rows = (await pool.query(`
+      WITH g AS (
+        SELECT p.item_code, p.supplier_code, MAX(p.supplier_name) AS supplier_name, MAX(p.item_name) AS item_name, COUNT(DISTINCT p.ref_no) AS times,
+               SUM(p.amount) AS amount, SUM(p.qty) AS qty, MAX(p.purchase_date) AS last_date
+        FROM supplier_purchases p WHERE p.branch_id = $1 GROUP BY p.item_code, p.supplier_code),
+      lastp AS (SELECT DISTINCT ON (item_code, supplier_code) item_code, supplier_code, unit_name, unit_price
+                FROM supplier_purchases WHERE branch_id = $1 ORDER BY item_code, supplier_code, purchase_date DESC, detail_id DESC)
+      SELECT g.item_code, g.item_name, g.supplier_code, g.supplier_name, g.times, g.amount, g.qty, to_char(g.last_date, 'YYYY-MM-DD') AS last_date,
+             l.unit_name, l.unit_price, m.material_id, rm.material_name
+      FROM g JOIN lastp l ON l.item_code = g.item_code AND l.supplier_code = g.supplier_code
+      LEFT JOIN stock_code_map m ON m.branch_id = $1 AND m.cukcuk_code = g.item_code
+      LEFT JOIN raw_materials rm ON rm.material_id = m.material_id
+      ORDER BY g.item_name, g.last_date DESC`, [branchId])).rows;
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 app.get('/api/suppliers/material-map/:branchId', async (req, res) => {
   const { branchId } = req.params;
   try {
@@ -1965,7 +2003,13 @@ async function receivedByMaterial(db, branchId, from, to, supplierCode) {
     JOIN stock_code_map m ON m.branch_id = p.branch_id AND m.cukcuk_code = p.item_code AND m.material_id IS NOT NULL
     JOIN raw_materials rm ON rm.material_id = m.material_id
     WHERE p.branch_id = $1 AND p.purchase_date BETWEEN $2 AND $3${supSql}
-    GROUP BY m.material_id, rm.material_name, rm.unit_purchase`, params)).rows;
+    GROUP BY m.material_id, rm.material_name, rm.unit_purchase`, params)).rows.concat((await db.query(`
+    SELECT 'CK:' || p.item_code AS material_id, MAX(p.item_name) || ' (chưa ghép NVL)' AS material_name, MAX(p.unit_name) AS unit,
+           SUM(p.qty) AS qty, SUM(p.amount) AS amount
+    FROM supplier_purchases p
+    LEFT JOIN stock_code_map m ON m.branch_id = p.branch_id AND m.cukcuk_code = p.item_code
+    WHERE p.branch_id = $1 AND p.purchase_date BETWEEN $2 AND $3${supSql} AND m.material_id IS NULL
+    GROUP BY p.item_code`, params)).rows);
 }
 
 // Tổng đặt hàng theo NVL của các đơn lập trong khoảng ngày (giờ Việt Nam), bỏ đơn đã xóa

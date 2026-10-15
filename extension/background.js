@@ -54,7 +54,7 @@ async function finishWithRows(job, payload) {
       const res = await fetch(job.appOrigin + '/api/sales/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branchId: job.branchId, rows: payload.rows, source: 'EXTENSION' })
+        body: JSON.stringify({ branchId: job.branchId, rows: payload.rows, source: 'EXTENSION', rangeFrom: job.fromDate, rangeTo: job.toDate })
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.message || 'App từ chối dữ liệu');
@@ -73,28 +73,28 @@ async function finishWithRows(job, payload) {
     if (payload.invoices && payload.invoices.length) {
       try {
         await update(job, { status: 'running', text: 'Đang gửi dữ liệu hóa đơn (báo cáo doanh thu) về app…' });
-        const iv = await post('/api/revenue/import', { branchId: job.branchId, invoices: payload.invoices, items: payload.invoiceItems });
+        const iv = await post('/api/revenue/import', { branchId: job.branchId, invoices: payload.invoices, items: payload.invoiceItems, rangeFrom: job.fromDate, rangeTo: job.toDate });
         parts.push('Hóa đơn: ' + iv.invoices + ' hóa đơn, ' + iv.items + ' dòng món');
       } catch (e) { warnings.push('Hóa đơn: ' + e.message); }
     }
     if (payload.stock && payload.stock.length) {
       try {
         await update(job, { status: 'running', text: 'Đang gửi tồn kho về app…' });
-        const s = await post('/api/inventory/import', { branchId: job.branchId, rows: payload.stock });
+        const s = await post('/api/inventory/import', { branchId: job.branchId, rows: payload.stock, rangeFrom: job.fromDate, rangeTo: job.toDate });
         parts.push('Tồn kho: ' + s.rows + ' dòng, ghép ' + s.matched_codes + '/' + s.total_codes + ' mã NVL');
       } catch (e) { warnings.push('Tồn kho: ' + e.message); }
     }
     if ((payload.suppliers && payload.suppliers.length) || (payload.purchases && payload.purchases.length)) {
       try {
         await update(job, { status: 'running', text: 'Đang gửi nhà cung cấp về app…' });
-        const s = await post('/api/suppliers/import', { branchId: job.branchId, suppliers: payload.suppliers, purchases: payload.purchases });
+        const s = await post('/api/suppliers/import', { branchId: job.branchId, suppliers: payload.suppliers, purchases: payload.purchases, rangeFrom: job.fromDate, rangeTo: job.toDate });
         parts.push('Nhà cung cấp: ' + s.suppliers + ' NCC, ' + s.purchases + ' dòng mua');
       } catch (e) { warnings.push('Nhà cung cấp: ' + e.message); }
     }
     if ((payload.payments && payload.payments.length) || (payload.debts && payload.debts.length)) {
       try {
         await update(job, { status: 'running', text: 'Đang gửi công nợ nhà cung cấp về app…' });
-        const s = await post('/api/payables/import', { branchId: job.branchId, payments: payload.payments, debts: payload.debts, debtFrom: payload.debtFrom, debtTo: payload.debtTo });
+        const s = await post('/api/payables/import', { branchId: job.branchId, payments: payload.payments, debts: payload.debts, debtFrom: payload.debtFrom, debtTo: payload.debtTo, rangeFrom: job.fromDate, rangeTo: job.toDate });
         parts.push('Công nợ NCC: ' + s.debts + ' NCC, ' + s.payments + ' chứng từ chi');
       } catch (e) { warnings.push('Công nợ: ' + e.message); }
     }

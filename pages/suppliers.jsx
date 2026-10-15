@@ -12,7 +12,7 @@ export default function Suppliers() {
   const { branch } = router.query;
   const [branchInfo, setBranchInfo] = useState(null);
   const [suppliers, setSuppliers] = useState([]);
-  const [map, setMap] = useState({});
+  const [map, setMap] = useState([]);
   const [materials, setMaterials] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('suppliers');
@@ -26,12 +26,10 @@ export default function Suppliers() {
     fetch(`/api/branches/${branch}`).then((r) => r.json()).then((d) => d.success && setBranchInfo(d.data)).catch(() => {});
     Promise.all([
       fetch(`/api/suppliers/${branch}`).then((r) => r.json()),
-      fetch(`/api/suppliers/material-map/${branch}`).then((r) => r.json()),
-      fetch('/api/material-list').then((r) => r.json())
-    ]).then(([s, m, ml]) => {
+      fetch(`/api/suppliers/items/${branch}`).then((r) => r.json())
+    ]).then(([s, m]) => {
       if (s.success) setSuppliers(s.data);
       if (m.success) setMap(m.data);
-      if (ml.success) setMaterials(ml.data);
     }).finally(() => setLoading(false));
   }, [branch]);
 
@@ -49,24 +47,25 @@ export default function Suppliers() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [suppliers, fS, sS]);
 
+  // map: mọi mặt hàng đã mua theo NCC; NCC nào giá/ngày gần nhất của cùng mặt hàng được đánh dấu ★
   const matRows = useMemo(() => {
-    const names = Object.fromEntries(materials.map((m) => [m.material_id, m]));
-    const rows = [];
-    Object.entries(map).forEach(([id, list]) => {
-      list.forEach((s, i) => rows.push({
-        key: id + '|' + s.supplier_code, material_id: id, material_name: names[id] ? names[id].material_name : id,
-        unit: names[id] ? names[id].unit_purchase : '', supplier_name: s.supplier_name, price: s.price, times: s.times, last_date: s.last_date, preferred: i === 0
-      }));
-    });
-    return rows;
-  }, [map, materials]);
+    const latest = new Map();
+    map.forEach((r) => { const cur = latest.get(r.item_code); if (!cur || r.last_date > cur) latest.set(r.item_code, r.last_date); });
+    return map.map((r) => ({
+      key: r.item_code + '|' + r.supplier_code, item_name: r.item_name, item_code: r.item_code, supplier_name: r.supplier_name, unit: r.unit_name,
+      price: Number(r.unit_price) || 0, times: Number(r.times) || 0, amount: Number(r.amount) || 0, last_date: r.last_date,
+      app_name: r.material_name || '', mapped: r.material_name ? 'Đã ghép' : 'Chưa ghép', preferred: latest.get(r.item_code) === r.last_date
+    }));
+  }, [map]);
   const matCols = [
-    { key: 'material_name', label: 'Nguyên vật liệu', width: 320, type: 'text', render: (r) => <span className="font-medium">{r.material_name}</span> },
-    { key: 'supplier_name', label: 'Nhà cung cấp', width: 330, type: 'select', render: (r) => <span>{r.supplier_name}{r.preferred && <span className="ml-1 text-green-700">★ gần nhất</span>}</span> },
+    { key: 'item_name', label: 'Nguyên vật liệu (tên trên CUKCUK)', width: 320, type: 'text', render: (r) => <span className="font-medium">{r.item_name}</span> },
+    { key: 'app_name', label: 'NVL trong app', width: 190, type: 'text', get: (r) => r.app_name || '(chưa ghép)', render: (r) => (r.app_name ? <span className="text-green-700">✔ {r.app_name}</span> : <span className="text-orange-600">⚠ chưa ghép</span>) },
+    { key: 'supplier_name', label: 'Nhà cung cấp', width: 310, type: 'select', render: (r) => <span>{r.supplier_name}{r.preferred && <span className="ml-1 text-green-700">★ gần nhất</span>}</span> },
     { key: 'unit', label: 'ĐVT', width: 60, type: 'select', align: 'center' },
-    { key: 'price', label: 'Giá mua gần nhất / ĐVT', width: 150, type: 'number', align: 'right', render: (r) => money(r.price) },
-    { key: 'times', label: 'Số lần mua', width: 90, type: 'number', align: 'right' },
-    { key: 'last_date', label: 'Mua gần nhất', minWidth: 110, type: 'text', get: (r) => String(r.last_date).slice(0, 10), render: (r) => fmtDate(r.last_date) }
+    { key: 'price', label: 'Giá mua gần nhất / ĐVT', width: 140, type: 'number', align: 'right', render: (r) => money(r.price) },
+    { key: 'times', label: 'Số lần mua', width: 84, type: 'number', align: 'right' },
+    { key: 'amount', label: 'Tổng tiền đã mua', width: 116, type: 'number', align: 'right', render: (r) => money(r.amount) },
+    { key: 'last_date', label: 'Mua gần nhất', minWidth: 104, type: 'text', get: (r) => String(r.last_date).slice(0, 10), render: (r) => fmtDate(r.last_date) }
   ];
   const matVisible = useMemo(() => sortRows(filterRows(matRows, matCols, fM), matCols, sM),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,7 +86,7 @@ export default function Suppliers() {
         <div className="p-4 space-y-2" style={{ maxWidth: 1600, margin: '0 auto' }}>
           <div className="flex gap-2">
             <button onClick={() => setTab('suppliers')} className={`px-3 py-1.5 rounded font-bold border ${tab === 'suppliers' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🚚 Theo nhà cung cấp ({suppliers.length})</button>
-            <button onClick={() => setTab('materials')} className={`px-3 py-1.5 rounded font-bold border ${tab === 'materials' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🥩 Theo nguyên vật liệu ({matRows.length})</button>
+            <button onClick={() => setTab('materials')} className={`px-3 py-1.5 rounded font-bold border ${tab === 'materials' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🥩 Theo nguyên vật liệu ({matRows.length}, {new Set(matRows.map((r) => r.item_code)).size} mặt hàng)</button>
           </div>
           {loading ? <p className="p-4 text-gray-600">Đang tải…</p> : suppliers.length === 0 ? (
             <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu nhà cung cấp. Vào mục <b>Đồng bộ & ghép món</b>, bấm "Đồng bộ doanh số từ CUKCUK" (tiện ích bản 1.2.0 trở lên sẽ lấy luôn nhà cung cấp và lịch sử mua).</p>
@@ -95,7 +94,7 @@ export default function Suppliers() {
             <DataTable columns={supCols} allRows={suppliers} rows={supVisible} rowKey={(r) => r.code} filters={fS} onFiltersChange={setFS} sort={sS} onSortChange={setSS} maxHeight="calc(100vh - 230px)" />
           ) : (
             <DataTable columns={matCols} allRows={matRows} rows={matVisible} rowKey={(r) => r.key} filters={fM} onFiltersChange={setFM} sort={sM} onSortChange={setSM} maxHeight="calc(100vh - 230px)"
-              emptyText="Chưa có NVL nào được ghép với lịch sử mua. Kiểm tra mục Tồn kho để ghép NVL CUKCUK với NVL trong app." />
+              emptyText="Chưa có lịch sử mua hàng. Hãy đồng bộ từ CUKCUK." />
           )}
         </div>
       </div>
