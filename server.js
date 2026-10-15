@@ -342,6 +342,16 @@ app.post('/api/backup/import', express.raw({ type: '*/*', limit: '300mb' }), asy
     for (const c of seqCols) {
       await client.query(`SELECT setval(pg_get_serial_sequence('"${c.table_name}"', '${c.column_name}'), COALESCE((SELECT MAX("${c.column_name}") FROM "${c.table_name}"), 0) + 1, false)`);
     }
+    if (req.query.dryRun) {
+      // chạy thử: kiểm tra số dòng từng bảng rồi hủy, không thay đổi dữ liệu thật
+      const bad = [];
+      for (const t of ordered) {
+        const c = Number((await client.query(`SELECT COUNT(*) AS n FROM "${t}"`)).rows[0].n);
+        if (c !== counts[t]) bad.push(`${t}: ${c}/${counts[t]}`);
+      }
+      await client.query('ROLLBACK');
+      return res.json({ success: bad.length === 0, message: bad.length ? 'Lệch số dòng: ' + bad.join('; ') : 'Chạy thử khôi phục thành công (đã hủy, không đổi dữ liệu)', data: { tables: names.length, rows: Object.values(counts).reduce((x, y) => x + y, 0) } });
+    }
     await client.query('COMMIT');
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     return res.json({ success: true, message: 'Đã khôi phục dữ liệu', data: { tables: names.length, rows: total, createdAt: data.createdAt } });
