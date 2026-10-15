@@ -6,6 +6,7 @@ const { Pool, types } = require('pg');
 types.setTypeParser(1700, (v) => parseFloat(v));
 const next = require('next');
 const fs = require('fs');
+const zlib = require('zlib');
 const path = require('path');
 require('dotenv').config();
 
@@ -267,6 +268,89 @@ app.post('/api/branches/create', async (req, res) => {
     return res.json({ success: true, message: `Đã tạo/cập nhật chi nhánh ${branchName}` });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ====== SAO LƯU / KHÔI PHỤC TOÀN BỘ DỮ LIỆU ======
+async function listPublicTables(db) {
+  return (await db.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name"))
+    .rows.map((r) => r.table_name).filter((t) => /^[A-Za-z0-9_]+$/.test(t));
+}
+
+app.get('/api/backup/export', async (req, res) => {
+  try {
+    const tables = await listPublicTables(pool);
+    const out = { app: 'fen-izakaya', version: 1, createdAt: new Date().toISOString(), tables: {}, counts: {} };
+    let total = 0;
+    for (const t of tables) {
+      const r = await pool.query(`SELECT COALESCE(json_agg(x), '[]'::json) AS j FROM "${t}" x`);
+      out.tables[t] = r.rows[0].j;
+      out.counts[t] = out.tables[t].length;
+      total += out.counts[t];
+    }
+    const buf = zlib.gzipSync(Buffer.from(JSON.stringify(out), 'utf8'));
+    res.set({ 'Content-Type': 'application/gzip', 'X-Backup-Rows': String(total), 'X-Backup-Tables': String(tables.length), 'Access-Control-Expose-Headers': 'X-Backup-Rows, X-Backup-Tables' });
+    return res.send(buf);
+  } catch (error) {
+    console.error('Backup export error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/backup/import', express.raw({ type: '*/*', limit: '300mb' }), async (req, res) => {
+  let data;
+  try {
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from([]);
+    let text;
+    try { text = zlib.gunzipSync(raw).toString('utf8'); } catch (e) { text = raw.toString('utf8'); }
+    data = JSON.parse(text);
+  } catch (e) {
+    return res.status(400).json({ success: false, message: 'File sao lưu không đọc được (không đúng định dạng)' });
+  }
+  if (!data || data.app !== 'fen-izakaya' || !data.tables || typeof data.tables !== 'object') {
+    return res.status(400).json({ success: false, message: 'Đây không phải file sao lưu của app Fen Izakaya' });
+  }
+  const client = await pool.connect();
+  try {
+    const existing = new Set(await listPublicTables(client));
+    const names = Object.keys(data.tables).filter((t) => existing.has(t) && Array.isArray(data.tables[t]));
+    if (names.length === 0) return res.status(400).json({ success: false, message: 'File sao lưu không có bảng dữ liệu nào hợp lệ' });
+    // sắp xếp theo khóa ngoại: bảng cha trước bảng con
+    const fks = (await client.query(`SELECT c.relname AS child, p.relname AS parent FROM pg_constraint k
+      JOIN pg_class c ON c.oid = k.conrelid JOIN pg_class p ON p.oid = k.confrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace WHERE k.contype = 'f' AND n.nspname = 'public'`)).rows;
+    const ordered = [];
+    const left = new Set(names);
+    while (left.size) {
+      const ready = Array.from(left).filter((t) => !fks.some((f) => f.child === t && f.parent !== t && left.has(f.parent)));
+      const pick = ready.length ? ready : Array.from(left);
+      pick.forEach((t) => { ordered.push(t); left.delete(t); });
+    }
+    await client.query('BEGIN');
+    await client.query(`TRUNCATE ${names.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY CASCADE`);
+    const counts = {};
+    for (const t of ordered) {
+      const rows = data.tables[t];
+      counts[t] = rows.length;
+      for (let i = 0; i < rows.length; i += 1000) {
+        await client.query(`INSERT INTO "${t}" SELECT * FROM jsonb_populate_recordset(null::"${t}", $1::jsonb)`, [JSON.stringify(rows.slice(i, i + 1000))]);
+      }
+    }
+    // đặt lại bộ đếm tự tăng (id) sau khi nạp
+    const seqCols = (await client.query(`SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND column_default LIKE 'nextval%'`)).rows.filter((r) => names.includes(r.table_name));
+    for (const c of seqCols) {
+      await client.query(`SELECT setval(pg_get_serial_sequence('"${c.table_name}"', '${c.column_name}'), COALESCE((SELECT MAX("${c.column_name}") FROM "${c.table_name}"), 0) + 1, false)`);
+    }
+    await client.query('COMMIT');
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return res.json({ success: true, message: 'Đã khôi phục dữ liệu', data: { tables: names.length, rows: total, createdAt: data.createdAt } });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Backup import error:', error);
+    return res.status(500).json({ success: false, message: 'Khôi phục thất bại, dữ liệu hiện tại được giữ nguyên: ' + error.message });
+  } finally {
+    client.release();
   }
 });
 

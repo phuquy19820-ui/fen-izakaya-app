@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import Router from 'next/router';
+import BackupPanel from '../components/BackupPanel';
 
 export default function Dashboard() {
   const [branches, setBranches] = useState([]);
@@ -73,12 +74,15 @@ export default function Dashboard() {
         <div className="max-w-6xl mx-auto p-8">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold text-gray-800">Danh Sách Chi Nhánh</h2>
-            <button
-              onClick={() => setShowCreateForm(!showCreateForm)}
-              className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg"
-            >
-              + Tạo Chi Nhánh Mới
-            </button>
+            <div className="flex items-center gap-3">
+              <BackupPanel />
+              <button
+                onClick={() => setShowCreateForm(!showCreateForm)}
+                className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg"
+              >
+                + Tạo Chi Nhánh Mới
+              </button>
+            </div>
           </div>
 
           {showCreateForm && (
