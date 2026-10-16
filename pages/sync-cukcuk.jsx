@@ -289,7 +289,7 @@ Gõ mã chi nhánh "${branch}" để xác nhận:`);
                   </p>
                 )}
                 <p className="text-xs text-gray-600">
-                  Tiện ích Chrome bản mới nhất <b>1.8.0</b>: <a href="/fen-cukcuk-extension.zip" download className="text-blue-700 underline font-bold">⬇ Tải tiện ích (.zip)</a>
+                  Tiện ích Chrome bản mới nhất <b>1.8.1</b>: <a href="/fen-cukcuk-extension.zip" download className="text-blue-700 underline font-bold">⬇ Tải tiện ích (.zip)</a>
                   {ext.installed ? ' · Nếu doanh thu hiện 0 hoặc thiếu công nợ, hãy tải bản này, giải nén ghi đè lên thư mục cũ rồi bấm ⟳ ở chrome://extensions.' : ''}
                 </p>
                 {!ext.installed && (

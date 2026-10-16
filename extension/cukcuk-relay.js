@@ -8,6 +8,6 @@
 
   chrome.runtime.sendMessage({ type: 'GET_JOB' }).then((job) => {
     if (!job) return;
-    window.postMessage({ source: 'FEN_EXT_CS', type: 'RUN', job: { fromDate: job.fromDate, toDate: job.toDate } }, '*');
+    window.postMessage({ source: 'FEN_EXT_CS', type: 'RUN', job: { fromDate: job.fromDate, toDate: job.toDate, cukcukBranchName: job.cukcukBranchName || '' } }, '*');
   }).catch(() => {});
 })();
