@@ -94,7 +94,7 @@ async function finishWithRows(job, payload) {
     if ((payload.payments && payload.payments.length) || (payload.debts && payload.debts.length)) {
       try {
         await update(job, { status: 'running', text: 'Đang gửi công nợ nhà cung cấp về app…' });
-        const s = await post('/api/payables/import', { branchId: job.branchId, payments: payload.payments, debts: payload.debts, debtFrom: payload.debtFrom, debtTo: payload.debtTo, rangeFrom: job.fromDate, rangeTo: job.toDate });
+        const s = await post('/api/payables/import', { branchId: job.branchId, payments: payload.payments, debts: payload.debts, debtDaily: payload.debtDaily, debtFrom: payload.debtFrom, debtTo: payload.debtTo, rangeFrom: job.fromDate, rangeTo: job.toDate });
         parts.push('Công nợ NCC: ' + s.debts + ' NCC, ' + s.payments + ' chứng từ chi');
       } catch (e) { warnings.push('Công nợ: ' + e.message); }
     }

@@ -260,7 +260,7 @@ export default function RevenueReport() {
           {loading && <p className="p-4 text-gray-600">Đang tải…</p>}
           {error && <p className="p-3 bg-red-50 text-red-700 rounded border border-red-300">❌ {error}</p>}
           {!loading && empty && (
-            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu hóa đơn. Cài tiện ích Chrome bản <b>1.7.3</b> rồi vào <b>Đồng bộ & ghép món</b>, chọn tháng và bấm Đồng bộ để lấy dữ liệu hóa đơn từ CUKCUK.</p>
+            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu hóa đơn. Cài tiện ích Chrome bản <b>1.8.0</b> rồi vào <b>Đồng bộ & ghép món</b>, chọn tháng và bấm Đồng bộ để lấy dữ liệu hóa đơn từ CUKCUK.</p>
           )}
 
           {!loading && data && !empty && (

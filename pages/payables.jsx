@@ -111,7 +111,8 @@ export default function Payables() {
     { key: 'opening', label: 'Nợ đầu kỳ', width: 118, type: 'number', align: 'right', render: (r) => (r.opening ? money(r.opening) : <span className="text-gray-300">—</span>) },
     { key: 'goods', label: 'Tiền hàng', width: 118, type: 'number', align: 'right', render: (r) => money(r.goods) },
     { key: 'vat', label: 'Tiền VAT', width: 100, type: 'number', align: 'right', render: (r) => (r.vat ? money(r.vat) : <span className="text-gray-300">—</span>) },
-    { key: 'purchases', label: 'Tổng cộng (hàng + VAT)', width: 150, type: 'number', align: 'right', render: (r) => <b>{money(r.purchases)}</b> },
+    ...(data && data.ck ? [{ key: 'other', label: 'Phát sinh khác (chi phí, CCDC…)', width: 150, type: 'number', align: 'right', render: (r) => (r.other ? money(r.other) : <span className="text-gray-300">—</span>) }] : []),
+    { key: 'purchases', label: data && data.ck ? 'Tổng tăng trong kỳ (CUKCUK)' : 'Tổng cộng (hàng + VAT)', width: 150, type: 'number', align: 'right', render: (r) => <b>{money(r.purchases)}</b> },
     { key: 'paid', label: 'Đã chi trả (quỹ TM/NH)', width: 150, type: 'number', align: 'right', render: (r) => <span className="text-green-700">{money(r.paid)}</span> },
     { key: 'balance', label: 'Nợ cuối kỳ', width: 124, type: 'number', align: 'right', render: (r) => <b className={r.balance > 0 ? 'text-red-600' : ''}>{money(r.balance)}</b> }
   ];
@@ -146,6 +147,7 @@ export default function Payables() {
     opening: debtVisible.reduce((s, r) => s + r.opening, 0),
     goods: debtVisible.reduce((s, r) => s + r.goods, 0),
     vat: debtVisible.reduce((s, r) => s + r.vat, 0),
+    other: debtVisible.reduce((s, r) => s + (r.other || 0), 0),
     purchases: debtVisible.reduce((s, r) => s + r.purchases, 0),
     paid: debtVisible.reduce((s, r) => s + r.paid, 0),
     balance: debtVisible.reduce((s, r) => s + r.balance, 0)
@@ -167,7 +169,7 @@ export default function Payables() {
 
         <div className="p-4 space-y-2" style={{ maxWidth: 1500, margin: '0 auto' }}>
           <DateRangeBar from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} onApply={(f, t) => load(f, t)}>
-            <span className="text-gray-600">Nợ cuối kỳ = Nợ đầu kỳ + Tổng cộng (tiền hàng + VAT) − Chi trả đã gán cho NCC (quỹ tiền mặt / tiền gửi). Nợ đầu kỳ tự lấy từ công nợ CUKCUK khi đồng bộ (hoặc bạn sửa tay trong nút "Nợ đầu kỳ").</span>
+            <span className="text-gray-600">Nợ cuối kỳ = Nợ đầu kỳ + Phát sinh tăng − Đã chi trả. Khi đã đồng bộ, các số này lấy theo báo cáo Công nợ nhà cung cấp của CUKCUK nên khớp với CUKCUK; Tiền hàng và VAT lấy từ phiếu mua, phần còn lại là chi phí, CCDC… ghi nợ NCC. Nợ đầu kỳ tự lấy từ công nợ CUKCUK khi đồng bộ (hoặc bạn sửa tay trong nút "Nợ đầu kỳ").</span>
           </DateRangeBar>
 
           <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
@@ -189,7 +191,7 @@ export default function Payables() {
           {loading ? (
             <p className="p-4 text-gray-600">Đang tải…</p>
           ) : !data || (suppliers.length === 0 && payments.length === 0) ? (
-            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu công nợ. Vào mục <b>Đồng bộ & ghép món</b>, cài tiện ích bản <b>1.7.3</b> rồi bấm "Đồng bộ doanh số từ CUKCUK" để lấy công nợ và chứng từ chi.</p>
+            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu công nợ. Vào mục <b>Đồng bộ & ghép món</b>, cài tiện ích bản <b>1.8.0</b> rồi bấm "Đồng bộ doanh số từ CUKCUK" để lấy công nợ và chứng từ chi.</p>
           ) : tab === 'debt' ? (
             <DataTable
               columns={debtColumns} allRows={suppliers} rows={debtVisible} rowKey={(r) => r.code}
@@ -200,6 +202,7 @@ export default function Payables() {
                 <td key="o" className="px-2 py-1 text-right">{money(totals.opening)}</td>,
                 <td key="g" className="px-2 py-1 text-right">{money(totals.goods)}</td>,
                 <td key="v" className="px-2 py-1 text-right">{money(totals.vat)}</td>,
+                ...(data && data.ck ? [<td key="x" className="px-2 py-1 text-right">{money(totals.other)}</td>] : []),
                 <td key="a" className="px-2 py-1 text-right">{money(totals.purchases)}</td>,
                 <td key="b" className="px-2 py-1 text-right">{money(totals.paid)}</td>,
                 <td key="c" className="px-2 py-1 text-right">{money(totals.balance)}</td>

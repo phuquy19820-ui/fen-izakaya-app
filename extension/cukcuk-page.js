@@ -200,18 +200,37 @@
     }));
   }
 
-  // Công nợ nhà cung cấp (báo cáo DP_BYVENDOR) trong khoảng ngày đang đồng bộ
+  // Công nợ nhà cung cấp (báo cáo DP_BYVENDOR) lấy theo TỪNG NGÀY trong khoảng đồng bộ để app tính được bất kỳ khoảng ngày nào, khớp CUKCUK
   async function fetchVendorDebt(tpl, from, to) {
-    const obj = baseObj(tpl, {
-      FromDate: from + 'T00:00:00.0000' + TZ, ToDate: to + 'T23:59:59.9990' + TZ, ReportID: 'DP_BYVENDOR',
-      ReportName: 'Công nợ nhà cung cấp', VendorCategoryID: ALL_GUID, VendorCategoryName: 'Tất cả', VendorID: ALL_GUID, VendorName: 'Tất cả', branchID: tpl.BranchID
+    const days = [];
+    for (let t = Date.parse(from + 'T00:00:00Z'); t <= Date.parse(to + 'T00:00:00Z') && days.length < 124; t += 86400000) days.push(new Date(t).toISOString().slice(0, 10));
+    const first = new Map();
+    const daily = [];
+    for (let i = 0; i < days.length; i++) {
+      const day = days[i];
+      const obj = baseObj(tpl, {
+        FromDate: day + 'T00:00:00.0000' + TZ, ToDate: day + 'T23:59:59.9990' + TZ, ReportID: 'DP_BYVENDOR',
+        ReportName: 'Công nợ nhà cung cấp', VendorCategoryID: ALL_GUID, VendorCategoryName: 'Tất cả', VendorID: ALL_GUID, VendorName: 'Tất cả', branchID: tpl.BranchID
+      });
+      const data = await allPages(tpl, 'DP_BYVENDOR', obj);
+      for (const d of data) {
+        if (!d.VendorCode) continue;
+        if (i === 0) first.set(d.VendorCode, { code: d.VendorCode, name: d.VendorName, first: Number(d.FirstDeptAmount) || 0 });
+        const inc = Number(d.IncreaseAmount) || 0;
+        const dec = Number(d.DecreaseAmount) || 0;
+        if (inc || dec) daily.push({ date: day, code: d.VendorCode, name: d.VendorName, increase: inc, decrease: dec });
+      }
+    }
+    const sums = new Map();
+    daily.forEach((x) => { const a = sums.get(x.code) || { inc: 0, dec: 0, name: x.name }; a.inc += x.increase; a.dec += x.decrease; sums.set(x.code, a); });
+    const codes = new Set([...first.keys(), ...sums.keys()]);
+    const debts = Array.from(codes).map((code) => {
+      const f = first.get(code);
+      const sm = sums.get(code) || { inc: 0, dec: 0, name: '' };
+      const fv = f ? f.first : 0;
+      return { code, name: (f && f.name) || sm.name, first: fv, increase: sm.inc, decrease: sm.dec, last: fv + sm.inc - sm.dec };
     });
-    const data = await allPages(tpl, 'DP_BYVENDOR', obj);
-    return {
-      from, to,
-      debts: data.filter((d) => d.VendorCode).map((d) => ({ code: d.VendorCode, name: d.VendorName, first: Number(d.FirstDeptAmount) || 0,
-        increase: Number(d.IncreaseAmount) || 0, decrease: Number(d.DecreaseAmount) || 0, last: Number(d.LastDeptAmount) || 0 }))
-    };
+    return { from, to, debts, daily };
   }
 
   // Chứng từ chi quỹ tiền mặt và tiền gửi ngân hàng (đúng khoảng ngày đang đồng bộ), kèm Mục chi ở chi tiết
@@ -349,13 +368,13 @@
       try {
         say('PROGRESS', { status: 'running', text: 'Đang lấy công nợ nhà cung cấp và chứng từ chi…' });
         const vd = await fetchVendorDebt(tpl, job.fromDate, job.toDate);
-        extras.debts = vd.debts; extras.debtFrom = vd.from; extras.debtTo = vd.to;
+        extras.debts = vd.debts; extras.debtFrom = vd.from; extras.debtTo = vd.to; extras.debtDaily = vd.daily;
         extras.payments = await fetchPayments(tpl, job.fromDate, job.toDate);
       } catch (e) { extras.warnings.push('Công nợ: ' + e.message); }
 
       say('ROWS', {
         invoices: Array.from(invDocs.values()), invoiceItems: invItems,
-        debts: extras.debts || [], debtFrom: extras.debtFrom, debtTo: extras.debtTo, payments: extras.payments || [],
+        debts: extras.debts || [], debtDaily: extras.debtDaily || [], debtFrom: extras.debtFrom, debtTo: extras.debtTo, payments: extras.payments || [],
         stock: extras.stock, suppliers: extras.suppliers, purchases: extras.purchases, warnings: extras.warnings,
         rows: Array.from(agg.values()),
         meta: { branchName: tpl.BranchName, invoices: invoices.size, itemRows, fromDate: job.fromDate, toDate: job.toDate }

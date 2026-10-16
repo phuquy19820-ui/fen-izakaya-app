@@ -192,6 +192,10 @@ async function initializeDatabase() {
       )`);
       migrations.push('ALTER TABLE supplier_opening_debt ADD COLUMN IF NOT EXISTS supplier_code VARCHAR(60)');
       migrations.push("ALTER TABLE supplier_opening_debt ADD COLUMN IF NOT EXISTS source VARCHAR(10) DEFAULT 'IMPORT'");
+      migrations.push(`CREATE TABLE IF NOT EXISTS supplier_debt_daily (
+        branch_id VARCHAR(50) NOT NULL, debt_date DATE NOT NULL, vendor_code VARCHAR(60) NOT NULL, vendor_name VARCHAR(255),
+        increase NUMERIC(18,2) DEFAULT 0, decrease NUMERIC(18,2) DEFAULT 0, PRIMARY KEY (branch_id, debt_date, vendor_code)
+      )`);
       migrations.push(`CREATE TABLE IF NOT EXISTS supplier_debt_snapshot (
         branch_id VARCHAR(50) NOT NULL, vendor_code VARCHAR(60) NOT NULL, vendor_name VARCHAR(255),
         first_amount NUMERIC(18,2) DEFAULT 0, increase_amount NUMERIC(18,2) DEFAULT 0, decrease_amount NUMERIC(18,2) DEFAULT 0,
@@ -490,6 +494,7 @@ app.post('/api/branches/purge-sync', async (req, res) => {
     await run('lich_su_mua_hang', 'DELETE FROM supplier_purchases WHERE branch_id = $1');
     await run('chung_tu_chi', 'DELETE FROM supplier_payments WHERE branch_id = $1');
     await run('cong_no_cukcuk', 'DELETE FROM supplier_debt_snapshot WHERE branch_id = $1');
+    await run('cong_no_phat_sinh_ngay', 'DELETE FROM supplier_debt_daily WHERE branch_id = $1');
     await run('no_dau_ky_cukcuk', "DELETE FROM supplier_opening_debt WHERE branch_id = $1 AND COALESCE(source, 'IMPORT') = 'CUKCUK'");
     await run('nha_cung_cap', 'DELETE FROM suppliers WHERE branch_id = $1');
     await run('nhat_ky_dong_bo', 'DELETE FROM cukcuk_sync_logs WHERE branch_id = $1');
@@ -1602,6 +1607,18 @@ app.post('/api/payables/import', async (req, res) => {
         [branchId, ('cc:' + code).substring(0, 255), String(d.name || '').substring(0, 255), Number(d.first) || 0, asOfDay, code.substring(0, 60)]);
       }
     }
+    if (Array.isArray(req.body.debtDaily) && dateRe.test(String(req.body.rangeFrom || '')) && dateRe.test(String(req.body.rangeTo || ''))) {
+      await client.query('DELETE FROM supplier_debt_daily WHERE branch_id = $1 AND debt_date BETWEEN $2 AND $3', [branchId, req.body.rangeFrom, req.body.rangeTo]);
+      const dd = req.body.debtDaily.filter((x) => x && x.code && dateRe.test(String(x.date || '')));
+      for (let i = 0; i < dd.length; i += 500) {
+        const c = dd.slice(i, i + 500);
+        await client.query(`INSERT INTO supplier_debt_daily (branch_id, debt_date, vendor_code, vendor_name, increase, decrease)
+          SELECT $1, * FROM unnest($2::date[], $3::text[], $4::text[], $5::numeric[], $6::numeric[])
+          ON CONFLICT (branch_id, debt_date, vendor_code) DO UPDATE SET increase = EXCLUDED.increase, decrease = EXCLUDED.decrease, vendor_name = EXCLUDED.vendor_name`,
+        [branchId, c.map((x) => x.date), c.map((x) => String(x.code).substring(0, 60)), c.map((x) => String(x.name || '').substring(0, 255)),
+          c.map((x) => Number(x.increase) || 0), c.map((x) => Number(x.decrease) || 0)]);
+      }
+    }
     await client.query("INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, 'PAYABLES', 'SUCCESS', $2)", [branchId, payCount + debtCount]);
     await client.query('COMMIT');
     return res.json({ success: true, data: { payments: payCount, debts: debtCount } });
@@ -1626,6 +1643,13 @@ app.post('/api/payables/assign', async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 });
+
+// Khóa so khớp tên NCC trong lý do chi: giữ khoảng trắng để chỉ khớp theo TỪ nguyên vẹn (tránh "than" khớp nhầm trong "thanh toán")
+const supplierWords = (s) => String(s || '').replace(/[-–]\s*[\d .]{8,}\s*$/, '')
+  .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').toLowerCase()
+  .replace(/\b(cong ty|tnhh|co phan|cp|hkd|ho kinh doanh|cty|tm|dv|mtv|dntn|sx|xnk|thuong mai|dich vu|san xuat|kinh doanh)\b/g, ' ')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+const textWords = (s) => ' ' + String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
 
 const supplierKey = (s) => normalizeString(String(s || '').replace(/[-–]\s*[\d .]{8,}\s*$/, '')
   .replace(/c[oô]ng ty|tnhh|c[oô] ph[aầ]n|hkd|h[oộ] kinh doanh|\bcty\b|\btm\b|\bdv\b/gi, ' ')).replace(/\s+/g, ' ').trim();
@@ -1705,15 +1729,15 @@ app.get('/api/payables/:branchId', async (req, res) => {
     const pays = (await pool.query(`SELECT ref_id, ref_no, to_char(pay_date, 'YYYY-MM-DD') AS pay_date, source, type_name, amount, reason, budget_item, manual_supplier_code, ignored
       FROM supplier_payments WHERE branch_id = $1 AND pay_date <= $2 ORDER BY pay_date DESC, ref_no DESC`, [branchId, to])).rows;
 
-    const keys = sups.map((s) => ({ code: s.code, key: supplierKey(s.name) })).filter((k) => k.key.length >= 4).sort((a, b) => b.key.length - a.key.length);
+    const keys = sups.map((s) => ({ code: s.code, key: supplierKey(s.name), words: supplierWords(s.name) })).filter((k) => k.key.length >= 4).sort((a, b) => b.key.length - a.key.length);
     const supByCode = new Map(sups.map((s) => [s.code, s.name]));
     const allPayments = pays.map((p) => {
       let code = null, how = '';
       if (p.ignored) how = 'ignored';
       else if (p.manual_supplier_code) { code = p.manual_supplier_code; how = 'manual'; }
       else {
-        const text = normalizeString(`${p.reason || ''} ${p.budget_item || ''}`);
-        const hit = keys.find((k) => text.includes(k.key));
+        const text = textWords(`${p.reason || ''} ${p.budget_item || ''}`);
+        const hit = keys.find((k) => k.words.length >= 5 && text.includes(' ' + k.words + ' '));
         if (hit) { code = hit.code; how = 'auto'; }
       }
       return { ref_id: p.ref_id, ref_no: p.ref_no, date: p.pay_date, source: p.source, type_name: p.type_name,
@@ -1753,30 +1777,55 @@ app.get('/api/payables/:branchId', async (req, res) => {
     const fixedDates = opens.filter((o) => o.source !== 'CUKCUK').map((o) => o.as_of).sort();
     const defaultFloor = fixedDates.length ? fixedDates[fixedDates.length - 1] : null;
     const floorOf = (r) => r.as_of || defaultFloor;
+    // Công nợ phát sinh theo ngày lấy thẳng từ báo cáo "Công nợ nhà cung cấp" của CUKCUK (nếu đã đồng bộ): khớp đúng CUKCUK
+    const dd = (await pool.query("SELECT to_char(debt_date, 'YYYY-MM-DD') AS d, vendor_code, vendor_name, increase, decrease FROM supplier_debt_daily WHERE branch_id = $1 AND debt_date <= $2", [branchId, to])).rows;
+    const ckMode = dd.length > 0;
+    const firstDay = dd.reduce((m, x) => (x.d < m ? x.d : m), '9999-12-31');
+    const dayBefore = ckMode ? new Date(Date.parse(firstDay + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10) : null;
     pur.forEach((p) => {
       if (!p.supplier_code) return;
       const r = row(p.supplier_code);
-      if (floorOf(r) && p.d <= floorOf(r)) return;
-      if (p.d < from) r.before_purchases += Number(p.total) || 0;
-      else { r.goods += Number(p.goods) || 0; r.vat += Number(p.vat) || 0; r.purchases += Number(p.total) || 0; r.purchase_count += Number(p.times) || 0; }
+      const fl = ckMode ? (r.as_of || dayBefore) : floorOf(r);
+      if (fl && p.d <= fl) return;
+      if (p.d < from) { if (!ckMode) r.before_purchases += Number(p.total) || 0; }
+      else { r.goods += Number(p.goods) || 0; r.vat += Number(p.vat) || 0; if (!ckMode) r.purchases += Number(p.total) || 0; r.purchase_count += Number(p.times) || 0; }
     });
-    allPayments.forEach((p) => {
-      if (!p.supplier_code) return;
-      const r = row(p.supplier_code);
-      if (floorOf(r) && p.date <= floorOf(r)) return;
-      if (p.date < from) r.before_paid += p.amount; else r.paid += p.amount;
-    });
+    if (ckMode) {
+      dd.forEach((x) => {
+        const r = row(x.vendor_code, x.vendor_name);
+        const fl = r.as_of || dayBefore;
+        if (x.d <= fl) return;
+        const inc = Number(x.increase) || 0;
+        const dec = Number(x.decrease) || 0;
+        if (x.d < from) { r.before_inc = (r.before_inc || 0) + inc; r.before_dec = (r.before_dec || 0) + dec; }
+        else { r.inc = (r.inc || 0) + inc; r.dec = (r.dec || 0) + dec; }
+      });
+    } else {
+      allPayments.forEach((p) => {
+        if (!p.supplier_code) return;
+        const r = row(p.supplier_code);
+        if (floorOf(r) && p.date <= floorOf(r)) return;
+        if (p.date < from) r.before_paid += p.amount; else r.paid += p.amount;
+      });
+    }
 
     const all = Array.from(rows.values()).map((r) => {
+      if (ckMode) {
+        const opening = r.base + (r.before_inc || 0) - (r.before_dec || 0);
+        const inc = r.inc || 0;
+        const dec = r.dec || 0;
+        return { code: r.code, name: r.name, opening, goods: r.goods, vat: r.vat, other: inc - r.goods - r.vat, purchases: inc, purchase_count: r.purchase_count, paid: dec,
+          balance: opening + inc - dec, opening_base: r.base, opening_as_of: r.as_of, opening_source: r.source };
+      }
       const opening = r.base + r.before_purchases - r.before_paid;
-      return { code: r.code, name: r.name, opening, goods: r.goods, vat: r.vat, purchases: r.purchases, purchase_count: r.purchase_count, paid: r.paid,
+      return { code: r.code, name: r.name, opening, goods: r.goods, vat: r.vat, other: 0, purchases: r.purchases, purchase_count: r.purchase_count, paid: r.paid,
         balance: opening + r.purchases - r.paid, opening_base: r.base, opening_as_of: r.as_of, opening_source: r.source };
     });
     const list = all.filter((r) => r.opening || r.purchases || r.paid || r.balance).sort((a, b) => b.balance - a.balance);
     const openingRows = all.map((r) => ({ code: r.code, name: r.name, amount: r.opening_base, as_of: r.opening_as_of, source: r.opening_source }))
       .sort((a, b) => (b.amount ? 1 : 0) - (a.amount ? 1 : 0) || String(a.name).localeCompare(String(b.name), 'vi'));
     return res.json({ success: true, data: {
-      suppliers: list, payments, openingRows,
+      suppliers: list, payments, openingRows, ck: ckMode,
       supplierOptions: sups.map((s) => ({ code: s.code, name: s.name })).sort((a, b) => String(a.name).localeCompare(String(b.name), 'vi'))
     } });
   } catch (error) {
