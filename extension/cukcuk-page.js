@@ -45,10 +45,15 @@
     });
     if (!res.ok) throw new Error('Không đọc được danh sách chi nhánh CUKCUK (lỗi ' + res.status + ')');
     const list = ((await res.json()).data || []).filter((b) => b.BranchID && !b.Inactive);
+    const names = list.map((b) => b.BranchName).join(', ');
+    // Tài khoản chỉ có 1 chi nhánh: dùng luôn
+    if (list.length <= 1 && !wanted) return list[0] ? { id: list[0].BranchID, name: list[0].BranchName } : { id: tpl.BranchID, name: tpl.BranchName };
+    // Tài khoản có nhiều chi nhánh mà app chưa lưu tên: dừng lại, tránh lấy nhầm số liệu chi nhánh khác
+    if (!wanted) throw new Error('Tài khoản CUKCUK này có nhiều chi nhánh (' + names + '). Hãy nhập đúng "Tên chi nhánh trên CUKCUK" của chi nhánh này trong app (mục Đồng bộ) rồi bấm Lưu, sau đó đồng bộ lại.');
     const w = norm(wanted);
     const hit = list.find((b) => norm(b.BranchName) === w) || list.find((b) => norm(b.BranchCode) === w) ||
       list.find((b) => norm(b.BranchName).includes(w) || (w && w.includes(norm(b.BranchName))));
-    if (!hit) throw new Error('Không tìm thấy chi nhánh "' + wanted + '" trên CUKCUK. Các chi nhánh có: ' + list.map((b) => b.BranchName).join(', ') + '. Hãy sửa lại "Tên chi nhánh trên CUKCUK" trong app.');
+    if (!hit) throw new Error('Không tìm thấy chi nhánh "' + wanted + '" trên CUKCUK. Các chi nhánh có: ' + names + '. Hãy sửa lại "Tên chi nhánh trên CUKCUK" trong app.');
     return { id: hit.BranchID, name: hit.BranchName };
   }
 
@@ -279,11 +284,10 @@
       if (!tpl) throw new Error('Hết thời gian chờ đăng nhập/mở báo cáo CUKCUK. Hãy bấm đồng bộ lại.');
 
       // Nhiều chi nhánh dùng chung một phần mềm bán hàng: chọn đúng chi nhánh theo tên đã lưu trong app
-      if (job.cukcukBranchName) {
-        say('PROGRESS', { status: 'running', text: 'Đang chọn chi nhánh "' + job.cukcukBranchName + '" trên CUKCUK…' });
-        const target = await resolveBranch(tpl, job.cukcukBranchName);
-        tpl = Object.assign({}, tpl, { BranchID: target.id, BranchName: target.name, BranchIDs: target.id + ',' });
-      }
+      say('PROGRESS', { status: 'running', text: 'Đang xác định chi nhánh trên CUKCUK…' });
+      const target = await resolveBranch(tpl, job.cukcukBranchName || '');
+      tpl = Object.assign({}, tpl, { BranchID: target.id, BranchName: target.name, BranchIDs: target.id + ',' });
+      say('PROGRESS', { status: 'running', text: 'Đồng bộ chi nhánh "' + target.name + '" trên CUKCUK…' });
 
       const from = job.fromDate + 'T00:00:00.0000' + TZ;
       const to = job.toDate + 'T23:59:59.9990' + TZ;
@@ -303,6 +307,7 @@
         const data = json.data || [];
         collected += data.length;
         for (const r of data) {
+          if (r.BranchID && r.BranchID !== tpl.BranchID) continue; // không nhận dòng của chi nhánh khác
           if (r.RefNo) invoices.add(r.RefNo);
           if (r.RefNo && !r.InventoryItemCode && r.RefDetailType === 0 && !invDocs.has(r.RefNo)) {
             invDocs.set(r.RefNo, { refNo: r.RefNo, date: localDate(r.RefDate), timeIn: r.TimeInOut || '', area: r.AreaName || '', shift: r.ShiftName || '',

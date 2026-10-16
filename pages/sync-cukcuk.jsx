@@ -58,6 +58,16 @@ export default function SyncCukcuk() {
   };
 
   useEffect(() => { setCukBranchName((currentBranch && currentBranch.cukcuk_branch_name) || ''); }, [currentBranch]);
+  const purgeSynced = async () => {
+    const typed = window.prompt(`Xóa TOÀN BỘ số liệu đã đồng bộ từ CUKCUK của chi nhánh "${currentBranch?.branch_name}" (doanh số, hóa đơn, tồn kho, mua hàng, công nợ, chứng từ chi).
+Không xóa định lượng, đơn đặt hàng, ghép NVL.
+
+Gõ mã chi nhánh "${branch}" để xác nhận:`);
+    if (typed === null) return;
+    const j = await (await fetch('/api/branches/purge-sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branchId: branch, confirm: typed.trim() }) })).json();
+    alert(j.success ? '✅ Đã xóa số liệu đồng bộ. Hãy đồng bộ lại.' : '❌ ' + j.message);
+    if (j.success) fetchSalesStatus();
+  };
   const saveCukBranch = async () => {
     const j = await (await fetch('/api/branches/cukcuk-branch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branchId: branch, name: cukBranchName }) })).json();
     setCukBranchMsg(j.success ? '✅ Đã lưu' : '❌ ' + j.message);
@@ -269,6 +279,7 @@ export default function SyncCukcuk() {
                   <input name="cukcuk-branch-label" autoComplete="off" value={cukBranchName} onChange={(e) => setCukBranchName(e.target.value)} placeholder="Để trống nếu CUKCUK chỉ có 1 chi nhánh" className="border p-2 rounded" style={{ width: 300 }} />
                   <button onClick={saveCukBranch} className="px-3 py-2 rounded border bg-white hover:bg-gray-50 font-bold">Lưu</button>
                   {cukBranchMsg && <span className="font-bold">{cukBranchMsg}</span>}
+                  <button onClick={purgeSynced} className="ml-auto px-3 py-2 rounded border border-red-300 bg-white text-red-600 hover:bg-red-50 font-bold">🗑 Xóa số liệu đã đồng bộ của chi nhánh này</button>
                   <span className="text-xs text-gray-500">Khi nhiều chi nhánh dùng chung một phần mềm bán hàng (ví dụ "FEN RESTAURANT", "Tiệm Yến"), nhập đúng tên chi nhánh như ở ô chọn chi nhánh trên CUKCUK để tiện ích lấy đúng số liệu.</span>
                 </div>
                 {ext.status !== 'idle' && (
@@ -278,7 +289,7 @@ export default function SyncCukcuk() {
                   </p>
                 )}
                 <p className="text-xs text-gray-600">
-                  Tiện ích Chrome bản mới nhất <b>1.7.2</b>: <a href="/fen-cukcuk-extension.zip" download className="text-blue-700 underline font-bold">⬇ Tải tiện ích (.zip)</a>
+                  Tiện ích Chrome bản mới nhất <b>1.7.3</b>: <a href="/fen-cukcuk-extension.zip" download className="text-blue-700 underline font-bold">⬇ Tải tiện ích (.zip)</a>
                   {ext.installed ? ' · Nếu doanh thu hiện 0 hoặc thiếu công nợ, hãy tải bản này, giải nén ghi đè lên thư mục cũ rồi bấm ⟳ ở chrome://extensions.' : ''}
                 </p>
                 {!ext.installed && (

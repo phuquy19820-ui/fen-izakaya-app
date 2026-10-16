@@ -472,6 +472,37 @@ app.get('/api/revenue/report/:branchId', async (req, res) => {
   }
 });
 
+// Xóa toàn bộ số liệu ĐÃ ĐỒNG BỘ từ CUKCUK của một chi nhánh (dùng khi lỡ đồng bộ nhầm chi nhánh).
+// Không đụng tới định lượng, NVL, đơn đặt hàng, bảng ghép tay, nợ đầu kỳ nhập tay.
+app.post('/api/branches/purge-sync', async (req, res) => {
+  const { branchId, confirm } = req.body;
+  if (!branchId || confirm !== branchId) return res.status(400).json({ success: false, message: 'Cần gõ đúng mã chi nhánh để xác nhận xóa' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const counts = {};
+    const run = async (label, sql) => { counts[label] = (await client.query(sql, [branchId])).rowCount; };
+    await run('doanh_so_theo_mon', 'DELETE FROM cukcuk_daily_sales WHERE branch_id = $1');
+    await run('ton_kho_theo_ngay', 'DELETE FROM cukcuk_stock_daily WHERE branch_id = $1');
+    await run('ton_kho_tinh_ke_hoach', 'DELETE FROM inventory_tracking WHERE branch_id = $1');
+    await run('dong_hoa_don', 'DELETE FROM cukcuk_invoice_items WHERE branch_id = $1');
+    await run('hoa_don', 'DELETE FROM cukcuk_invoices WHERE branch_id = $1');
+    await run('lich_su_mua_hang', 'DELETE FROM supplier_purchases WHERE branch_id = $1');
+    await run('chung_tu_chi', 'DELETE FROM supplier_payments WHERE branch_id = $1');
+    await run('cong_no_cukcuk', 'DELETE FROM supplier_debt_snapshot WHERE branch_id = $1');
+    await run('no_dau_ky_cukcuk', "DELETE FROM supplier_opening_debt WHERE branch_id = $1 AND COALESCE(source, 'IMPORT') = 'CUKCUK'");
+    await run('nha_cung_cap', 'DELETE FROM suppliers WHERE branch_id = $1');
+    await run('nhat_ky_dong_bo', 'DELETE FROM cukcuk_sync_logs WHERE branch_id = $1');
+    await client.query('COMMIT');
+    return res.json({ success: true, message: 'Đã xóa số liệu đồng bộ của chi nhánh', data: counts });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Tên chi nhánh trên CUKCUK (khi nhiều chi nhánh dùng chung một phần mềm bán hàng)
 app.post('/api/branches/cukcuk-branch', async (req, res) => {
   const { branchId, name } = req.body;

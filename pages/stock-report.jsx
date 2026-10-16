@@ -141,7 +141,7 @@ export default function StockReport() {
             </div>
           )}
           {data && data.dates.length > 0 && data.stocks && data.stocks.length === 0 && (
-            <p className="bg-yellow-50 border border-yellow-300 text-yellow-900 rounded p-2">Dữ liệu tồn kho hiện chưa chia theo kho. Cài tiện ích bản <b>1.7.2</b> rồi đồng bộ lại để xem từng kho như trên CUKCUK.</p>
+            <p className="bg-yellow-50 border border-yellow-300 text-yellow-900 rounded p-2">Dữ liệu tồn kho hiện chưa chia theo kho. Cài tiện ích bản <b>1.7.3</b> rồi đồng bộ lại để xem từng kho như trên CUKCUK.</p>
           )}
           {data && data.dates.length > 0 && (
             <DateRangeBar from={from} to={to} onChange={(f, tt) => { setFrom(f); setTo(tt); }} onApply={(f, tt) => load(f, tt, stock)} minDate={data.dates[0]} maxDate={data.dates[data.dates.length - 1]}>
