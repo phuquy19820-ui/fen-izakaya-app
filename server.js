@@ -376,6 +376,26 @@ app.post('/api/backup/import', express.raw({ type: '*/*', limit: '300mb' }), asy
   }
 });
 
+// Thêm vào danh mục thực đơn (cukcuk_menu) các món đã bán trên hóa đơn nhưng chưa có trong danh mục
+app.post('/api/menu/add-missing', async (req, res) => {
+  const { branchId, ym } = req.body;
+  if (!branchId) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh' });
+  try {
+    const r = await pool.query(`
+      INSERT INTO cukcuk_menu (branch_id, item_code, item_name, item_type, category_name, inactive, hidden)
+      SELECT $1, x.item_code, x.item_name, x.kind, x.category, FALSE, FALSE FROM (
+        SELECT DISTINCT ON (i.item_code) i.item_code, i.item_name, COALESCE(NULLIF(i.kind, ''), 'Khác') AS kind, i.category
+        FROM cukcuk_invoice_items i JOIN cukcuk_invoices v ON v.branch_id = i.branch_id AND v.ref_no = i.ref_no
+        WHERE i.branch_id = $1 AND i.item_code <> '' AND ($2::text IS NULL OR to_char(v.inv_date, 'YYYY-MM') = $2)
+        ORDER BY i.item_code, v.inv_date DESC) x
+      WHERE NOT EXISTS (SELECT 1 FROM cukcuk_menu m WHERE m.branch_id = $1 AND m.item_code = x.item_code)
+      ON CONFLICT (branch_id, item_code) DO NOTHING`, [branchId, /^\d{4}-\d{2}$/.test(String(ym || '')) ? ym : null]);
+    return res.json({ success: true, message: 'Đã thêm món vào danh mục thực đơn', data: { added: r.rowCount } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ====== BÁO CÁO DOANH THU THEO HÓA ĐƠN (nhóm khách, khung giờ, khu vực, so sánh tháng...) ======
 app.post('/api/revenue/import', async (req, res) => {
   const { branchId, invoices, items } = req.body;

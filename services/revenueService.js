@@ -316,7 +316,7 @@ function buildReport(rawInvoices, rawItems, menu, params) {
   });
   out.speedSummary = { fast: 0, slow: 0, veryslow: 0, none: 0, low: 0, lowQty };
   out.speed.forEach((x) => { out.speedSummary[x.cls]++; if (x.low) out.speedSummary.low++; });
-  out.notInMenu = (menu && menu.length) ? sold.filter((x) => !menuMap.has(x.code)).map((x) => ({ code: x.code, name: x.name, qty: x.qty, rev: x.rev })) : [];
+  out.notInMenu = (menu && menu.length) ? sold.filter((x) => !menuMap.has(x.code)).map((x) => ({ code: x.code, name: x.name, kind: x.kind, category: x.category, qty: x.qty, rev: x.rev })) : [];
 
   // nhận xét tự động
   const fm = (v) => Math.round(v).toLocaleString('vi-VN');

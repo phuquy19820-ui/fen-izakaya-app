@@ -104,6 +104,8 @@ export default function RevenueReport() {
   const [speedFilters, setSpeedFilters] = useState({});
   const [speedSort, setSpeedSort] = useState(null);
   const [metaKeep, setMetaKeep] = useState(null);
+  const [reload, setReload] = useState(0);
+  const [addingMenu, setAddingMenu] = useState(false);
 
   useEffect(() => { fetch('/api/branches').then((r) => r.json()).then((d) => d.success && setBranches(d.data)).catch(() => {}); }, []);
   useEffect(() => {
@@ -135,7 +137,7 @@ export default function RevenueReport() {
       }
     }).catch((e) => !dead && setError(String(e))).finally(() => !dead && setLoading(false));
     return () => { dead = true; };
-  }, [branch, year, month, cmp, kind, category, group, lowQty]);
+  }, [branch, year, month, cmp, kind, category, group, lowQty, reload]);
 
   const meta = (data && data.meta) || metaKeep;
   const years = useMemo(() => (meta ? Array.from(new Set(meta.months.map((m) => m.slice(0, 4)))).sort() : []), [meta]);
@@ -432,6 +434,14 @@ export default function RevenueReport() {
                   <p className="text-gray-600">Bán chạy = trong 70% sản lượng đầu · Bán chậm = từ 70% đến 95% · Bán rất ít = 5% cuối · Chưa bán được = không có lần bán nào trong kỳ (so với thực đơn CUKCUK). "Bán ít" là cảnh báo theo ngưỡng SL bạn đặt ở bộ lọc.</p>
                   {data.notInMenu.length > 0 && (
                     <div className="bg-yellow-50 border border-yellow-300 rounded p-2 text-yellow-900">
+                      <div className="mb-1"><button disabled={addingMenu} onClick={async () => {
+                        setAddingMenu(true);
+                        try {
+                          const j = await (await fetch('/api/menu/add-missing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branchId: branch }) })).json();
+                          alert(j.success ? `✅ Đã thêm ${j.data.added} món vào danh mục thực đơn` : '❌ ' + j.message);
+                          setReload((v) => v + 1);
+                        } finally { setAddingMenu(false); }
+                      }} className="px-3 py-1.5 rounded bg-green-600 hover:bg-green-700 text-white font-bold disabled:opacity-50">{addingMenu ? 'Đang thêm…' : `➕ Thêm ${data.notInMenu.length} món này vào danh mục thực đơn`}</button></div>
                       <b>⚠ CẢNH BÁO: {data.notInMenu.length} món có bán nhưng chưa có trong danh mục thực đơn:</b> {data.notInMenu.map((x) => `${x.name} (SL ${num(x.qty)})`).join('; ')}
                     </div>
                   )}
