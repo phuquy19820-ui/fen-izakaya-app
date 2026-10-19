@@ -148,6 +148,21 @@ async function initializeDatabase() {
         kind VARCHAR(60), category VARCHAR(120), qty NUMERIC(18,4) DEFAULT 0, amount NUMERIC(18,2) DEFAULT 0, discount NUMERIC(18,2) DEFAULT 0,
         PRIMARY KEY (branch_id, ref_no, line_no)
       )`);
+      migrations.push('ALTER TABLE cukcuk_invoice_items ADD COLUMN IF NOT EXISTS inv_date DATE');
+      // Số hóa đơn có thể bị dùng lại ở kỳ khác: khóa phải gồm cả ngày. Dữ liệu cũ bị lẫn nên xóa một lần để đồng bộ lại.
+      migrations.push(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'cukcuk_invoices'::regclass AND contype = 'p' AND pg_get_constraintdef(oid) LIKE '%inv_date%') THEN
+          TRUNCATE cukcuk_invoice_items, cukcuk_invoices;
+          ALTER TABLE cukcuk_invoices DROP CONSTRAINT IF EXISTS cukcuk_invoices_pkey;
+          ALTER TABLE cukcuk_invoices ADD PRIMARY KEY (branch_id, inv_date, ref_no);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'cukcuk_invoice_items'::regclass AND contype = 'p' AND pg_get_constraintdef(oid) LIKE '%inv_date%') THEN
+          DELETE FROM cukcuk_invoice_items WHERE inv_date IS NULL;
+          ALTER TABLE cukcuk_invoice_items ALTER COLUMN inv_date SET NOT NULL;
+          ALTER TABLE cukcuk_invoice_items DROP CONSTRAINT IF EXISTS cukcuk_invoice_items_pkey;
+          ALTER TABLE cukcuk_invoice_items ADD PRIMARY KEY (branch_id, inv_date, ref_no, line_no);
+        END IF;
+      END $$`);
       migrations.push(`CREATE TABLE IF NOT EXISTS stock_code_map (
         branch_id VARCHAR(50) NOT NULL, cukcuk_code VARCHAR(100) NOT NULL, cukcuk_name VARCHAR(255), unit_name VARCHAR(30),
         material_id VARCHAR(50), match_type VARCHAR(20) DEFAULT 'NONE', match_score NUMERIC(4,3) DEFAULT 0,
@@ -385,9 +400,9 @@ app.post('/api/menu/add-missing', async (req, res) => {
       INSERT INTO cukcuk_menu (branch_id, item_code, item_name, item_type, category_name, inactive, hidden)
       SELECT $1, x.item_code, x.item_name, x.kind, x.category, FALSE, FALSE FROM (
         SELECT DISTINCT ON (i.item_code) i.item_code, i.item_name, COALESCE(NULLIF(i.kind, ''), 'Khác') AS kind, i.category
-        FROM cukcuk_invoice_items i JOIN cukcuk_invoices v ON v.branch_id = i.branch_id AND v.ref_no = i.ref_no
-        WHERE i.branch_id = $1 AND i.item_code <> '' AND ($2::text IS NULL OR to_char(v.inv_date, 'YYYY-MM') = $2)
-        ORDER BY i.item_code, v.inv_date DESC) x
+        FROM cukcuk_invoice_items i
+        WHERE i.branch_id = $1 AND i.item_code <> '' AND ($2::text IS NULL OR to_char(i.inv_date, 'YYYY-MM') = $2)
+        ORDER BY i.item_code, i.inv_date DESC) x
       WHERE NOT EXISTS (SELECT 1 FROM cukcuk_menu m WHERE m.branch_id = $1 AND m.item_code = x.item_code)
       ON CONFLICT (branch_id, item_code) DO NOTHING`, [branchId, /^\d{4}-\d{2}$/.test(String(ym || '')) ? ym : null]);
     return res.json({ success: true, message: 'Đã thêm món vào danh mục thực đơn', data: { added: r.rowCount } });
@@ -403,32 +418,30 @@ app.post('/api/revenue/import', async (req, res) => {
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
   const inv0 = invoices.filter((r) => r && r.refNo && dateRe.test(String(r.date || '')));
   if (inv0.length === 0) return res.json({ success: true, message: 'Không có hóa đơn trong kỳ (bỏ qua)', data: { invoices: 0, items: 0 } });
-  // Cùng số hóa đơn nhưng khác ngày (số bị dùng lại) vẫn là hóa đơn khác nhau: bản đầu giữ nguyên số, các bản sau thêm hậu tố ngày
-  const firstDate = new Map();
-  const inv = inv0.map((r) => {
+  // Khóa hóa đơn = (ngày, số hóa đơn): cùng số ở ngày khác là hóa đơn khác
+  const seenInv = new Set();
+  const inv = inv0.map((r) => ({ ...r, refNo: String(r.refNo) })).filter((r) => { const k = r.date + '|' + r.refNo; if (seenInv.has(k)) return false; seenInv.add(k); return true; });
+  const dateOfRef = new Map();
+  inv.forEach((r) => { if (!dateOfRef.has(r.refNo)) dateOfRef.set(r.refNo, r.date); });
+  const its = (Array.isArray(items) ? items : []).filter((r) => r && r.refNo).map((r) => {
     const ref = String(r.refNo);
-    if (!firstDate.has(ref)) { firstDate.set(ref, r.date); return { ...r, refNo: ref }; }
-    return { ...r, refNo: firstDate.get(ref) === r.date ? ref : `${ref}~${r.date}` };
-  });
-  const refSet = new Set(inv.map((r) => String(r.refNo)));
-  const keyOf = (r) => { const ref = String(r.refNo); const alt = `${ref}~${r.date}`; return r.date && refSet.has(alt) ? alt : ref; };
-  const its = (Array.isArray(items) ? items : []).filter((r) => r && refSet.has(String(r.refNo))).map((r) => ({ ...r, refNo: keyOf(r) }));
+    const d = dateRe.test(String(r.date || '')) ? r.date : dateOfRef.get(ref);
+    return { ...r, refNo: ref, date: d };
+  }).filter((r) => r.date && seenInv.has(r.date + '|' + r.refNo));
   const dates = inv.map((r) => r.date).sort();
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const [delFrom, delTo] = syncRange(req.body, dates[0], dates[dates.length - 1]);
-    await client.query(`DELETE FROM cukcuk_invoice_items WHERE branch_id = $1 AND ref_no IN
-      (SELECT ref_no FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date BETWEEN $2 AND $3)`, [branchId, delFrom, delTo]);
+    await client.query('DELETE FROM cukcuk_invoice_items WHERE branch_id = $1 AND inv_date BETWEEN $2 AND $3', [branchId, delFrom, delTo]);
     await client.query('DELETE FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date BETWEEN $2 AND $3', [branchId, delFrom, delTo]);
-    const seen = new Set();
-    const uniq = inv.filter((r) => (seen.has(r.refNo) ? false : (seen.add(r.refNo), true)));
+    const uniq = inv;
     const CH = 500;
     for (let i = 0; i < uniq.length; i += CH) {
       const c = uniq.slice(i, i + CH);
       await client.query(`INSERT INTO cukcuk_invoices (branch_id, ref_no, inv_date, time_in, area, shift, customer_name, people, amount, discount, service_fee, tax_reduction, vat)
         SELECT $1, * FROM unnest($2::text[], $3::date[], $4::text[], $5::text[], $6::text[], $7::text[], $8::int[], $9::numeric[], $10::numeric[], $11::numeric[], $12::numeric[], $13::numeric[])
-        ON CONFLICT (branch_id, ref_no) DO UPDATE SET inv_date = EXCLUDED.inv_date, time_in = EXCLUDED.time_in, area = EXCLUDED.area, shift = EXCLUDED.shift,
+        ON CONFLICT (branch_id, inv_date, ref_no) DO UPDATE SET time_in = EXCLUDED.time_in, area = EXCLUDED.area, shift = EXCLUDED.shift,
           customer_name = EXCLUDED.customer_name, people = EXCLUDED.people, amount = EXCLUDED.amount, discount = EXCLUDED.discount,
           service_fee = EXCLUDED.service_fee, tax_reduction = EXCLUDED.tax_reduction, vat = EXCLUDED.vat`,
       [branchId, c.map((r) => String(r.refNo).substring(0, 60)), c.map((r) => r.date), c.map((r) => String(r.timeIn || '').substring(0, 20)),
@@ -437,16 +450,16 @@ app.post('/api/revenue/import', async (req, res) => {
         c.map((r) => Number(r.serviceFee) || 0), c.map((r) => Number(r.taxReduction) || 0), c.map((r) => Number(r.vat) || 0)]);
     }
     const lineNo = new Map();
-    const rowsI = its.map((r) => { const k = String(r.refNo); const n = (lineNo.get(k) || 0) + 1; lineNo.set(k, n); return { ...r, n }; });
+    const rowsI = its.map((r) => { const k = r.date + '|' + r.refNo; const n = (lineNo.get(k) || 0) + 1; lineNo.set(k, n); return { ...r, n }; });
     for (let i = 0; i < rowsI.length; i += CH) {
       const c = rowsI.slice(i, i + CH);
-      await client.query(`INSERT INTO cukcuk_invoice_items (branch_id, ref_no, line_no, item_code, item_name, kind, category, qty, amount, discount)
-        SELECT $1, * FROM unnest($2::text[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::numeric[], $9::numeric[], $10::numeric[])
-        ON CONFLICT (branch_id, ref_no, line_no) DO UPDATE SET item_code = EXCLUDED.item_code, item_name = EXCLUDED.item_name, kind = EXCLUDED.kind,
+      await client.query(`INSERT INTO cukcuk_invoice_items (branch_id, ref_no, line_no, item_code, item_name, kind, category, qty, amount, discount, inv_date)
+        SELECT $1, * FROM unnest($2::text[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::numeric[], $9::numeric[], $10::numeric[], $11::date[])
+        ON CONFLICT (branch_id, inv_date, ref_no, line_no) DO UPDATE SET item_code = EXCLUDED.item_code, item_name = EXCLUDED.item_name, kind = EXCLUDED.kind,
           category = EXCLUDED.category, qty = EXCLUDED.qty, amount = EXCLUDED.amount, discount = EXCLUDED.discount`,
       [branchId, c.map((r) => String(r.refNo).substring(0, 60)), c.map((r) => r.n), c.map((r) => String(r.code || '').substring(0, 100)),
         c.map((r) => String(r.name || '').substring(0, 255)), c.map((r) => String(r.kind || '').substring(0, 60)), c.map((r) => String(r.category || '').substring(0, 120)),
-        c.map((r) => Number(r.qty) || 0), c.map((r) => Number(r.amount) || 0), c.map((r) => Number(r.discount) || 0)]);
+        c.map((r) => Number(r.qty) || 0), c.map((r) => Number(r.amount) || 0), c.map((r) => Number(r.discount) || 0), c.map((r) => r.date)]);
     }
     await client.query("INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, 'INVOICES', 'SUCCESS', $2)", [branchId, uniq.length]);
     await client.query('COMMIT');
@@ -476,9 +489,9 @@ app.get('/api/revenue/report/:branchId', async (req, res) => {
     const invoices = (await pool.query(`SELECT ref_no, to_char(inv_date, 'YYYY-MM-DD') AS d, time_in, area, shift, customer_name, people, amount, discount, service_fee, tax_reduction
       FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date >= $2 AND inv_date <= $3`, [branchId, `${minYear}-01-01`, `${year}-12-31`])).rows;
     const months = itemMode ? null : [ym, cmp].filter(Boolean);
-    const items = (await pool.query(`SELECT i.ref_no, i.item_code, i.item_name, i.kind, i.category, i.qty, i.amount, i.discount
-      FROM cukcuk_invoice_items i JOIN cukcuk_invoices v ON v.branch_id = i.branch_id AND v.ref_no = i.ref_no
-      WHERE v.branch_id = $1 AND v.inv_date >= $2 AND v.inv_date <= $3 AND ($4::text[] IS NULL OR to_char(v.inv_date, 'YYYY-MM') = ANY($4))`,
+    const items = (await pool.query(`SELECT i.ref_no, to_char(i.inv_date, 'YYYY-MM-DD') AS d, i.item_code, i.item_name, i.kind, i.category, i.qty, i.amount, i.discount
+      FROM cukcuk_invoice_items i
+      WHERE i.branch_id = $1 AND i.inv_date >= $2 AND i.inv_date <= $3 AND ($4::text[] IS NULL OR to_char(i.inv_date, 'YYYY-MM') = ANY($4))`,
     [branchId, `${minYear}-01-01`, `${year}-12-31`, months])).rows;
     const menu = (await pool.query('SELECT item_code, item_name, item_type, category_name, inactive FROM cukcuk_menu WHERE branch_id = $1', [branchId])).rows;
     // danh mục lọc: lấy từ toàn bộ món của năm, không phụ thuộc bộ lọc đang chọn

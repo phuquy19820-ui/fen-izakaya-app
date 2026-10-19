@@ -98,7 +98,7 @@ function buildReport(rawInvoices, rawItems, menu, params) {
   rawInvoices.forEach((r) => {
     const m = String(r.time_in || '').match(/^(\d+):(\d+)/);
     const group = customerGroup(r.customer_name);
-    inv.set(r.ref_no, {
+    inv.set(r.d + '|' + r.ref_no, {
       ref_no: r.ref_no, d: r.d, ym: r.d.slice(0, 7), area: r.area || '(không có)', shift: r.shift || '(không có)', people: n0(r.people),
       goods: n0(r.amount), promo: n0(r.discount), fee: n0(r.service_fee), taxRed: n0(r.tax_reduction),
       rev: n0(r.amount) - n0(r.discount) + n0(r.service_fee) - n0(r.tax_reduction),
@@ -109,14 +109,14 @@ function buildReport(rawInvoices, rawItems, menu, params) {
   // món: lọc theo nhóm món ăn / nhóm thực đơn / nhóm khách
   const items = [];
   rawItems.forEach((r) => {
-    const iv = inv.get(r.ref_no);
+    const iv = inv.get(r.d + '|' + r.ref_no);
     if (!iv) return;
     if (fGroup && iv.group !== fGroup) return;
     const kind = r.kind || 'Khác';
     const category = r.category || '(Không có nhóm)';
     if (fKind && kind !== fKind) return;
     if (fCat && category !== fCat) return;
-    items.push({ ref_no: r.ref_no, d: iv.d, ym: iv.ym, code: r.item_code, name: r.item_name, kind, category, qty: n0(r.qty), rev: n0(r.amount) - n0(r.discount), promo: n0(r.discount) });
+    items.push({ ref_no: r.d + '|' + r.ref_no, d: iv.d, ym: iv.ym, code: r.item_code, name: r.item_name, kind, category, qty: n0(r.qty), rev: n0(r.amount) - n0(r.discount), promo: n0(r.discount) });
   });
 
   // danh sách hóa đơn sau lọc
