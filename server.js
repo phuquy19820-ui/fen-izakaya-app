@@ -114,6 +114,7 @@ async function initializeDatabase() {
         size_ml NUMERIC(12,2) DEFAULT 0, unit_cost NUMERIC(14,2) DEFAULT 0, stock_qty NUMERIC(14,2) DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, buy_name)
       )`);
+      migrations.push('ALTER TABLE beverage_buy_items ADD COLUMN IF NOT EXISTS cost_updated_at TIMESTAMP');
       migrations.push(`CREATE TABLE IF NOT EXISTS beverage_config (
         branch_id VARCHAR(50) NOT NULL, item_code VARCHAR(100) NOT NULL, item_name VARCHAR(255), menu_type VARCHAR(60),
         mode VARCHAR(10) DEFAULT 'UNIT', ml_per_sale NUMERIC(12,2) DEFAULT 0, buy_name VARCHAR(255),
@@ -1139,6 +1140,57 @@ async function seedBeverages(db, branchId) {
   }
 }
 
+// Đơn giá mua gần nhất của từng mặt hàng đồ uống (ghép theo tên với lịch sử mua CUKCUK, quy về đơn vị mua: chai/lon/lít)
+const plainWords = (t) => ' ' + String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+const sizeMlOf = (name) => {
+  const m = String(name || '').match(/(\d+(?:[.,]\d+)?)\s*(ml|l)\b/i);
+  if (!m) return 0;
+  const v = parseFloat(m[1].replace(',', '.'));
+  return /^l$/i.test(m[2]) ? Math.round(v * 1000) : Math.round(v);
+};
+async function latestDrinkPrices(db, branchId, buyItems) {
+  const purchases = (await db.query(`
+    SELECT DISTINCT ON (item_code) item_code, item_name, unit_name, unit_price, to_char(purchase_date, 'YYYY-MM-DD') AS d, supplier_name
+    FROM supplier_purchases WHERE branch_id = $1 AND unit_price > 0
+    ORDER BY item_code, purchase_date DESC, detail_id DESC`, [branchId])).rows;
+  const cands = purchases.map((p) => ({ ...p, words: plainWords(p.item_name), size: sizeMlOf(p.item_name), dish_id: p.item_code, dish_name: p.item_name }));
+  const FLAVOR = [['chanh day', 'chanh day'], ['du lac', 'du lac'], ['oi hong', 'oi hong'], ['xoai', 'xoai']];
+  const out = new Map();
+  for (const b of buyItems) {
+    const bw = plainWords(b.buy_name);
+    let matches = [];
+    if (b.buy_unit === 'lít') {
+      let kws = null;
+      if (bw.includes(' bia hoi ')) kws = ['bia hoi'];
+      else if (bw.includes(' sapporo ')) kws = ['sapporo'];
+      else if (bw.includes(' bia trai cay ')) { const f = FLAVOR.find(([k]) => bw.includes(' ' + k + ' ')); if (f) kws = ['bia', f[1]]; }
+      if (!kws) continue;
+      matches = cands.filter((c) => kws.every((k) => c.words.includes(' ' + k + ' ') || c.words.includes(k)));
+    } else {
+      const m = matchDish(b.buy_name, cands, { minContain: 2 });
+      if (!m) continue;
+      const c = cands.find((x) => x.item_code === m.dishId);
+      const sz = sizeMlOf(b.buy_name);
+      if (c && !(sz && c.size && sz !== c.size)) matches = [c];
+    }
+    matches.sort((a, c) => (a.d < c.d ? 1 : -1));
+    for (const c of matches) {
+      const u = normalizeString(c.unit_name);
+      const price = Number(c.unit_price);
+      let v = null;
+      if (b.buy_unit === 'lít') {
+        if (u === 'ml') v = price * 1000;
+        else if (u === 'lit' || u === 'l') v = price;
+        else if (c.size > 0) v = price / (c.size / 1000);
+      } else if (u === 'ml') {
+        v = (Number(b.size_ml) || 0) > 0 ? price * Number(b.size_ml) : null;
+      } else v = price;
+      if (v && Number.isFinite(v) && v > 0) { out.set(b.buy_name, { price: Math.round(v), date: c.d, supplier: c.supplier_name || '', item: c.item_name }); break; }
+    }
+  }
+  return out;
+}
+
 app.get('/api/beverage/plan/:branchId', async (req, res) => {
   const { branchId } = req.params;
   const cycleDays = Math.min(30, Math.max(1, parseInt(req.query.days, 10) || 7));
@@ -1156,6 +1208,7 @@ app.get('/api/beverage/plan/:branchId', async (req, res) => {
        WHERE branch_id = $1 AND sale_date >= CURRENT_DATE - INTERVAL '${WINDOW} days'`, [branchId])).rows[0];
     const salesDays = Math.max(1, Number(daysRow.d) || 1);
 
+    const lastPrices = await latestDrinkPrices(pool, branchId, buyItems);
     const byBuy = new Map(buyItems.map((b) => [b.buy_name, { ...b, soldQty: 0, consumed: 0, warn: '' }]));
     for (const c of cfg) {
       const b = byBuy.get(c.buy_name);
@@ -1176,7 +1229,14 @@ app.get('/api/beverage/plan/:branchId', async (req, res) => {
       const stock = Number(b.stock_qty) || 0;
       let suggested = PurchasePlanService.calculatePurchaseQty(stock, forecast, rop, safety);
       suggested = b.buy_unit === 'lít' ? Math.ceil(suggested * 10) / 10 : Math.ceil(suggested - 1e-9);
-      const cost = Number(b.unit_cost) || 0;
+      let cost = Number(b.unit_cost) || 0;
+      // Đơn giá mặc định = giá mua gần nhất; giá sửa tay chỉ thắng nếu sửa cùng ngày hoặc sau lần mua đó
+      const lp = lastPrices.get(b.buy_name);
+      let priceOrigin = cost > 0 ? 'MANUAL' : 'NONE';
+      if (lp) {
+        const editedDay = b.cost_updated_at ? new Date(new Date(b.cost_updated_at).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10) : '';
+        if (!(editedDay && editedDay >= lp.date)) { cost = lp.price; priceOrigin = 'LAST_PURCHASE'; } else priceOrigin = 'MANUAL';
+      }
       let note = b.warn;
       if (!note && b.soldQty === 0) note = 'Chưa có dữ liệu bán';
       if (!note && cost === 0) note = 'Chưa có đơn giá';
@@ -1184,7 +1244,8 @@ app.get('/api/beverage/plan/:branchId', async (req, res) => {
         buy_name: b.buy_name, category: b.category || 'Khác', buy_unit: b.buy_unit, size_ml: Number(b.size_ml) || 0,
         sold_qty: Math.round(b.soldQty * 100) / 100, consumed_units: Math.round(b.consumed * 100) / 100,
         avg_daily: Math.round(avg * 100) / 100, stock_qty: stock, suggested_qty: Math.max(0, suggested),
-        unit_cost: cost, estimated_cost: Math.max(0, suggested) * cost, note
+        unit_cost: cost, estimated_cost: Math.max(0, suggested) * cost, note, price_origin: priceOrigin,
+        last_price_date: lp ? lp.date : null, last_price_supplier: lp ? lp.supplier : '', last_price_item: lp ? lp.item : ''
       });
     }
     rows.sort((a, b) => b.suggested_qty - a.suggested_qty || a.buy_name.localeCompare(b.buy_name, 'vi'));
@@ -1245,7 +1306,7 @@ app.put('/api/beverage/buy-items', async (req, res) => {
       if (!it.buyName) continue;
       await client.query(`
         UPDATE beverage_buy_items SET
-          unit_cost = COALESCE($3, unit_cost), stock_qty = COALESCE($4, stock_qty),
+          unit_cost = COALESCE($3, unit_cost), cost_updated_at = CASE WHEN $3::numeric IS NOT NULL THEN NOW() ELSE cost_updated_at END, stock_qty = COALESCE($4, stock_qty),
           size_ml = COALESCE($5, size_ml), buy_unit = COALESCE($6, buy_unit), category = COALESCE($7, category),
           updated_at = NOW()
         WHERE branch_id = $1 AND buy_name = $2`,

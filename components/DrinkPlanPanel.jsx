@@ -67,8 +67,12 @@ export default function DrinkPlanPanel({ branch, branchInfo, onCompanySaved, sup
     {
       key: 'price', label: 'Đơn giá (sửa được)', width: 112, type: 'number', align: 'right', get: priceOf, noTitle: true,
       render: (r) => (
-        <input type="number" step="any" min="0" value={priceOf(r)} onChange={(e) => setPriceEdits((p) => ({ ...p, [r.buy_name]: parseFloat(e.target.value) || 0 }))}
-          className={`w-full text-right border rounded text-xs ${priceEdits[r.buy_name] !== undefined ? 'bg-yellow-100 font-bold' : 'bg-white'}`} style={inp} />
+        <input type="text" inputMode="numeric" value={Math.round(priceOf(r) || 0).toLocaleString('vi-VN')} onFocus={(e) => e.target.select()}
+          onChange={(e) => setPriceEdits((p) => ({ ...p, [r.buy_name]: parseInt(e.target.value.replace(/\D/g, ''), 10) || 0 }))}
+          title={priceEdits[r.buy_name] !== undefined ? 'Đã sửa, nhớ bấm Lưu tồn & đơn giá'
+            : r.price_origin === 'LAST_PURCHASE' ? `Giá mua gần nhất: ${r.last_price_date ? r.last_price_date.split('-').reverse().join('/') : ''}${r.last_price_supplier ? ' · ' + r.last_price_supplier : ''} (${r.last_price_item}). Bấm để sửa.`
+              : r.price_origin === 'MANUAL' ? 'Giá bạn đã sửa tay' : 'Chưa tìm thấy lần mua của mặt hàng này, hãy nhập giá'}
+          className={`w-full text-right border rounded text-xs ${priceEdits[r.buy_name] !== undefined ? 'bg-yellow-100 font-bold' : r.price_origin === 'LAST_PURCHASE' ? 'bg-green-50' : 'bg-white'}`} style={inp} />
       )
     },
     { key: 'amount', label: 'Thành tiền', width: 106, type: 'number', align: 'right', get: (r) => qtyOf(r) * priceOf(r), render: (r) => <b>{money(qtyOf(r) * priceOf(r))}</b> },
