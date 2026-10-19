@@ -113,7 +113,7 @@ export default function PurchasePlanMisaUI() {
       const data = await res.json();
       if (data.success) {
         // Giá đã lưu: ghi vào dữ liệu hiển thị để không còn là "chưa lưu"
-        setPlanData((rows) => rows.map((r) => (priceEdits[r.material_id] !== undefined ? { ...r, unit_cost: priceEdits[r.material_id] } : r)));
+        setPlanData((rows) => rows.map((r) => (priceEdits[r.material_id] !== undefined ? { ...r, unit_cost: priceEdits[r.material_id], price_origin: 'MANUAL' } : r)));
         setPriceEdits({});
       }
       alert(data.success ? '✅ ' + data.message : '❌ Lỗi: ' + data.message);
@@ -163,10 +163,13 @@ export default function PurchasePlanMisaUI() {
       key: 'price', label: 'Đơn giá (sửa được)', width: 108, type: 'number', align: 'right', get: priceOf, noTitle: true,
       render: (r) => (
         <input
-          type="number" step="any" min="0" value={priceOf(r)}
-          onChange={(e) => setPriceEdits((p) => ({ ...p, [r.material_id]: parseFloat(e.target.value) || 0 }))}
-          className={`w-full text-right border rounded text-xs ${priceEdits[r.material_id] !== undefined ? 'bg-yellow-100 font-bold' : 'bg-white'}`} style={{ height: 22, padding: '0 4px' }}
-          title="Sửa đơn giá, nhớ bấm Lưu Kế Hoạch"
+          type="text" inputMode="numeric" value={Math.round(priceOf(r) || 0).toLocaleString('vi-VN')}
+          onChange={(e) => setPriceEdits((p) => ({ ...p, [r.material_id]: parseInt(e.target.value.replace(/\D/g, ''), 10) || 0 }))}
+          onFocus={(e) => e.target.select()}
+          className={`w-full text-right border rounded text-xs ${priceEdits[r.material_id] !== undefined ? 'bg-yellow-100 font-bold' : r.price_origin === 'LAST_PURCHASE' ? 'bg-green-50' : 'bg-white'}`} style={{ height: 22, padding: '0 4px' }}
+          title={priceEdits[r.material_id] !== undefined ? 'Đã sửa, nhớ bấm Lưu Kế Hoạch'
+            : r.price_origin === 'LAST_PURCHASE' ? `Giá mua gần nhất: ${r.last_price_date ? r.last_price_date.split('-').reverse().join('/') : ''}${r.last_price_supplier ? ' · ' + r.last_price_supplier : ''}. Bấm để sửa.`
+              : r.price_origin === 'MANUAL' ? 'Giá bạn đã sửa tay (mới hơn lần mua gần nhất)' : 'Chưa có lần mua nào, đang dùng giá từ file định lượng'}
         />
       )
     },

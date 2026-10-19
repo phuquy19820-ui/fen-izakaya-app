@@ -65,7 +65,7 @@ async function initializeDatabase() {
         raw_materials: ['branch_id VARCHAR(50)', 'category VARCHAR(50)', 'category_group VARCHAR(50)',
           'unit_cost NUMERIC(14,2) DEFAULT 0', 'min_stock NUMERIC(12,2) DEFAULT 0', 'max_stock NUMERIC(12,2) DEFAULT 0',
           'lead_time_days INT DEFAULT 1', 'waste_rate NUMERIC(5,2) DEFAULT 0', 'shelf_life_days INT DEFAULT 30',
-          'safety_stock NUMERIC(12,2) DEFAULT 0', 'price_source VARCHAR(20)', 'sub_group VARCHAR(60)', 'is_merged BOOLEAN DEFAULT FALSE', 'is_active BOOLEAN DEFAULT TRUE',
+          'safety_stock NUMERIC(12,2) DEFAULT 0', 'price_source VARCHAR(20)', 'price_updated_at TIMESTAMP', 'sub_group VARCHAR(60)', 'is_merged BOOLEAN DEFAULT FALSE', 'is_active BOOLEAN DEFAULT TRUE',
           'updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP'],
         inventory_tracking: ['opening_stock NUMERIC(12,2) DEFAULT 0', 'purchases_qty NUMERIC(12,2) DEFAULT 0',
           'sales_usage_qty NUMERIC(12,2) DEFAULT 0', 'waste_loss_qty NUMERIC(12,2) DEFAULT 0',
@@ -2388,7 +2388,7 @@ app.post('/api/purchase-plans/:planId/adjust', async (req, res) => {
         SET unit_cost = $1, estimated_cost = COALESCE(adjusted_qty, suggested_qty, 0) * $1, updated_at = NOW()
         WHERE plan_id = $2 AND material_id = $3
       `, [p, planId, materialId]);
-      await client.query("UPDATE raw_materials SET unit_cost = $1, price_source = 'MANUAL', updated_at = NOW() WHERE material_id = $2", [p, materialId]);
+      await client.query("UPDATE raw_materials SET unit_cost = $1, price_source = 'MANUAL', price_updated_at = NOW(), updated_at = NOW() WHERE material_id = $2", [p, materialId]);
     }
     for (const [materialId, qty] of Object.entries(adjustments)) {
       const q = parseFloat(qty);
@@ -2412,6 +2412,32 @@ app.post('/api/purchase-plans/:planId/adjust', async (req, res) => {
 
 
 // 8. API Lấy kế hoạch mua hàng
+// Đơn giá mua của lần nhập gần nhất cho từng NVL trong app (quy về đơn vị mua của app; bỏ qua nếu đơn vị không tương thích)
+const SMALL_UNIT_SET = new Set(['gram', 'gr', 'g', 'ml']);
+const BIG_UNIT_SET = new Set(['kg', 'kilogam', 'lit', 'l', 'liter', 'litre']);
+async function latestPurchasePrices(db, branchId) {
+  const rows = (await db.query(`
+    SELECT DISTINCT ON (m.material_id) m.material_id, to_char(p.purchase_date, 'YYYY-MM-DD') AS d, p.supplier_name, p.unit_name, p.unit_price,
+           rm.unit_purchase, rm.conversion_rate, rm.price_source, rm.price_updated_at
+    FROM supplier_purchases p
+    JOIN stock_code_map m ON m.branch_id = p.branch_id AND m.cukcuk_code = p.item_code AND m.material_id IS NOT NULL
+    JOIN raw_materials rm ON rm.material_id = m.material_id
+    WHERE p.branch_id = $1 AND p.unit_price > 0
+    ORDER BY m.material_id, p.purchase_date DESC, p.detail_id DESC`, [branchId])).rows;
+  const map = new Map();
+  rows.forEach((r) => {
+    const up = normalizeString(r.unit_purchase);
+    const pu = normalizeString(r.unit_name);
+    const conv = Number(r.conversion_rate) || 1;
+    let price = null;
+    if (up && up === pu) price = Number(r.unit_price);
+    else if (SMALL_UNIT_SET.has(pu) && BIG_UNIT_SET.has(up) && conv > 1) price = Number(r.unit_price) * conv;
+    if (price === null || !Number.isFinite(price) || price <= 0) return;
+    map.set(r.material_id, { price: Math.round(price), date: r.d, supplier: r.supplier_name || '', manual: r.price_source === 'MANUAL', editedAt: r.price_updated_at });
+  });
+  return map;
+}
+
 app.get('/api/purchase-plans/:branchId', async (req, res) => {
   const { branchId } = req.params;
   try {
@@ -2429,11 +2455,23 @@ app.get('/api/purchase-plans/:branchId', async (req, res) => {
         ORDER BY material_name
       `, [plan.plan_id]);
 
+      // Đơn giá mặc định = giá mua của đơn hàng gần nhất; giá sửa tay chỉ thắng nếu sửa cùng ngày hoặc sau lần mua đó
+      const lastPrices = await latestPurchasePrices(pool, branchId);
+      const details = detailsRes.rows.map((d) => {
+        const lp = lastPrices.get(d.material_id);
+        if (!lp) return { ...d, price_origin: 'BOM' };
+        const editedDay = lp.editedAt ? new Date(new Date(lp.editedAt).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10) : '';
+        const manualWins = lp.manual && editedDay && editedDay >= lp.date;
+        const base = { ...d, last_price: lp.price, last_price_date: lp.date, last_price_supplier: lp.supplier };
+        if (manualWins) return { ...base, price_origin: 'MANUAL' };
+        const qty = d.adjusted_qty !== null && d.adjusted_qty !== undefined ? Number(d.adjusted_qty) : Number(d.suggested_qty) || 0;
+        return { ...base, unit_cost: lp.price, estimated_cost: Math.round(qty * lp.price), price_origin: 'LAST_PURCHASE' };
+      });
       plans.push({
         ...plan,
-        details: detailsRes.rows,
-        total_cost: detailsRes.rows.reduce((sum, d) => sum + (d.estimated_cost || 0), 0),
-        total_items: detailsRes.rows.length
+        details,
+        total_cost: details.reduce((sum, d) => sum + (Number(d.estimated_cost) || 0), 0),
+        total_items: details.length
       });
     }
 
