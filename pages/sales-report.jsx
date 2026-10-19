@@ -60,6 +60,7 @@ export default function SalesReport() {
     { key: 'name', label: 'Tên món', type: 'text', render: (r) => <span className="font-medium">{r.name}</span> },
     { key: 'kind', label: 'Loại', width: 120, type: 'select' },
     { key: 'qty', label: 'Số lượng', width: 92, type: 'number', align: 'right', render: (r) => <b>{num(r.qty)}</b> },
+    { key: 'price', label: 'Đơn giá bán (TB)', width: 112, type: 'number', align: 'right', get: (r) => (Number(r.qty) ? Number(r.revenue) / Number(r.qty) : 0), render: (r) => (Number(r.qty) && Number(r.revenue) ? money(Number(r.revenue) / Number(r.qty)) : <span className="text-gray-300">—</span>) },
     { key: 'revenue', label: 'Doanh thu', width: 118, type: 'number', align: 'right', render: (r) => money(r.revenue) },
     { key: 'pct', label: '% DT', width: 84, type: 'number', align: 'right', get: (r) => (totalRevenueAll ? (Number(r.revenue) / totalRevenueAll) * 100 : 0), render: (r, v) => (totalRevenueAll ? v.toFixed(1) + '%' : '—') },
     { key: 'status', label: 'Định lượng', width: 108, type: 'select', render: (r) => (r.status === 'Đã ghép' ? <span className="text-green-700">✔ đã ghép</span> : r.status === 'Chưa ghép' ? <span className="text-orange-600">⚠ chưa ghép</span> : <span className="text-gray-400">—</span>) }
@@ -161,6 +162,7 @@ export default function SalesReport() {
               footer={[
                 <td key="l" colSpan={4} className="px-2 py-1 text-right">Tổng cộng:</td>,
                 <td key="q" className="px-2 py-1 text-right">{num(totals.qty)}</td>,
+                <td key="p"></td>,
                 <td key="r" className="px-2 py-1 text-right">{money(totals.revenue)}</td>,
                 <td key="e" colSpan={2}></td>
               ]}
