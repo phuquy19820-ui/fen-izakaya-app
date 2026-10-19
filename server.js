@@ -408,7 +408,9 @@ app.post('/api/revenue/import', async (req, res) => {
       const c = uniq.slice(i, i + CH);
       await client.query(`INSERT INTO cukcuk_invoices (branch_id, ref_no, inv_date, time_in, area, shift, customer_name, people, amount, discount, service_fee, tax_reduction, vat)
         SELECT $1, * FROM unnest($2::text[], $3::date[], $4::text[], $5::text[], $6::text[], $7::text[], $8::int[], $9::numeric[], $10::numeric[], $11::numeric[], $12::numeric[], $13::numeric[])
-        ON CONFLICT (branch_id, ref_no) DO NOTHING`,
+        ON CONFLICT (branch_id, ref_no) DO UPDATE SET inv_date = EXCLUDED.inv_date, time_in = EXCLUDED.time_in, area = EXCLUDED.area, shift = EXCLUDED.shift,
+          customer_name = EXCLUDED.customer_name, people = EXCLUDED.people, amount = EXCLUDED.amount, discount = EXCLUDED.discount,
+          service_fee = EXCLUDED.service_fee, tax_reduction = EXCLUDED.tax_reduction, vat = EXCLUDED.vat`,
       [branchId, c.map((r) => String(r.refNo).substring(0, 60)), c.map((r) => r.date), c.map((r) => String(r.timeIn || '').substring(0, 20)),
         c.map((r) => String(r.area || '').substring(0, 100)), c.map((r) => String(r.shift || '').substring(0, 60)), c.map((r) => String(r.customer || '').substring(0, 255)),
         c.map((r) => Math.round(Number(r.people) || 0)), c.map((r) => Number(r.amount) || 0), c.map((r) => Number(r.discount) || 0),
@@ -420,7 +422,8 @@ app.post('/api/revenue/import', async (req, res) => {
       const c = rowsI.slice(i, i + CH);
       await client.query(`INSERT INTO cukcuk_invoice_items (branch_id, ref_no, line_no, item_code, item_name, kind, category, qty, amount, discount)
         SELECT $1, * FROM unnest($2::text[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::numeric[], $9::numeric[], $10::numeric[])
-        ON CONFLICT (branch_id, ref_no, line_no) DO NOTHING`,
+        ON CONFLICT (branch_id, ref_no, line_no) DO UPDATE SET item_code = EXCLUDED.item_code, item_name = EXCLUDED.item_name, kind = EXCLUDED.kind,
+          category = EXCLUDED.category, qty = EXCLUDED.qty, amount = EXCLUDED.amount, discount = EXCLUDED.discount`,
       [branchId, c.map((r) => String(r.refNo).substring(0, 60)), c.map((r) => r.n), c.map((r) => String(r.code || '').substring(0, 100)),
         c.map((r) => String(r.name || '').substring(0, 255)), c.map((r) => String(r.kind || '').substring(0, 60)), c.map((r) => String(r.category || '').substring(0, 120)),
         c.map((r) => Number(r.qty) || 0), c.map((r) => Number(r.amount) || 0), c.map((r) => Number(r.discount) || 0)]);

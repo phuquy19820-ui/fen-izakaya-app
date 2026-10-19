@@ -280,6 +280,13 @@
   }
 
   const localDate = (iso) => new Date(new Date(iso).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+  const shiftDay = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  // Ngày kinh doanh của POS: hóa đơn thanh toán sau nửa đêm (đến 6h sáng) vẫn thuộc ngày làm việc hôm trước
+  const bizDate = (iso, timeInOut) => {
+    const d = localDate(iso);
+    const m = String(timeInOut || '').match(/-\s*(\d+):\d+/);
+    return m && Number(m[1]) < 6 ? shiftDay(d, -1) : d;
+  };
 
   async function run(job) {
     if (running) return;
@@ -309,7 +316,8 @@
       say('PROGRESS', { status: 'running', text: 'Đồng bộ chi nhánh "' + target.name + '" trên CUKCUK…' });
 
       const from = job.fromDate + 'T00:00:00.0000' + TZ;
-      const to = job.toDate + 'T23:59:59.9990' + TZ;
+      // lấy thêm đến 6h sáng hôm sau để có đủ hóa đơn sau nửa đêm của ngày cuối, rồi lọc lại theo ngày kinh doanh
+      const to = shiftDay(job.toDate, 1) + 'T05:59:59.9990' + TZ;
       say('PROGRESS', { status: 'running', text: 'Đang lấy báo cáo doanh thu từ ' + job.fromDate + ' đến ' + job.toDate + '…' });
 
       const agg = new Map();
@@ -327,19 +335,21 @@
         collected += data.length;
         for (const r of data) {
           if (r.BranchID && r.BranchID !== tpl.BranchID) continue; // không nhận dòng của chi nhánh khác
+          const bd = bizDate(r.RefDate, r.TimeInOut);
+          if (bd < job.fromDate || bd > job.toDate) continue;
           if (r.RefNo) invoices.add(r.RefNo);
           if (r.RefNo && !r.InventoryItemCode && r.RefDetailType === 0 && !invDocs.has(r.RefNo)) {
-            invDocs.set(r.RefNo, { refNo: r.RefNo, date: localDate(r.RefDate), timeIn: r.TimeInOut || '', area: r.AreaName || '', shift: r.ShiftName || '',
+            invDocs.set(r.RefNo, { refNo: r.RefNo, date: bd, timeIn: r.TimeInOut || '', area: r.AreaName || '', shift: r.ShiftName || '',
               customer: r.CustomerName || '', people: Number(r.NumberOfPeople) || 0, amount: Number(r.Amount) || 0, discount: Number(r.DiscountAmount) || 0,
               serviceFee: Number(r.CostAmount) || 0, taxReduction: Number(r.TaxReductionAmount) || 0, vat: Number(r.VATAmount) || 0 });
           }
           if (r.RefNo && r.InventoryItemCode && r.Quantity !== null && r.Quantity !== undefined) {
-            invItems.push({ refNo: r.RefNo, date: localDate(r.RefDate), code: r.InventoryItemCode, name: r.ItemName, kind: r.InventoryItemKind || '', category: r.ListInventoryItemCategoryName || '',
+            invItems.push({ refNo: r.RefNo, date: bd, code: r.InventoryItemCode, name: r.ItemName, kind: r.InventoryItemKind || '', category: r.ListInventoryItemCategoryName || '',
               qty: Number(r.Quantity) || 0, amount: Number(r.Amount) || 0, discount: Number(r.DiscountAmount) || 0 });
           }
           if (!r.InventoryItemCode || r.Quantity === null || r.Quantity === undefined) continue;
           itemRows++;
-          const date = localDate(r.RefDate);
+          const date = bd;
           const key = date + '|' + r.InventoryItemCode;
           const cur = agg.get(key) || { date, code: r.InventoryItemCode, name: r.ItemName, kind: r.InventoryItemKind, qty: 0, amount: 0 };
           cur.qty += Number(r.Quantity);
