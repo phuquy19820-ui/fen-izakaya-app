@@ -216,12 +216,12 @@ export default function PurchasePlanMisaUI() {
       </Head>
 
       <div className="min-h-screen bg-gray-100 flex flex-col text-xs font-sans">
-        <header className="text-white px-6 py-2 flex justify-between items-center" style={{ backgroundColor: '#0073C5' }}>
-          <div>
+        <header className="relative text-white px-6 py-2 flex justify-center items-center" style={{ backgroundColor: '#0073C5', minHeight: 66 }}>
+          <div className="text-center">
             <h1 className="text-base font-bold">LẬP KẾ HOẠCH MUA NGUYÊN VẬT LIỆU</h1>
             <p className="text-blue-200">Chi nhánh: {currentBranch?.branch_name || 'Đang tải...'}</p>
           </div>
-          {cycleType !== 'DRINKS' && <div className="flex gap-2 flex-wrap justify-end">
+          {cycleType !== 'DRINKS' && <div className="absolute flex gap-2 flex-wrap justify-end" style={{ right: 24, top: 8 }}>
             <button onClick={generatePurchasePlan} disabled={generating} className="bg-yellow-600 hover:bg-yellow-700 px-3 py-1.5 rounded font-bold disabled:opacity-50">
               {generating ? '⏳ Đang tính...' : '🔄 Tạo Kế Hoạch'}
             </button>

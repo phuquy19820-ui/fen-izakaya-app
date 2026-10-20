@@ -190,7 +190,7 @@ Gõ mã chi nhánh "${branch}" để xác nhận:`);
       </Head>
 
       <div className="min-h-screen bg-gray-50">
-        <header className="bg-blue-800 text-white px-8 py-6">
+        <header className="bg-blue-800 text-white px-8 py-6 text-center">
           <div className="max-w-4xl mx-auto">
             <h1 className="text-2xl font-bold mb-2">🔄 Đồng Bộ & Tải Dữ Liệu</h1>
             <p className="text-blue-200">Chi nhánh: {currentBranch?.branch_name}</p>

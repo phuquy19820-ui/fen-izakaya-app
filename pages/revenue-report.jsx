@@ -209,7 +209,7 @@ export default function RevenueReport() {
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
       </Head>
       <div className="min-h-screen bg-gray-100 text-xs">
-        <header className="px-6 py-3 text-center text-white" style={{ backgroundColor: NAVY }}>
+        <header className="px-6 py-3 text-center text-white" style={{ backgroundColor: NAVY, minHeight: 66 }}>
           <h1 className="text-lg font-bold tracking-wide">{(branchInfo?.branch_name || 'FEN IZAKAYA').toUpperCase()} — BÁO CÁO KINH DOANH</h1>
           <p className="text-xs" style={{ color: '#cfe3df' }}>Doanh thu quản trị = Tiền hàng + Phí DV − Khuyến mại − Thuế được giảm</p>
         </header>
