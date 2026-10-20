@@ -18,6 +18,9 @@ const { parseAndSaveBOM } = require('./services/bomService');
 const { classifyMaterial } = require('./services/materialClassificationService');
 const PurchasePlanService = require('./services/purchasePlanService');
 const { buildReport } = require('./services/revenueService');
+const auth = require('./services/authService');
+const crmService = require('./services/crmService');
+const crmRoutes = require('./services/crmRoutes');
 
 const dev = process.env.NODE_ENV !== 'production';
 const nextApp = next({ dev });
@@ -26,6 +29,7 @@ const handle = nextApp.getRequestHandler();
 const app = express();
 const port = process.env.PORT || 5000;
 
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -38,6 +42,11 @@ const pool = new Pool({
 });
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+// Đăng nhập + phân quyền: mọi /api/* cần đăng nhập; Quản lý/Nhân viên chỉ dùng được /api/crm/*
+app.use(auth.middleware(pool));
+auth.registerRoutes(app, pool);
+crmRoutes.register(app, pool);
 
 // Initialize database schema
 async function initializeDatabase() {
@@ -463,6 +472,7 @@ app.post('/api/revenue/import', async (req, res) => {
     }
     await client.query("INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, 'INVOICES', 'SUCCESS', $2)", [branchId, uniq.length]);
     await client.query('COMMIT');
+    crmService.syncCustomers(pool, true).catch((e) => console.error('CRM sync error:', e.message));
     return res.json({ success: true, data: { invoices: uniq.length, items: rowsI.length } });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -2661,6 +2671,8 @@ app.all('*', (req, res) => {
     // Initialize database
     console.log('🔄 Initializing database schema...');
     await initializeDatabase();
+    await auth.init(pool);
+    await crmService.init(pool);
     console.log('✅ Database schema initialized');
 
     // Prepare Next.js

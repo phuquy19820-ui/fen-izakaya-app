@@ -74,7 +74,7 @@ Gõ mã chi nhánh "${branch}" để xác nhận:`);
     setTimeout(() => setCukBranchMsg(''), 2500);
   };
 
-  const startExtSync = () => {
+  const startExtSync = async () => {
     const url = cukcukUrl();
     if (!url) {
       alert('Chi nhánh chưa có Mã công ty CUKCUK (phần đầu địa chỉ ....cukcuk.vn). Hãy tạo lại chi nhánh với mã này.');
@@ -86,10 +86,14 @@ Gõ mã chi nhánh "${branch}" để xác nhận:`);
       alert('Khoảng ngày không hợp lệ: "Từ ngày" phải nhỏ hơn hoặc bằng "Đến ngày".');
       return;
     }
+    // Token do Admin cấp để tiện ích gửi dữ liệu về app (tiện ích không có phiên đăng nhập)
+    let syncToken = '';
+    try { const t = await (await fetch('/api/auth/sync-token')).json(); syncToken = t.success ? t.data.token : ''; } catch (e) { /* bỏ qua */ }
+    if (!syncToken) { alert('Không lấy được quyền đồng bộ. Hãy đăng nhập lại bằng tài khoản Admin.'); return; }
     setExt((x) => ({ ...x, status: 'waiting_login', text: 'Đang mở CUKCUK…', result: null }));
     window.postMessage({
       source: 'FEN_APP', type: 'START_SYNC',
-      job: { branchId: branch, cukcukUrl: url, fromDate: syncFrom, toDate: syncTo, cukcukBranchName: /^https?:\/\/|cukcuk\.vn/i.test(cukBranchName || '') ? '' : (cukBranchName || '').trim() }
+      job: { branchId: branch, cukcukUrl: url, fromDate: syncFrom, toDate: syncTo, syncToken, cukcukBranchName: /^https?:\/\/|cukcuk\.vn/i.test(cukBranchName || '') ? '' : (cukBranchName || '').trim() }
     }, '*');
   };
 
@@ -289,7 +293,7 @@ Gõ mã chi nhánh "${branch}" để xác nhận:`);
                   </p>
                 )}
                 <p className="text-xs text-gray-600">
-                  Tiện ích Chrome bản mới nhất <b>1.8.2</b>: <a href="/fen-cukcuk-extension.zip" download className="text-blue-700 underline font-bold">⬇ Tải tiện ích (.zip)</a>
+                  Tiện ích Chrome bản mới nhất <b>1.9.0</b>: <a href="/fen-cukcuk-extension.zip" download className="text-blue-700 underline font-bold">⬇ Tải tiện ích (.zip)</a>
                   {ext.installed ? ' · Nếu doanh thu hiện 0 hoặc thiếu công nợ, hãy tải bản này, giải nén ghi đè lên thư mục cũ rồi bấm ⟳ ở chrome://extensions.' : ''}
                 </p>
                 {!ext.installed && (

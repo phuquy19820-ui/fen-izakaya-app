@@ -75,6 +75,8 @@ export default function Dashboard() {
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold text-gray-800">Danh Sách Chi Nhánh</h2>
             <div className="flex items-center gap-3">
+              <Link href="/crm?view=users"><a className="bg-gray-700 hover:bg-gray-800 text-white px-5 py-2 rounded-lg font-bold shadow-lg">🔐 Tài khoản</a></Link>
+              <Link href="/crm"><a className="bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 rounded-lg font-bold shadow-lg">👥 CRM Khách hàng</a></Link>
               <BackupPanel />
               <button
                 onClick={() => setShowCreateForm(!showCreateForm)}

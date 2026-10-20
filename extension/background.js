@@ -39,7 +39,7 @@ async function startSync(msg, sender) {
   }
   const tab = await chrome.tabs.create({ url: j.cukcukUrl, active: true });
   await update({
-    branchId: j.branchId, fromDate: j.fromDate, toDate: j.toDate, cukcukUrl: j.cukcukUrl, cukcukBranchName: String(j.cukcukBranchName || '').slice(0, 255),
+    branchId: j.branchId, fromDate: j.fromDate, toDate: j.toDate, cukcukUrl: j.cukcukUrl, cukcukBranchName: String(j.cukcukBranchName || '').slice(0, 255), syncToken: String(j.syncToken || '').slice(0, 400),
     appOrigin: origin, appTabId: sender.tab.id, cukcukTabId: tab.id, createdAt: Date.now()
   }, { status: 'waiting_login', text: 'Đã mở CUKCUK. Hãy đăng nhập, tiện ích sẽ tự lấy số liệu.' });
   return { ok: true };
@@ -53,7 +53,7 @@ async function finishWithRows(job, payload) {
       await update(job, { status: 'running', text: 'Đang gửi ' + payload.rows.length + ' dòng doanh số về app…' });
       const res = await fetch(job.appOrigin + '/api/sales/import', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Sync-Token': job.syncToken || '' },
         body: JSON.stringify({ branchId: job.branchId, rows: payload.rows, source: 'EXTENSION', rangeFrom: job.fromDate, rangeTo: job.toDate })
       });
       const json = await res.json();
@@ -65,7 +65,7 @@ async function finishWithRows(job, payload) {
     }
     const warnings = [...(payload.warnings || [])];
     const post = async (path, body) => {
-      const r = await fetch(job.appOrigin + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(job.appOrigin + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sync-Token': job.syncToken || '' }, body: JSON.stringify(body) });
       const j = await r.json();
       if (!j.success) throw new Error(j.message || 'App từ chối dữ liệu');
       return j.data;
