@@ -99,7 +99,9 @@ const parseCookies = (req) => Object.fromEntries(String(req.headers.cookie || ''
   return i < 0 ? [c.trim(), ''] : [c.slice(0, i).trim(), decodeURIComponent(c.slice(i + 1).trim())];
 }));
 function setSessionCookie(res, token, maxAgeSec) {
-  const parts = [`${COOKIE}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${maxAgeSec}`];
+  // maxAgeSec = null: cookie phiên, tự mất khi đóng trình duyệt
+  const parts = [`${COOKIE}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax'];
+  if (maxAgeSec !== null && maxAgeSec !== undefined) parts.push(`Max-Age=${maxAgeSec}`);
   if (process.env.NODE_ENV === 'production') parts.push('Secure');
   res.setHeader('Set-Cookie', parts.join('; '));
 }
@@ -199,10 +201,12 @@ function registerRoutes(app, pool) {
       }
       fails.delete(key);
       const token = crypto.randomBytes(32).toString('hex');
-      await pool.query("INSERT INTO app_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, NOW() + ($3 || ' days')::interval)", [sha256(token), u.id, String(SESSION_DAYS)]);
+      // Mặc định phiên ngắn (12 giờ, mất khi đóng trình duyệt); tick "Ghi nhớ" mới giữ đăng nhập 30 ngày
+      const remember = !!(req.body && req.body.remember);
+      await pool.query("INSERT INTO app_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, NOW() + ($3 || ' hours')::interval)", [sha256(token), u.id, String(remember ? SESSION_DAYS * 24 : 12)]);
       await pool.query('UPDATE app_users SET last_login = NOW() WHERE id = $1', [u.id]);
       await pool.query("DELETE FROM app_sessions WHERE expires_at < NOW()");
-      setSessionCookie(res, token, SESSION_DAYS * 86400);
+      setSessionCookie(res, token, remember ? SESSION_DAYS * 86400 : null);
       return res.json({ success: true, data: { id: u.id, username: u.username, fullName: u.full_name || u.username, role: u.role, branchIds: u.branch_ids || [], permissions: u.role === 'admin' ? MODULE_KEYS : (u.permissions || ['crm']) } });
     } catch (e) {
       return res.status(500).json({ success: false, message: e.message });

@@ -12,6 +12,7 @@ export default function UserBar() {
   const [pw, setPw] = useState({ cur: '', next: '', again: '' });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [show, setShow] = useState(false);
   if (!user) return null;
 
   const logout = async () => {
@@ -43,9 +44,10 @@ export default function UserBar() {
             {[['cur', 'Mật khẩu hiện tại'], ['next', 'Mật khẩu mới (ít nhất 8 ký tự)'], ['again', 'Nhập lại mật khẩu mới']].map(([k, label]) => (
               <div key={k} style={{ marginBottom: 8 }}>
                 <label style={{ display: 'block', fontWeight: 600, marginBottom: 2 }}>{label}</label>
-                <input type="password" autoComplete={k === 'cur' ? 'current-password' : 'new-password'} value={pw[k]} onChange={(e) => setPw({ ...pw, [k]: e.target.value })} style={{ width: '100%', border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 8px' }} />
+                <input type={show ? 'text' : 'password'} autoComplete={k === 'cur' ? 'current-password' : 'new-password'} value={pw[k]} onChange={(e) => setPw({ ...pw, [k]: e.target.value })} style={{ width: '100%', border: '1px solid #cbd5e1', borderRadius: 6, padding: '6px 8px' }} />
               </div>
             ))}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: 13 }}><input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} /> Hiện mật khẩu đang nhập</label>
             {msg && <p style={{ fontWeight: 600, color: msg.startsWith('✅') ? '#15803d' : '#b91c1c', marginBottom: 8 }}>{msg}</p>}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button onClick={() => setOpen(false)} style={{ padding: '6px 14px', borderRadius: 6, background: '#e2e8f0', fontWeight: 600 }}>Đóng</button>
