@@ -3,7 +3,7 @@ import { api, Card, Table, TierBadge, SegmentBadge, Modal, Field, inputCls, mone
 
 const SORTS = [['spend', 'Tổng chi tiêu'], ['spend12', 'Chi tiêu 12 tháng'], ['visits', 'Số lần ghé'], ['lastVisit', 'Lần ghé gần nhất'], ['points', 'Điểm'], ['avgBill', 'Bill trung bình'], ['name', 'Tên'], ['memberNo', 'Mã thành viên']];
 
-export default function CrmCustomers({ meta, go, isManager }) {
+export default function CrmCustomers({ meta, go, isManager, branch = '' }) {
   const [f, setF] = useState({ q: '', branch: '', source: '', tier: '', segment: '', tag: '', owner: '', status: 'active', hasPhone: '', noVisitDays: '', birthdayMonth: '', minSpend: '', maxSpend: '', sort: 'spend', dir: 'desc' });
   const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
@@ -37,14 +37,14 @@ export default function CrmCustomers({ meta, go, isManager }) {
       <Card pad={false}>
         <div className="p-3 flex flex-wrap items-end gap-3">
           <Field label="Tìm khách (tên, SĐT, mã thẻ)" className="flex-1" ><input value={f.q} onChange={(e) => set('q', e.target.value)} placeholder="Nhập tên, số điện thoại hoặc mã FEN-…" className={inputCls} style={{ minWidth: 220 }} /></Field>
-          <Field label="Chi nhánh"><select value={f.branch} onChange={(e) => set('branch', e.target.value)} className={inputCls}><option value="">Tất cả</option>{meta.branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></Field>
+          {!branch && <Field label="Chi nhánh"><select value={f.branch} onChange={(e) => set('branch', e.target.value)} className={inputCls}><option value="">Tất cả</option>{meta.branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></Field>}
           <Field label="Hạng thẻ"><select value={f.tier} onChange={(e) => set('tier', e.target.value)} className={inputCls}><option value="">Tất cả</option>{meta.settings.tiers.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}</select></Field>
           <Field label="Phân khúc"><select value={f.segment} onChange={(e) => set('segment', e.target.value)} className={inputCls}><option value="">Tất cả</option>{Object.entries(meta.segments).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
           <Field label="Sắp xếp"><select value={f.sort} onChange={(e) => set('sort', e.target.value)} className={inputCls}>{SORTS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
           <button onClick={() => set('dir', f.dir === 'desc' ? 'asc' : 'desc')} className="border rounded-lg px-3 py-1.5 text-sm font-bold bg-white" title="Đảo chiều sắp xếp">{f.dir === 'desc' ? '↓ Giảm dần' : '↑ Tăng dần'}</button>
           <button onClick={() => setMore((v) => !v)} className="border rounded-lg px-3 py-1.5 text-sm font-bold bg-white">⚙ Lọc nâng cao</button>
           <button onClick={() => setShowAdd(true)} className="bg-blue-700 hover:bg-blue-800 text-white rounded-lg px-4 py-1.5 text-sm font-bold">+ Thêm khách</button>
-          {isManager && <a href={'/api/crm/export?' + query.toString()} className="border rounded-lg px-3 py-1.5 text-sm font-bold bg-white">⬇ Xuất Excel (CSV)</a>}
+          {isManager && <a href={'/api/crm/export?' + query.toString() + (branch ? '&branch=' + encodeURIComponent(branch) : '')} className="border rounded-lg px-3 py-1.5 text-sm font-bold bg-white">⬇ Xuất Excel (CSV)</a>}
         </div>
         {more && (
           <div className="px-3 pb-3 flex flex-wrap items-end gap-3 border-t pt-3">
@@ -83,13 +83,13 @@ export default function CrmCustomers({ meta, go, isManager }) {
           </div>
         )}
       </Card>
-      {showAdd && <AddCustomer meta={meta} onClose={() => setShowAdd(false)} onDone={(id) => { setShowAdd(false); go('customer', id); }} />}
+      {showAdd && <AddCustomer meta={meta} defaultBranch={branch} onClose={() => setShowAdd(false)} onDone={(id) => { setShowAdd(false); go('customer', id); }} />}
     </div>
   );
 }
 
-function AddCustomer({ meta, onClose, onDone }) {
-  const [v, setV] = useState({ name: '', phone: '', email: '', birthday: '', gender: '', company: '', address: '', source: 'Nhập tay', branchId: '', notes: '' });
+function AddCustomer({ meta, defaultBranch = '', onClose, onDone }) {
+  const [v, setV] = useState({ name: '', phone: '', email: '', birthday: '', gender: '', company: '', address: '', source: 'Nhập tay', branchId: defaultBranch, notes: '' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const save = async () => {

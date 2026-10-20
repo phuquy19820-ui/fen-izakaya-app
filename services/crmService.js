@@ -250,14 +250,19 @@ function visibleTo(c, scope) {
   return c.branches.some((b) => scope.has(b)) || (c.isManual && c.branchId && scope.has(c.branchId));
 }
 // che số liệu của chi nhánh ngoài phạm vi
-function maskFor(c, scope) {
+function maskFor(c, scope, settings, today) {
   if (!scope) return c;
   const byBranch = Object.fromEntries(Object.entries(c.byBranch).filter(([b]) => scope.has(b)));
   const bs = Object.values(byBranch);
   const spend = bs.reduce((a, b) => a + b.spend, 0);
-  return { ...c, byBranch, branches: Object.keys(byBranch), spend, visits: bs.reduce((a, b) => a + b.visits, 0), invoices: bs.reduce((a, b) => a + b.invoices, 0),
+  const out = { ...c, byBranch, branches: Object.keys(byBranch), spend, visits: bs.reduce((a, b) => a + b.visits, 0), invoices: bs.reduce((a, b) => a + b.invoices, 0),
     guests: bs.reduce((a, b) => a + b.guests, 0), spend12: bs.reduce((a, b) => a + b.spend12, 0), avgBill: bs.reduce((a, b) => a + b.invoices, 0) ? spend / bs.reduce((a, b) => a + b.invoices, 0) : 0,
     firstVisit: bs.map((b) => b.firstVisit).sort()[0] || '', lastVisit: bs.map((b) => b.lastVisit).sort().pop() || '' };
+  if (settings && today) {
+    out.recencyDays = out.lastVisit ? daysBetween(out.lastVisit, today) : null;
+    out.segment = segmentFor(out, settings, today);
+  }
+  return out;
 }
 
 module.exports = { init, getSettings, saveSettings, loadAll, invalidate, syncCustomers, parseCustomerName, scopeFor, visibleTo, maskFor, newToken, DEFAULT_SETTINGS, SEGMENTS, todayVn, daysBetween, REV };

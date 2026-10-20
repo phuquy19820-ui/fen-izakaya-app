@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { api } from '../components/crm/ui';
+import { api, setCrmBranch } from '../components/crm/ui';
 import { hasBranchModules } from '../components/permissions';
 import CrmDashboard from '../components/crm/CrmDashboard';
 import CrmCustomers from '../components/crm/CrmCustomers';
@@ -21,6 +21,8 @@ export default function Crm() {
   const [err, setErr] = useState('');
   const view = router.query.view ? String(router.query.view) : 'dashboard';
   const id = router.query.id ? Number(router.query.id) : null;
+  const branch = router.query.b ? String(router.query.b) : '';
+  setCrmBranch(branch);
 
   const loadMeta = useCallback(async () => {
     const j = await api('GET', '/api/crm/meta');
@@ -28,7 +30,9 @@ export default function Crm() {
   }, []);
   useEffect(() => { loadMeta(); }, [loadMeta]);
 
-  const go = (v, cid) => router.push({ pathname: '/crm', query: cid ? { view: v, id: cid } : { view: v } }, undefined, { shallow: true });
+  const go = (v, cid) => router.push({ pathname: '/crm', query: { view: v, ...(cid ? { id: cid } : {}), ...(branch ? { b: branch } : {}) } }, undefined, { shallow: true });
+  const goBranch = (b) => router.push({ pathname: '/crm', query: { view: view === 'customer' ? 'customers' : view, ...(b ? { b } : {}) } }, undefined, { shallow: true });
+  const branchName = meta && branch ? ((meta.branches.find((x) => x.branch_id === branch) || {}).branch_name || branch) : '';
   const isAdmin = meta && meta.user.role === 'admin';
   const isManager = meta && (meta.user.role === 'admin' || meta.user.role === 'manager');
 
@@ -57,16 +61,24 @@ export default function Crm() {
         <nav className="bg-white border-b px-4 py-2 flex flex-wrap gap-1.5">
           {NAV.map(([k, l]) => <button key={k} onClick={() => go(k)} className={`px-3.5 py-1.5 rounded-lg font-bold ${active === k ? 'bg-blue-700 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>{l}</button>)}
         </nav>
+        {meta && meta.branches.length > 1 && !['settings', 'users'].includes(view) && (
+          <div className="bg-white border-b px-4 py-2 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-gray-500 uppercase">Chi nhánh:</span>
+            <button onClick={() => goBranch('')} className={`px-4 py-1.5 rounded-full border font-bold ${!branch ? 'bg-indigo-700 text-white border-indigo-700' : 'bg-white text-gray-700 hover:bg-gray-50'}`}>🏢 Tất cả chi nhánh</button>
+            {meta.branches.map((b) => <button key={b.branch_id} onClick={() => goBranch(b.branch_id)} className={`px-4 py-1.5 rounded-full border font-bold ${branch === b.branch_id ? 'bg-indigo-700 text-white border-indigo-700' : 'bg-white text-gray-700 hover:bg-gray-50'}`}>{b.branch_name}</button>)}
+            {branch && <span className="text-xs text-gray-500 ml-2">Đang xem riêng số liệu của <b>{branchName}</b> (hạng thẻ vẫn tính chung toàn hệ thống).</span>}
+          </div>
+        )}
         <main className="p-4" style={{ maxWidth: 1500, margin: '0 auto' }}>
           {err && <p className="text-red-600 p-4">{err}</p>}
           {!meta && !err && <p className="p-4 text-gray-500">Đang tải…</p>}
           {meta && meta.branches.length === 0 && meta.user.role !== 'admin' && <p className="bg-yellow-50 border border-yellow-300 rounded-lg p-3 mb-3">Tài khoản của bạn chưa được gán chi nhánh nào. Hãy nhờ Admin gán chi nhánh để xem khách hàng.</p>}
-          {meta && view === 'dashboard' && <CrmDashboard meta={meta} go={go} />}
-          {meta && view === 'customers' && <CrmCustomers meta={meta} go={go} isManager={isManager} />}
-          {meta && view === 'customer' && id && <CrmCustomerDetail id={id} meta={meta} go={go} isManager={isManager} />}
-          {meta && view === 'tasks' && <CrmTasks meta={meta} go={go} isManager={isManager} />}
-          {meta && view === 'deals' && <CrmDeals meta={meta} go={go} isManager={isManager} />}
-          {meta && view === 'reports' && <CrmReports meta={meta} />}
+          {meta && view === 'dashboard' && <CrmDashboard key={branch} meta={meta} go={go} />}
+          {meta && view === 'customers' && <CrmCustomers key={branch} meta={meta} go={go} isManager={isManager} branch={branch} />}
+          {meta && view === 'customer' && id && <CrmCustomerDetail key={branch + '-' + id} id={id} meta={meta} go={go} isManager={isManager} />}
+          {meta && view === 'tasks' && <CrmTasks key={branch} meta={meta} go={go} isManager={isManager} />}
+          {meta && view === 'deals' && <CrmDeals key={branch} meta={meta} go={go} isManager={isManager} branch={branch} />}
+          {meta && view === 'reports' && <CrmReports key={branch} meta={meta} />}
           {meta && view === 'settings' && isAdmin && <CrmSettings meta={meta} reloadMeta={loadMeta} />}
           {meta && view === 'users' && isAdmin && <CrmUsers meta={meta} />}
         </main>

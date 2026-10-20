@@ -18,12 +18,15 @@ function register(app, pool) {
   async function context(req) {
     const branches = (await pool.query('SELECT branch_id, branch_name FROM branches WHERE is_active IS NOT FALSE ORDER BY branch_name')).rows;
     const allIds = branches.map((b) => b.branch_id);
-    const scope = crm.scopeFor(req.user, allIds);
+    let scope = crm.scopeFor(req.user, allIds);
     const data = await crm.loadAll(pool);
     const allowed = scope ? branches.filter((b) => scope.has(b.branch_id)) : branches;
-    return { branches: allowed, scope, data, allIds };
+    // Tab chi nhánh: ?branch=<mã> chỉ xem số liệu của đúng chi nhánh đó (phải nằm trong quyền của người dùng)
+    const only = String(req.query.branch || '');
+    if (only && allowed.some((b) => b.branch_id === only)) scope = new Set([only]);
+    return { branches: allowed, scope, data, allIds, only: scope && scope.size === 1 && only ? only : '' };
   }
-  const visibleList = (ctx) => ctx.data.list.filter((c) => crm.visibleTo(c, ctx.scope)).map((c) => crm.maskFor(c, ctx.scope));
+  const visibleList = (ctx) => ctx.data.list.filter((c) => crm.visibleTo(c, ctx.scope)).map((c) => crm.maskFor(c, ctx.scope, ctx.data.settings, ctx.data.today));
   const slim = (c) => ({
     id: c.id, memberCode: c.memberCode, name: c.name, phone: c.phone, source: c.source, tier: c.tier, tierName: c.tierName, segment: c.segment, visits: c.visits, lastVisit: c.lastVisit,
     spend: c.spend, spend12: c.spend12, points: c.points, tags: c.tags, status: c.status, branches: c.branches, birthday: c.birthday, ownerId: c.ownerId, recencyDays: c.recencyDays,
@@ -103,7 +106,7 @@ function register(app, pool) {
     const id = Number(req.params.id);
     const raw = ctx.data.list.find((c) => c.id === id);
     if (!raw || !crm.visibleTo(raw, ctx.scope)) return res.status(404).json({ success: false, message: 'Không tìm thấy khách hàng' });
-    const c = crm.maskFor(raw, ctx.scope);
+    const c = crm.maskFor(raw, ctx.scope, ctx.data.settings, ctx.data.today);
     const br = branchAllowedSql(ctx);
     const visits = (await pool.query(`SELECT branch_id, to_char(inv_date, 'YYYY-MM-DD') AS d, ref_no, time_in, area, people, ${crm.REV} AS rev, discount
       FROM cukcuk_invoices WHERE cust_key = $1 AND branch_id = ANY($2) ORDER BY inv_date DESC, ref_no DESC LIMIT 60`, [raw.key, br])).rows
@@ -249,6 +252,14 @@ function register(app, pool) {
     const where = [];
     if (status) { vals.push(status); where.push(`t.status = $${vals.length}`); }
     if (!isManager(req.user) || req.query.scope === 'mine') { vals.push(req.user.id); where.push(`(t.assignee_id = $${vals.length} OR t.created_by = $${vals.length})`); }
+    if (req.query.branch) {
+      const ctx = await context(req);
+      if (ctx.only) {
+        const ids = visibleList(ctx).map((c) => c.id);
+        vals.push(ids);
+        where.push(`(t.customer_id IS NULL OR t.customer_id = ANY($${vals.length}::int[]))`);
+      }
+    }
     const r = await pool.query(`SELECT t.*, to_char(t.due_date, 'YYYY-MM-DD') AS due, c.name AS customer_name, c.phone AS customer_phone, u.full_name AS assignee_name
       FROM crm_tasks t LEFT JOIN crm_customers c ON c.id = t.customer_id LEFT JOIN app_users u ON u.id = t.assignee_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY (t.status = 'done'), t.due_date NULLS LAST, t.id DESC LIMIT 500`, vals);
@@ -316,7 +327,7 @@ function register(app, pool) {
     const vals = [branchAllowedSql(ctx)];
     const r = await pool.query(`SELECT d.*, to_char(d.event_date, 'YYYY-MM-DD') AS event, c.name AS customer_name, c.phone AS customer_phone, u.full_name AS owner_name
       FROM crm_deals d LEFT JOIN crm_customers c ON c.id = d.customer_id LEFT JOIN app_users u ON u.id = d.owner_id
-      WHERE (d.branch_id IS NULL OR d.branch_id = ANY($1)) ORDER BY d.event_date NULLS LAST, d.id DESC LIMIT 500`, vals);
+      WHERE ${ctx.only ? 'd.branch_id = ANY($1)' : '(d.branch_id IS NULL OR d.branch_id = ANY($1))'} ORDER BY d.event_date NULLS LAST, d.id DESC LIMIT 500`, vals);
     res.json({ success: true, data: r.rows.map((d) => ({ ...d, event_date: d.event, expected_value: Number(d.expected_value) || 0, deposit: Number(d.deposit) || 0 })) });
   }));
   const dealFields = (b) => ({
@@ -388,9 +399,9 @@ function register(app, pool) {
     }).filter((c) => c.inDays <= 14).sort((a, b) => a.inDays - b.inDays).slice(0, 12);
     const myTasks = (await pool.query(`SELECT COUNT(*) FILTER (WHERE status = 'open') AS open, COUNT(*) FILTER (WHERE status = 'open' AND due_date < CURRENT_DATE) AS overdue,
       COUNT(*) FILTER (WHERE status = 'open' AND due_date = CURRENT_DATE) AS today FROM crm_tasks WHERE assignee_id = $1 OR created_by = $1`, [req.user.id])).rows[0];
-    const deals = (await pool.query(`SELECT stage, COUNT(*) AS n, COALESCE(SUM(expected_value), 0) AS value FROM crm_deals WHERE (branch_id IS NULL OR branch_id = ANY($1)) GROUP BY stage`, [br])).rows;
+    const deals = (await pool.query(`SELECT stage, COUNT(*) AS n, COALESCE(SUM(expected_value), 0) AS value FROM crm_deals WHERE ${ctx.only ? 'branch_id = ANY($1)' : '(branch_id IS NULL OR branch_id = ANY($1))'} GROUP BY stage`, [br])).rows;
     const upcomingEvents = (await pool.query(`SELECT id, title, deal_type, to_char(event_date, 'YYYY-MM-DD') AS event_date, guests, expected_value, stage FROM crm_deals
-      WHERE event_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 AND stage NOT IN ('lost') AND (branch_id IS NULL OR branch_id = ANY($1)) ORDER BY event_date LIMIT 8`, [br])).rows;
+      WHERE event_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 AND stage NOT IN ('lost') AND ${ctx.only ? 'branch_id = ANY($1)' : '(branch_id IS NULL OR branch_id = ANY($1))'} ORDER BY event_date LIMIT 8`, [br])).rows;
     const sortedSpend = [...withVisits].sort((a, b) => b.spend - a.spend);
     const totalSpend = sortedSpend.reduce((a, c) => a + c.spend, 0);
     const top10pct = sortedSpend.slice(0, Math.max(1, Math.ceil(sortedSpend.length * 0.1))).reduce((a, c) => a + c.spend, 0);

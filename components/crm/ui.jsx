@@ -6,7 +6,13 @@ export const pc = (v, d = 0) => (v === null || v === undefined || !Number.isFini
 export const fmtDate = (d) => (d ? String(d).slice(0, 10).split('-').reverse().join('/') : '');
 export const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('vi-VN') : '');
 
+// Chi nhánh đang xem trong CRM (do trang CRM đặt); tự gắn ?branch= cho mọi lời gọi /api/crm/*
+let crmBranch = '';
+export const setCrmBranch = (b) => { crmBranch = b || ''; };
+export const getCrmBranch = () => crmBranch;
+
 export async function api(method, url, body) {
+  if (crmBranch && url.startsWith('/api/crm/') && !/[?&]branch=/.test(url)) url += (url.includes('?') ? '&' : '?') + 'branch=' + encodeURIComponent(crmBranch);
   const res = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
   let j;
   try { j = await res.json(); } catch (e) { j = { success: false, message: 'Lỗi máy chủ (' + res.status + ')' }; }

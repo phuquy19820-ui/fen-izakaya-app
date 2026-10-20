@@ -5,10 +5,10 @@ const STAGES = ['new', 'consulting', 'quoted', 'deposit', 'won', 'lost'];
 const TYPES = ['Đặt tiệc', 'Sự kiện', 'Công ty', 'Đặt bàn đoàn', 'Khác'];
 
 // Bảng cơ hội (pipeline) cho đặt tiệc, sự kiện, khách đoàn, khách công ty
-export default function CrmDeals({ meta, go, isManager }) {
+export default function CrmDeals({ meta, go, isManager, branch: tabBranch = '' }) {
   const [rows, setRows] = useState([]);
   const [edit, setEdit] = useState(null);
-  const [branch, setBranch] = useState('');
+  const [branch, setBranch] = useState(tabBranch);
   const load = useCallback(async () => { const j = await api('GET', '/api/crm/deals'); if (j.success) setRows(j.data); }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -26,7 +26,7 @@ export default function CrmDeals({ meta, go, isManager }) {
     <div className="space-y-3">
       <Card pad={false}>
         <div className="p-3 flex flex-wrap items-center gap-3">
-          <select value={branch} onChange={(e) => setBranch(e.target.value)} className={inputCls} style={{ width: 200 }}><option value="">Mọi chi nhánh</option>{meta.branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select>
+          {!tabBranch && <select value={branch} onChange={(e) => setBranch(e.target.value)} className={inputCls} style={{ width: 200 }}><option value="">Mọi chi nhánh</option>{meta.branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select>}
           <span className="text-sm text-gray-600">Đang theo dõi: <b>{open.length}</b> cơ hội · giá trị dự kiến <b>{money(open.reduce((a, d) => a + d.expected_value, 0))} đ</b> · đã chốt <b className="text-green-700">{money(winValue)} đ</b></span>
           <button onClick={() => setEdit({})} className="ml-auto px-4 py-1.5 rounded-lg bg-blue-700 text-white font-bold text-sm">+ Thêm cơ hội</button>
         </div>
@@ -62,7 +62,7 @@ export default function CrmDeals({ meta, go, isManager }) {
           );
         })}
       </div>
-      {edit && <DealForm deal={edit} meta={meta} isManager={isManager} onClose={() => setEdit(null)} onDone={() => { setEdit(null); load(); }} />}
+      {edit && <DealForm deal={edit.id ? edit : { branch_id: tabBranch }} meta={meta} isManager={isManager} onClose={() => setEdit(null)} onDone={() => { setEdit(null); load(); }} />}
     </div>
   );
 }
