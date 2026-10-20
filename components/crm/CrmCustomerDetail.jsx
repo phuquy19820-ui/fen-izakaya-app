@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import MemberCard, { downloadCardPng, CopyLink } from './MemberCard';
+import MemberCard, { SaveCardButton, CopyLink } from './MemberCard';
 import { api, Card, Kpi, Table, TierBadge, SegmentBadge, Badge, Field, inputCls, ChartBox, money, num, fmtDate, fmtDateTime, TYPE_LABEL, STAGE_LABEL, STAGE_COLOR } from './ui';
 
 const TABS = [['overview', 'Hồ sơ'], ['visits', 'Lịch sử ghé'], ['favorites', 'Món yêu thích'], ['interactions', 'Tương tác'], ['tasks', 'Công việc'], ['deals', 'Cơ hội'], ['points', 'Điểm & hạng']];
@@ -31,7 +31,7 @@ export default function CrmCustomerDetail({ id, meta, go, isManager }) {
           <MemberCard id="card-crm" name={c.name} memberCode={c.memberCode} tier={c.tier} tierName={c.tierName} points={c.points} since={c.firstVisit || String(c.createdAt || '').slice(0, 10)} link={link} brand={d.settings.brand} />
           <div className="flex flex-wrap gap-2">
             <CopyLink link={link} />
-            <button onClick={() => downloadCardPng('card-crm', `the-${c.memberCode}.png`)} className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50 font-bold">⬇ Tải ảnh thẻ</button>
+            <SaveCardButton card={{ brand: d.settings.brand, name: c.name, memberCode: c.memberCode, tier: c.tier, tierName: c.tierName, points: c.points, since: c.firstVisit || String(c.createdAt || '').slice(0, 10), link }} filename={`the-${c.memberCode}.png`} className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50 font-bold">⬇ Tải ảnh thẻ</SaveCardButton>
             <a href={link} target="_blank" rel="noreferrer" className="px-3 py-1.5 rounded border bg-white hover:bg-gray-50 font-bold">👁 Xem như khách</a>
           </div>
           {c.nextTier ? (

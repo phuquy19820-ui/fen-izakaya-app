@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
-import MemberCard, { downloadCardPng } from '../../components/crm/MemberCard';
+import MemberCard, { SaveCardButton } from '../../components/crm/MemberCard';
 
 const money = (n) => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 const PERIOD = { best_month12: 'chi tiêu trong một tháng (12 tháng gần nhất)', rolling12: 'tổng chi tiêu 12 tháng gần nhất', lifetime: 'tổng chi tiêu từ trước đến nay' };
@@ -34,7 +34,7 @@ export default function CardPage() {
         {data && (
           <div className="w-full flex flex-col items-center gap-4 mt-6" style={{ maxWidth: 440 }}>
             <MemberCard id="card-public" brand={data.brand} name={data.name} memberCode={data.memberCode} tier={data.tier} tierName={data.tierName} points={data.points} since={data.since} link={link} />
-            <button onClick={() => downloadCardPng('card-public', `the-thanh-vien-${data.memberCode}.png`)} className="px-5 py-2 rounded-full bg-white text-gray-900 font-bold text-sm shadow">⬇ Lưu thẻ về điện thoại</button>
+            <SaveCardButton card={{ brand: data.brand, name: data.name, memberCode: data.memberCode, tier: data.tier, tierName: data.tierName, points: data.points, since: data.since, link }} filename={`the-thanh-vien-${data.memberCode}.png`} className="px-5 py-2 rounded-full bg-white text-gray-900 font-bold text-sm shadow">⬇ Lưu thẻ về điện thoại</SaveCardButton>
 
             <div className="w-full rounded-2xl p-4 text-white" style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.12)' }}>
               {data.next ? (
