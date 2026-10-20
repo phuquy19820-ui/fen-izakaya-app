@@ -1,11 +1,11 @@
 import React from 'react';
 
-// Dòng bản quyền + logo, hiện ở cuối mọi màn hình của app
+// Logo + dòng bản quyền luôn hiện ở góc dưới bên phải mọi màn hình (không cần cuộn xuống cuối trang)
 export default function Credit() {
   return (
-    <div className="print:hidden" style={{ background: '#ffffff', borderTop: '1px solid #e2e8f0', padding: '10px 16px 14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, fontFamily: "'Segoe UI', Roboto, Arial, sans-serif" }}>
-      <img src="/logo-iafc.png" alt="IAFC" style={{ height: 40, width: 'auto', display: 'block' }} />
-      <span style={{ fontSize: 13, color: '#475569' }}>Được tạo bởi <b style={{ color: '#0f172a' }}>Quý Nguyễn</b></span>
+    <div className="print:hidden" style={{ position: 'fixed', right: 10, bottom: 8, zIndex: 55, pointerEvents: 'none', background: 'rgba(255,255,255,.96)', border: '1px solid #cbd5e1', borderRadius: 14, boxShadow: '0 2px 10px rgba(0,0,0,.18)', padding: '4px 12px 4px 6px', display: 'flex', alignItems: 'center', gap: 8, fontFamily: "'Segoe UI', Roboto, Arial, sans-serif" }}>
+      <img src="/logo-iafc.png?v=2" alt="IAFC" style={{ height: 46, width: 'auto', display: 'block' }} />
+      <span style={{ fontSize: 13, color: '#475569', lineHeight: 1.2 }}>Được tạo bởi<br /><b style={{ color: '#0f172a', fontSize: 14 }}>Quý Nguyễn</b></span>
     </div>
   );
 }
