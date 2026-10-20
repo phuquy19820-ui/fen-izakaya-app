@@ -6,6 +6,8 @@ const { normalizeString } = require('./bomService');
 const GROUP_LABEL = Object.fromEntries(GROUPS.map((g) => [g.key, g.label]));
 const KNOWN_TOKENS = new Set(['FB', 'FACEBOOK', 'IG', 'INSTAGRAM', 'TT', 'TIKTOK', 'ZL', 'ZALO', 'HL', 'HOTLINE', 'CTV', 'MKT', 'GG', 'GOOGLE', 'KOL', 'KOC', 'SOCIAL', 'MXH', 'WG']);
 
+const PARSE_VERSION = 2;
+
 const DEFAULT_SETTINGS = {
   brand: 'FEN IZAKAYA',
   // Hạng thẻ theo chi tiêu (đ). Ngưỡng do chủ quán tự nhập trong Cài đặt.
@@ -46,7 +48,10 @@ function parseCustomerName(raw) {
   const parens = [];
   let rest = original.replace(/[\(\（]([^\)\）]*)[\)\）]?/g, (_, inner) => { parens.push(inner.trim()); return ' '; });
   if (phoneText) rest = rest.replace(phoneText, ' ');
-  const display = rest.replace(/\s*[-–]\s*\d{5,}\s*$/, '').replace(/^[\s\-–]+|[\s\-–]+$/g, '').replace(/\s+/g, ' ').trim() || original;
+  let display = rest.replace(/\s*[-–]\s*\d{5,}\s*$/, '').replace(/^[\s\-–]+|[\s\-–]+$/g, '').replace(/\s+/g, ' ').trim() || original;
+  // tiền tố là ký hiệu nguồn ("FB - MS LINH", "CTV - MS SOU"): bỏ tiền tố, giữ tên khách
+  const pre = display.match(/^([A-Za-z.]{2,10})\s*-\s+(.{2,})$/);
+  if (pre && KNOWN_TOKENS.has(pre[1].toUpperCase().replace(/[^A-Z]/g, ''))) display = pre[2].trim();
   const refBy = parens.filter((p) => p && !KNOWN_TOKENS.has(p.toUpperCase().replace(/[^A-Z]/g, ''))).join(', ').substring(0, 120);
   const key = phone ? 'p:' + phone : 'n:' + normalizeString(display);
   if (key === 'n:' || key.length < 5) return null;
@@ -89,6 +94,21 @@ async function init(pool) {
   await q(`CREATE TABLE IF NOT EXISTS crm_points_ledger (
     id SERIAL PRIMARY KEY, customer_id INT NOT NULL, points INT NOT NULL, reason VARCHAR(200), user_id INT, user_name VARCHAR(120), created_at TIMESTAMP DEFAULT NOW()
   )`);
+  await reparseIfNeeded(pool);
+}
+
+// Đổi cách nhận diện tên khách: nhận diện lại toàn bộ (chỉ khi chưa có dữ liệu do người dùng nhập, tránh mất ghi chú)
+async function reparseIfNeeded(pool) {
+  const v = (await pool.query("SELECT value FROM crm_settings WHERE key = 'parse'")).rows[0];
+  if (v && Number(v.value.version) >= PARSE_VERSION) return;
+  const used = (await pool.query(`SELECT (SELECT COUNT(*) FROM crm_interactions) + (SELECT COUNT(*) FROM crm_tasks) + (SELECT COUNT(*) FROM crm_points_ledger)
+    + (SELECT COUNT(*) FROM crm_deals WHERE customer_id IS NOT NULL)
+    + (SELECT COUNT(*) FROM crm_customers WHERE is_manual OR tier_override IS NOT NULL OR COALESCE(notes, '') <> '' OR birthday IS NOT NULL OR COALESCE(email, '') <> '' OR cardinality(tags) > 0) AS n`)).rows[0].n;
+  if (Number(used) === 0) {
+    await pool.query('UPDATE cukcuk_invoices SET cust_key = NULL');
+    await pool.query('DELETE FROM crm_customers WHERE NOT is_manual');
+  }
+  await pool.query("INSERT INTO crm_settings (key, value) VALUES ('parse', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [JSON.stringify({ version: PARSE_VERSION })]);
 }
 
 // ---- cài đặt
