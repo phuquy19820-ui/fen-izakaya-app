@@ -20,8 +20,8 @@ export default function Credit({ variant = 'badge' }) {
   return (
     <>
       <style>{`
-        .fen-credit{position:fixed;left:8px;top:5px;z-index:55;pointer-events:none;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.97);border-radius:12px;padding:3px 12px 3px 5px;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:${font}}
-        .fen-credit img{height:54px;width:auto;display:block}
+        .fen-credit{position:fixed;left:8px;top:9px;z-index:55;pointer-events:none;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.97);border-radius:12px;padding:3px 12px 3px 5px;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:${font}}
+        .fen-credit img{height:50px;width:auto;display:block}
         .fen-credit .t{font-size:12px;color:#475569;line-height:1.25}
         .fen-credit .t b{color:#0f172a;font-size:14px}
         @media (max-width:900px){.fen-credit .t{display:none}.fen-credit{padding:3px}}

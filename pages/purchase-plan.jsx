@@ -216,7 +216,7 @@ export default function PurchasePlanMisaUI() {
       </Head>
 
       <div className="min-h-screen bg-gray-100 flex flex-col text-xs font-sans">
-        <header className="relative text-white px-6 py-2 flex justify-center items-center" style={{ backgroundColor: '#0073C5', minHeight: 66 }}>
+        <header className="relative text-white px-6 py-2 flex justify-center items-center" style={{ backgroundColor: '#0073C5', minHeight: 72, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <div className="text-center">
             <h1 className="text-base font-bold">LẬP KẾ HOẠCH MUA NGUYÊN VẬT LIỆU</h1>
             <p className="text-blue-200">Chi nhánh: {currentBranch?.branch_name || 'Đang tải...'}</p>

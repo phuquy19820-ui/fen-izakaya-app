@@ -112,7 +112,7 @@ export default function SalesReport() {
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
       </Head>
       <div className="min-h-screen bg-gray-100 text-xs">
-        <header className="px-6 py-2 text-white text-center" style={{ backgroundColor: '#0073C5', minHeight: 66 }}>
+        <header className="px-6 py-2 text-white text-center" style={{ backgroundColor: '#0073C5', minHeight: 72, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <h1 className="text-base font-bold">DOANH THU & SỐ LƯỢNG THEO MÓN</h1>
           <p className="text-blue-200">Chi nhánh: {branchInfo?.branch_name || 'Đang tải…'}</p>
         </header>

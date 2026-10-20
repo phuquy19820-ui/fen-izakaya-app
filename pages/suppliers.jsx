@@ -78,7 +78,7 @@ export default function Suppliers() {
         <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
       </Head>
       <div className="min-h-screen bg-gray-100 text-xs">
-        <header className="px-6 py-2 text-white text-center" style={{ backgroundColor: '#0073C5', minHeight: 66 }}>
+        <header className="px-6 py-2 text-white text-center" style={{ backgroundColor: '#0073C5', minHeight: 72, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <h1 className="text-base font-bold">NHÀ CUNG CẤP VÀ LỊCH SỬ MUA THEO NVL</h1>
           <p className="text-blue-200">Chi nhánh: {branchInfo?.branch_name || 'Đang tải…'} · lấy từ danh mục Nhà cung cấp và báo cáo Mua hàng chi tiết theo NCC và NVL của CUKCUK</p>
         </header>
