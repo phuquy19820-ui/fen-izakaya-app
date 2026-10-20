@@ -3,6 +3,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { useAuth } from '../components/AuthContext';
 import { homeFor } from '../components/permissions';
+import Credit from '../components/Credit';
 
 export default function Login() {
   const router = useRouter();
@@ -39,6 +40,7 @@ export default function Login() {
       <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(135deg,#0f172a,#1e3a8a 60%,#0f172a)' }}>
         <form onSubmit={submit} className="bg-white rounded-2xl shadow-2xl w-full p-8 space-y-4" style={{ maxWidth: 400 }}>
           <div className="text-center">
+            <div className="flex justify-center mb-2"><Credit variant="inline" /></div>
             <div className="text-xs tracking-widest text-gray-500">FEN IZAKAYA</div>
             <h1 className="text-2xl font-bold text-gray-900 mt-1">Đăng nhập</h1>
             <p className="text-sm text-gray-500 mt-1">Hệ thống quản lý nhà hàng & CRM khách hàng</p>

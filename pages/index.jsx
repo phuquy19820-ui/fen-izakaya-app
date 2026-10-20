@@ -3,6 +3,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import Router from 'next/router';
 import BackupPanel from '../components/BackupPanel';
+import Credit from '../components/Credit';
 import { useAuth } from '../components/AuthContext';
 import { canUse, hasBranchModules } from '../components/permissions';
 
@@ -69,9 +70,12 @@ export default function Dashboard() {
               <h1 className="text-3xl font-bold">🍽️ Fen Izakaya</h1>
               <p className="text-blue-200">Hệ Thống Quản Lý Kế Hoạch Mua Nguyên Vật Liệu</p>
             </div>
-            <div className="text-sm text-blue-100">
-              <p>🤖 Tự động phân loại & tính toán kế hoạch mua</p>
-              <p>📊 Tích hợp CUKCUK | 🏪 Quản lý đa chi nhánh</p>
+            <div className="text-sm text-blue-100 flex items-center gap-4">
+              <div>
+                <p>🤖 Tự động phân loại & tính toán kế hoạch mua</p>
+                <p>📊 Tích hợp CUKCUK | 🏪 Quản lý đa chi nhánh</p>
+              </div>
+              <Credit variant="inline" />
             </div>
           </div>
         </header>

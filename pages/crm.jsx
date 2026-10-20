@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { api, setCrmBranch } from '../components/crm/ui';
 import { hasBranchModules } from '../components/permissions';
+import Credit from '../components/Credit';
 import CrmDashboard from '../components/crm/CrmDashboard';
 import CrmCustomers from '../components/crm/CrmCustomers';
 import CrmCustomerDetail from '../components/crm/CrmCustomerDetail';
@@ -54,6 +55,7 @@ export default function Crm() {
             <div className="text-xs text-blue-200">Quản lý khách hàng, thẻ thành viên, chăm sóc & cơ hội đặt tiệc</div>
           </div>
           <div className="flex items-center gap-3 text-xs">
+            <Credit variant="inline" />
             {meta && <span className="bg-white bg-opacity-15 rounded-full px-3 py-1">{meta.user.fullName} · {ROLE[meta.user.role]}</span>}
             {meta && hasBranchModules(meta.user) && <Link href="/"><a className="underline text-blue-100">← Hệ thống quản lý nhà hàng</a></Link>}
           </div>
