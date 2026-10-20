@@ -3,8 +3,13 @@ import Head from 'next/head';
 import Link from 'next/link';
 import Router from 'next/router';
 import BackupPanel from '../components/BackupPanel';
+import { useAuth } from '../components/AuthContext';
+import { canUse, hasBranchModules } from '../components/permissions';
 
 export default function Dashboard() {
+  const { user } = useAuth();
+  const isAdmin = !!user && user.role === 'admin';
+  const can = (k) => canUse(user, k);
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -75,15 +80,16 @@ export default function Dashboard() {
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold text-gray-800">Danh Sách Chi Nhánh</h2>
             <div className="flex items-center gap-3">
-              <Link href="/crm?view=users"><a className="bg-gray-700 hover:bg-gray-800 text-white px-5 py-2 rounded-lg font-bold shadow-lg">🔐 Tài khoản</a></Link>
-              <Link href="/crm"><a className="bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 rounded-lg font-bold shadow-lg">👥 CRM Khách hàng</a></Link>
-              <BackupPanel />
-              <button
-                onClick={() => setShowCreateForm(!showCreateForm)}
-                className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg"
-              >
-                + Tạo Chi Nhánh Mới
-              </button>
+              {isAdmin && <Link href="/crm?view=users"><a className="bg-gray-700 hover:bg-gray-800 text-white px-5 py-2 rounded-lg font-bold shadow-lg">🔐 Tài khoản</a></Link>}
+              {isAdmin && <BackupPanel />}
+              {isAdmin && (
+                <button
+                  onClick={() => setShowCreateForm(!showCreateForm)}
+                  className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg"
+                >
+                  + Tạo Chi Nhánh Mới
+                </button>
+              )}
             </div>
           </div>
 
@@ -146,13 +152,13 @@ export default function Dashboard() {
             <div className="text-center py-12">
               <p className="text-gray-600">Đang tải dữ liệu...</p>
             </div>
-          ) : branches.length === 0 ? (
+          ) : branches.length === 0 && !can('crm') ? (
             <div className="bg-white p-8 rounded-lg shadow text-center">
               <p className="text-gray-600 mb-4">Chưa có chi nhánh nào. Hãy tạo chi nhánh mới để bắt đầu.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {branches.map((branch) => (
+              {hasBranchModules(user) && branches.map((branch) => (
                 <div
                   key={branch.branch_id}
                   className="bg-white rounded-lg shadow-lg hover:shadow-xl transition overflow-hidden border-t-4 border-blue-600"
@@ -166,50 +172,66 @@ export default function Dashboard() {
                       </p>
                     )}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                      <Link href={`/purchase-plan?branch=${branch.branch_id}`}>
+                      {can('plan') && (<Link href={`/purchase-plan?branch=${branch.branch_id}`}>
                         <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded font-bold text-sm">
                           📊 Kế Hoạch Mua
                         </a>
-                      </Link>
-                      <Link href={`/sales-report?branch=${branch.branch_id}`}>
+                      </Link>)}
+                      {can('sales') && (<Link href={`/sales-report?branch=${branch.branch_id}`}>
                         <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded font-bold text-sm">
                           💰 Doanh Thu
                         </a>
-                      </Link>
-                      <Link href={`/stock-report?branch=${branch.branch_id}`}>
+                      </Link>)}
+                      {can('stock') && (<Link href={`/stock-report?branch=${branch.branch_id}`}>
                         <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-2 rounded font-bold text-sm">
                           📦 Tồn Kho
                         </a>
-                      </Link>
-                      <Link href={`/purchase-books?branch=${branch.branch_id}`}>
+                      </Link>)}
+                      {can('books') && (<Link href={`/purchase-books?branch=${branch.branch_id}`}>
                         <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded font-bold text-sm">
                           📒 Sổ Mua Hàng
                         </a>
-                      </Link>
-                      <Link href={`/suppliers?branch=${branch.branch_id}`}>
+                      </Link>)}
+                      {can('suppliers') && (<Link href={`/suppliers?branch=${branch.branch_id}`}>
                         <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded font-bold text-sm">
                           🚚 Nhà Cung Cấp
                         </a>
-                      </Link>
-                      <Link href={`/revenue-report?branch=${branch.branch_id}`}>
-                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-teal-700 hover:bg-teal-800 text-white px-3 py-2 rounded font-bold text-sm">
+                      </Link>)}
+                      {can('revenue') && (<Link href={`/revenue-report?branch=${branch.branch_id}`}>
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px', background: '#0f766e' }} className="text-white px-3 py-2 rounded font-bold text-sm">
                           📈 Báo Cáo DT
                         </a>
-                      </Link>
-                      <Link href={`/payables?branch=${branch.branch_id}`}>
+                      </Link>)}
+                      {can('payables') && (<Link href={`/payables?branch=${branch.branch_id}`}>
                         <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px' }} className="bg-gray-700 hover:bg-gray-800 text-white px-3 py-2 rounded font-bold text-sm">
                           💳 Công Nợ NCC
                         </a>
-                      </Link>
-                      <Link href={`/sync-cukcuk?branch=${branch.branch_id}`}>
+                      </Link>)}
+                      {can('sync') && (<Link href={`/sync-cukcuk?branch=${branch.branch_id}`}>
                         <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px', gridColumn: '1 / -1' }} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded font-bold text-sm">
                           🔄 Đồng Bộ
+                        </a>
+                      </Link>)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {can('crm') && (
+                <div className="bg-white rounded-lg shadow-lg hover:shadow-xl transition overflow-hidden" style={{ borderTop: '4px solid #7c3aed' }}>
+                  <div className="p-6">
+                    <h3 className="text-lg font-bold text-gray-800 mb-2">👥 CRM Khách hàng</h3>
+                    <p className="text-sm text-gray-500 mb-4">Quản lý khách hàng, thẻ thành viên, chăm sóc, nhắc việc và cơ hội đặt tiệc cho cả hệ thống nhà hàng.</p>
+                    <p className="text-sm text-gray-500 mb-4">Khách lấy tự động từ doanh thu đã đồng bộ</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+                      <Link href="/crm">
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px', background: '#7c3aed' }} className="text-white px-3 py-2 rounded font-bold text-sm">
+                          👥 Mở CRM Khách Hàng
                         </a>
                       </Link>
                     </div>
                   </div>
                 </div>
-              ))}
+              )}
             </div>
           )}
 

@@ -3,6 +3,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { api } from '../components/crm/ui';
+import { hasBranchModules } from '../components/permissions';
 import CrmDashboard from '../components/crm/CrmDashboard';
 import CrmCustomers from '../components/crm/CrmCustomers';
 import CrmCustomerDetail from '../components/crm/CrmCustomerDetail';
@@ -50,7 +51,7 @@ export default function Crm() {
           </div>
           <div className="flex items-center gap-3 text-xs">
             {meta && <span className="bg-white bg-opacity-15 rounded-full px-3 py-1">{meta.user.fullName} · {ROLE[meta.user.role]}</span>}
-            {isAdmin && <Link href="/"><a className="underline text-blue-100">← Hệ thống quản lý nhà hàng</a></Link>}
+            {meta && hasBranchModules(meta.user) && <Link href="/"><a className="underline text-blue-100">← Hệ thống quản lý nhà hàng</a></Link>}
           </div>
         </header>
         <nav className="bg-white border-b px-4 py-2 flex flex-wrap gap-1.5">

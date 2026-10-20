@@ -8,6 +8,61 @@ const SECRET = process.env.SESSION_SECRET
 const COOKIE = 'fen_sid';
 const SESSION_DAYS = 30;
 const ROLES = ['admin', 'manager', 'staff'];
+// Các chức năng (tab) có thể cấp quyền riêng cho từng tài khoản
+const MODULES = [
+  { key: 'plan', label: 'Kế hoạch mua' }, { key: 'sales', label: 'Doanh thu theo món' }, { key: 'revenue', label: 'Báo cáo doanh thu' },
+  { key: 'stock', label: 'Tồn kho' }, { key: 'books', label: 'Sổ mua hàng' }, { key: 'suppliers', label: 'Nhà cung cấp' },
+  { key: 'payables', label: 'Công nợ NCC' }, { key: 'sync', label: 'Đồng bộ & ghép món' }, { key: 'crm', label: 'CRM Khách hàng' }
+];
+const MODULE_KEYS = MODULES.map((m) => m.key);
+
+// API nào thuộc chức năng nào (chỉ cần có một trong các quyền liệt kê). Không có trong bảng = chỉ Admin.
+const RULES = [
+  [/^\/api\/crm\//, ['crm']],
+  [/^\/api\/branches\/[^/]+\/buyer$/, ['plan']],
+  [/^\/api\/branches(\/[^/]+)?$/, ['*'], 'GET'],
+  [/^\/api\/purchase-plans/, ['plan']],
+  [/^\/api\/(materials|dishes|material-list)/, ['plan', 'sync']],
+  [/^\/api\/bom\/upload/, ['sync']],
+  [/^\/api\/beverage/, ['plan']],
+  [/^\/api\/purchase-orders/, ['plan', 'books']],
+  [/^\/api\/purchase-books/, ['books']],
+  [/^\/api\/units/, ['books']],
+  [/^\/api\/sales\/report/, ['sales']],
+  [/^\/api\/sales\//, ['sync']],
+  [/^\/api\/menu\/add-missing/, ['revenue']],
+  [/^\/api\/menu\//, ['sync']],
+  [/^\/api\/inventory\/(import|record)/, ['sync']],
+  [/^\/api\/inventory\//, ['plan']],
+  [/^\/api\/stock\//, ['stock']],
+  [/^\/api\/suppliers\/import/, ['sync']],
+  [/^\/api\/suppliers/, ['suppliers', 'plan', 'books', 'payables']],
+  [/^\/api\/payables\/import/, ['sync']],
+  [/^\/api\/payables/, ['payables']],
+  [/^\/api\/revenue\/import/, ['sync']],
+  [/^\/api\/revenue\//, ['revenue']],
+  [/^\/api\/auth\/sync-token$/, ['sync']]
+];
+function allowedFor(user, method, path) {
+  if (user.role === 'admin') return true;
+  const perms = user.permissions || [];
+  for (const [re, mods, onlyMethod] of RULES) {
+    if (!re.test(path)) continue;
+    if (onlyMethod && method !== onlyMethod) continue;
+    return mods.includes('*') ? perms.length > 0 : mods.some((m) => perms.includes(m));
+  }
+  return false;
+}
+const cleanPerms = (p) => (Array.isArray(p) ? Array.from(new Set(p.filter((x) => MODULE_KEYS.includes(x)))) : ['crm']);
+
+// danh sách mã chi nhánh (để chặn truy cập chi nhánh không được gán)
+let branchCache = { at: 0, ids: [] };
+async function knownBranchIds(pool) {
+  if (Date.now() - branchCache.at > 60000) {
+    try { branchCache = { at: Date.now(), ids: (await pool.query('SELECT branch_id FROM branches')).rows.map((r) => r.branch_id) }; } catch (e) { /* giữ bản cũ */ }
+  }
+  return branchCache.ids;
+}
 
 // ---- mật khẩu (scrypt, có muối)
 function hashPassword(password) {
@@ -56,6 +111,7 @@ async function init(pool) {
     phone VARCHAR(30), created_at TIMESTAMP DEFAULT NOW(), last_login TIMESTAMP
   )`);
   await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS app_users_username_lower ON app_users (lower(username))');
+  await pool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS permissions TEXT[] DEFAULT '{crm}'");
   await pool.query(`CREATE TABLE IF NOT EXISTS app_sessions (
     token_hash VARCHAR(64) PRIMARY KEY, user_id INT NOT NULL, created_at TIMESTAMP DEFAULT NOW(), expires_at TIMESTAMP NOT NULL, last_seen TIMESTAMP DEFAULT NOW()
   )`);
@@ -89,11 +145,11 @@ function middleware(pool) {
     try {
       const sid = parseCookies(req)[COOKIE];
       if (sid) {
-        const r = await pool.query(`SELECT u.id, u.username, u.full_name, u.role, u.branch_ids, u.active, s.token_hash
+        const r = await pool.query(`SELECT u.id, u.username, u.full_name, u.role, u.branch_ids, u.permissions, u.active, s.token_hash
           FROM app_sessions s JOIN app_users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > NOW()`, [sha256(sid)]);
         if (r.rows[0] && r.rows[0].active) {
           const u = r.rows[0];
-          req.user = { id: u.id, username: u.username, fullName: u.full_name || u.username, role: u.role, branchIds: u.branch_ids || [] };
+          req.user = { id: u.id, username: u.username, fullName: u.full_name || u.username, role: u.role, branchIds: u.branch_ids || [], permissions: u.role === 'admin' ? MODULE_KEYS : (u.permissions || ['crm']) };
           req.sessionHash = u.token_hash;
         }
       }
@@ -104,13 +160,22 @@ function middleware(pool) {
     if (!req.user) {
       // tiện ích đồng bộ: chỉ được gọi đúng các API nhập dữ liệu và phải có token do Admin cấp
       if (req.method === 'POST' && SYNC_PATHS.test(url) && verifySyncToken(req.headers['x-sync-token'])) {
-        req.user = { id: 0, username: 'sync', fullName: 'Tiện ích đồng bộ', role: 'admin', branchIds: [], sync: true };
+        req.user = { id: 0, username: 'sync', fullName: 'Tiện ích đồng bộ', role: 'admin', branchIds: [], permissions: MODULE_KEYS, sync: true };
         return next();
       }
       return res.status(401).json({ success: false, code: 'UNAUTHENTICATED', message: 'Bạn cần đăng nhập' });
     }
-    if (req.user.role !== 'admin' && !(url.startsWith('/api/crm/') || url.startsWith('/api/auth/'))) {
-      return res.status(403).json({ success: false, code: 'FORBIDDEN', message: 'Tài khoản của bạn chỉ được dùng chức năng CRM' });
+    if (url.startsWith('/api/auth/') && url !== '/api/auth/sync-token') return next();
+    if (!allowedFor(req.user, req.method, url)) {
+      return res.status(403).json({ success: false, code: 'FORBIDDEN', message: 'Tài khoản của bạn không có quyền dùng chức năng này' });
+    }
+    if (req.user.role !== 'admin') {
+      // chỉ được dùng dữ liệu của chi nhánh được gán
+      const ids = await knownBranchIds(pool);
+      const cands = [...url.split('/').map((x) => { try { return decodeURIComponent(x); } catch (e) { return x; } }), req.query.branch, req.query.branchId, req.body && req.body.branchId].filter(Boolean).map(String);
+      if (cands.some((c) => ids.includes(c) && !(req.user.branchIds || []).includes(c))) {
+        return res.status(403).json({ success: false, code: 'FORBIDDEN_BRANCH', message: 'Bạn không được xem dữ liệu của chi nhánh này' });
+      }
     }
     return next();
   };
@@ -138,7 +203,7 @@ function registerRoutes(app, pool) {
       await pool.query('UPDATE app_users SET last_login = NOW() WHERE id = $1', [u.id]);
       await pool.query("DELETE FROM app_sessions WHERE expires_at < NOW()");
       setSessionCookie(res, token, SESSION_DAYS * 86400);
-      return res.json({ success: true, data: { id: u.id, username: u.username, fullName: u.full_name || u.username, role: u.role, branchIds: u.branch_ids || [] } });
+      return res.json({ success: true, data: { id: u.id, username: u.username, fullName: u.full_name || u.username, role: u.role, branchIds: u.branch_ids || [], permissions: u.role === 'admin' ? MODULE_KEYS : (u.permissions || ['crm']) } });
     } catch (e) {
       return res.status(500).json({ success: false, message: e.message });
     }
@@ -169,18 +234,19 @@ function registerRoutes(app, pool) {
   });
 
   // token cho tiện ích Chrome đồng bộ (Admin cấp, hiệu lực 6 giờ)
-  app.get('/api/auth/sync-token', requireAdmin, (req, res) => res.json({ success: true, data: { token: signSyncToken(6) } }));
+  app.get('/api/auth/sync-token', (req, res) => (req.user && (req.user.role === 'admin' || (req.user.permissions || []).includes('sync')) ? res.json({ success: true, data: { token: signSyncToken(6) } }) : res.status(403).json({ success: false, message: 'Không có quyền đồng bộ' })));
 
   // ---- quản lý tài khoản (Admin)
   app.get('/api/users', requireAdmin, async (req, res) => {
-    const r = await pool.query('SELECT id, username, full_name, role, branch_ids, active, phone, created_at, last_login FROM app_users ORDER BY id');
+    const r = await pool.query('SELECT id, username, full_name, role, branch_ids, permissions, active, phone, created_at, last_login FROM app_users ORDER BY id');
     res.json({ success: true, data: r.rows });
   });
   const cleanUser = (b) => ({
     fullName: String(b.fullName || '').trim().substring(0, 120),
     role: ROLES.includes(b.role) ? b.role : 'staff',
     branchIds: Array.isArray(b.branchIds) ? b.branchIds.map(String).slice(0, 50) : [],
-    phone: String(b.phone || '').trim().substring(0, 30)
+    phone: String(b.phone || '').trim().substring(0, 30),
+    permissions: cleanPerms(b.permissions)
   });
   app.post('/api/users', requireAdmin, async (req, res) => {
     const username = String((req.body && req.body.username) || '').trim();
@@ -189,8 +255,8 @@ function registerRoutes(app, pool) {
     if (password.length < 8) return res.status(400).json({ success: false, message: 'Mật khẩu phải có ít nhất 8 ký tự' });
     const c = cleanUser(req.body);
     try {
-      const r = await pool.query(`INSERT INTO app_users (username, full_name, password_hash, role, branch_ids, phone) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-        [username, c.fullName || username, hashPassword(password), c.role, c.branchIds, c.phone]);
+      const r = await pool.query(`INSERT INTO app_users (username, full_name, password_hash, role, branch_ids, phone, permissions) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        [username, c.fullName || username, hashPassword(password), c.role, c.branchIds, c.phone, c.permissions]);
       return res.json({ success: true, data: { id: r.rows[0].id } });
     } catch (e) {
       return res.status(e.code === '23505' ? 409 : 500).json({ success: false, message: e.code === '23505' ? 'Tên đăng nhập đã tồn tại' : e.message });
@@ -200,11 +266,11 @@ function registerRoutes(app, pool) {
     const id = Number(req.params.id);
     const target = (await pool.query('SELECT * FROM app_users WHERE id = $1', [id])).rows[0];
     if (!target) return res.status(404).json({ success: false, message: 'Không tìm thấy tài khoản' });
-    const c = cleanUser({ ...target, fullName: target.full_name, branchIds: target.branch_ids, ...req.body });
+    const c = cleanUser({ ...target, fullName: target.full_name, branchIds: target.branch_ids, permissions: target.permissions, ...req.body });
     let active = req.body.active === undefined ? target.active : !!req.body.active;
     let role = c.role;
     if (target.username.toLowerCase() === 'admin') { role = 'admin'; active = true; } // luôn giữ Admin
-    await pool.query('UPDATE app_users SET full_name = $2, role = $3, branch_ids = $4, phone = $5, active = $6 WHERE id = $1', [id, c.fullName || target.username, role, c.branchIds, c.phone, active]);
+    await pool.query('UPDATE app_users SET full_name = $2, role = $3, branch_ids = $4, phone = $5, active = $6, permissions = $7 WHERE id = $1', [id, c.fullName || target.username, role, c.branchIds, c.phone, active, c.permissions]);
     if (!active) await pool.query('DELETE FROM app_sessions WHERE user_id = $1', [id]);
     return res.json({ success: true });
   });
@@ -226,4 +292,4 @@ function registerRoutes(app, pool) {
   });
 }
 
-module.exports = { init, middleware, registerRoutes, requireAdmin, hashPassword, verifyPassword };
+module.exports = { init, middleware, registerRoutes, requireAdmin, hashPassword, verifyPassword, MODULES };

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { useAuth } from '../components/AuthContext';
+import { homeFor } from '../components/permissions';
 
 export default function Login() {
   const router = useRouter();
@@ -19,7 +20,7 @@ export default function Login() {
       const j = await (await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) })).json();
       if (!j.success) { setError(j.message || 'Đăng nhập thất bại'); return; }
       const u = await refresh();
-      const next = router.query.next && String(router.query.next).startsWith('/') ? String(router.query.next) : (u && u.role === 'admin' ? '/' : '/crm');
+      const next = router.query.next && String(router.query.next).startsWith('/') ? String(router.query.next) : homeFor(u);
       router.replace(next);
     } catch (err) {
       setError('Không kết nối được máy chủ');

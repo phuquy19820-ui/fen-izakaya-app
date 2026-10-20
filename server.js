@@ -260,7 +260,8 @@ async function initializeDatabase() {
 app.get('/api/branches', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM branches WHERE is_active = TRUE ORDER BY branch_name');
-    return res.json({ success: true, data: result.rows });
+    const rows = req.user && req.user.role !== 'admin' ? result.rows.filter((b) => (req.user.branchIds || []).includes(b.branch_id)) : result.rows;
+    return res.json({ success: true, data: rows });
   } catch (error) {
     console.error('❌ GET /api/branches error:', error.message, error.stack);
     return res.status(500).json({ success: false, message: error.message });

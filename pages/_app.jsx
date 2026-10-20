@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import UserBar from '../components/UserBar';
 import { AuthContext } from '../components/AuthContext';
+import { pathAllowed, homeFor } from '../components/permissions';
 
 const isPublic = (path) => path === '/login' || path.startsWith('/card/');
 
@@ -41,8 +42,8 @@ function MyApp({ Component, pageProps }) {
   let redirect = null;
   if (!state.loading) {
     if (!user && !isPublic(path)) redirect = '/login?next=' + encodeURIComponent(router.asPath);
-    else if (user && path === '/login') redirect = (router.query.next && String(router.query.next).startsWith('/')) ? String(router.query.next) : (user.role === 'admin' ? '/' : '/crm');
-    else if (user && user.role !== 'admin' && !path.startsWith('/crm') && !isPublic(path)) redirect = '/crm';
+    else if (user && path === '/login') redirect = (router.query.next && String(router.query.next).startsWith('/')) ? String(router.query.next) : homeFor(user);
+    else if (user && !isPublic(path) && path !== '/404' && !pathAllowed(user, path)) redirect = homeFor(user);
   }
   useEffect(() => { if (redirect) router.replace(redirect); }, [redirect]); // eslint-disable-line react-hooks/exhaustive-deps
 

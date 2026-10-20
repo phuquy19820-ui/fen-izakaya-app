@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { api, Card, Table, Badge, Modal, Field, inputCls, fmtDateTime } from './ui';
+import { MODULES } from '../permissions';
 
 const ROLE = { admin: 'Quản trị viên', manager: 'Quản lý', staff: 'Nhân viên' };
 
@@ -18,6 +19,7 @@ export default function CrmUsers({ meta }) {
         <Table rows={rows} rowKey={(r) => r.id} onRow={(r) => setEdit(r)} cols={[
           { label: 'Tên đăng nhập', render: (r) => <b>{r.username}</b> }, { label: 'Họ tên', render: (r) => r.full_name },
           { label: 'Vai trò', render: (r) => <Badge color={r.role === 'admin' ? '#dc2626' : r.role === 'manager' ? '#d97706' : '#0ea5e9'}>{ROLE[r.role]}</Badge> },
+          { label: 'Chức năng được dùng', render: (r) => (r.role === 'admin' ? 'Tất cả' : (r.permissions || ['crm']).map((k) => (MODULES.find((m) => m.key === k) || {}).label || k).join(', ') || <span className="text-red-500">Chưa cấp</span>) },
           { label: 'Chi nhánh được xem', render: (r) => (r.role === 'admin' ? 'Tất cả' : (r.branch_ids || []).map(branchName).join(', ') || <span className="text-red-500">Chưa gán</span>) },
           { label: 'Trạng thái', render: (r) => (r.active ? <Badge color="#16a34a">Hoạt động</Badge> : <Badge color="#64748b">Đã khóa</Badge>) },
           { label: 'Đăng nhập gần nhất', render: (r) => <span className="text-xs text-gray-500">{r.last_login ? fmtDateTime(r.last_login) : 'Chưa đăng nhập'}</span> }
@@ -31,8 +33,9 @@ export default function CrmUsers({ meta }) {
 function UserForm({ user, meta, onClose, onDone }) {
   const isNew = !!user.isNew;
   const isAdminUser = !isNew && String(user.username).toLowerCase() === 'admin';
-  const [v, setV] = useState({ username: user.username || '', fullName: user.full_name || '', role: user.role || 'staff', branchIds: user.branch_ids || [], phone: user.phone || '', active: user.active !== false, password: '' });
+  const [v, setV] = useState({ username: user.username || '', fullName: user.full_name || '', role: user.role || 'staff', branchIds: user.branch_ids || [], permissions: user.permissions || ['crm'], phone: user.phone || '', active: user.active !== false, password: '' });
   const [msg, setMsg] = useState('');
+  const togglePerm = (k) => setV({ ...v, permissions: v.permissions.includes(k) ? v.permissions.filter((x) => x !== k) : [...v.permissions, k] });
   const toggleBranch = (b) => setV({ ...v, branchIds: v.branchIds.includes(b) ? v.branchIds.filter((x) => x !== b) : [...v.branchIds, b] });
 
   const save = async () => {
@@ -60,6 +63,15 @@ function UserForm({ user, meta, onClose, onDone }) {
         {isNew && <Field label="Mật khẩu ban đầu * (≥ 8 ký tự)" className="col-span-2"><input type="text" value={v.password} onChange={(e) => setV({ ...v, password: e.target.value })} className={inputCls} /><div className="text-xs text-gray-500 mt-0.5">Người dùng có thể tự đổi mật khẩu sau khi đăng nhập (nút "Đổi mật khẩu" góc dưới bên trái).</div></Field>}
         <Field label="Vai trò"><select disabled={isAdminUser} value={v.role} onChange={(e) => setV({ ...v, role: e.target.value })} className={inputCls}><option value="staff">Nhân viên — xem/ghi chú khách của chi nhánh được gán</option><option value="manager">Quản lý — thêm quyền xuất danh sách, chỉnh điểm, xóa</option><option value="admin">Quản trị viên — toàn quyền</option></select></Field>
         <Field label="Số điện thoại"><input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} className={inputCls} /></Field>
+        {v.role !== 'admin' && (
+          <Field label="Chức năng (tab) được phép sử dụng" className="col-span-2">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5 border rounded-lg p-3 bg-gray-50">
+              {MODULES.map((m) => <label key={m.key} className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={v.permissions.includes(m.key)} onChange={() => togglePerm(m.key)} /> {m.icon} {m.label}</label>)}
+            </div>
+            <div className="flex gap-3 text-xs mt-1"><button type="button" onClick={() => setV({ ...v, permissions: MODULES.map((m) => m.key) })} className="text-blue-700 font-bold">Chọn tất cả</button><button type="button" onClick={() => setV({ ...v, permissions: ['crm'] })} className="text-gray-600 font-bold">Chỉ CRM</button><button type="button" onClick={() => setV({ ...v, permissions: [] })} className="text-red-600 font-bold">Bỏ hết</button></div>
+            <div className="text-xs text-gray-500 mt-0.5">Người dùng chỉ thấy các tab được tick và chỉ dùng dữ liệu của chi nhánh được gán bên dưới.</div>
+          </Field>
+        )}
         {v.role !== 'admin' && (
           <Field label="Chi nhánh được xem" className="col-span-2">
             <div className="flex flex-wrap gap-3">{meta.branches.map((b) => <label key={b.branch_id} className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={v.branchIds.includes(b.branch_id)} onChange={() => toggleBranch(b.branch_id)} /> {b.branch_name}</label>)}</div>
