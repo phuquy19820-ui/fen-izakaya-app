@@ -54,7 +54,7 @@ export default function CrmCustomerDetail({ id, meta, go, isManager }) {
               {c.tierOverride && <Badge color="#8b5cf6">Hạng chỉnh tay</Badge>}
             </div>
             <p className="text-sm text-gray-600 mt-1">{c.memberCode}{c.phone ? ' · 📞 ' + c.phone : ''}{c.email ? ' · ✉️ ' + c.email : ''}{c.source ? ' · Nguồn: ' + c.source : ''}{c.refBy ? ' · Giới thiệu: ' + c.refBy : ''}</p>
-            <ContactBar customer={c} settings={d.settings} onLogged={reload} />
+            <ContactBar customer={c} settings={d.settings} onLogged={load} />
             <div className="flex flex-wrap gap-1 mt-1">{c.tags.map((t) => <Badge key={t} color="#0ea5e9">{t}</Badge>)}</div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
