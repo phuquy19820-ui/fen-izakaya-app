@@ -237,12 +237,25 @@ export default function RevenueReport() {
               <select value={month} onChange={(e) => setMonth(e.target.value)} className="border px-2 py-1 rounded">
                 {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>Tháng {i + 1}</option>)}
               </select></div>
+            {tab === 'speed' ? (
+              <div className="relative"><label className="block font-semibold mb-0.5">So sánh với tháng (chọn nhiều)</label>
+                <details className="relative" style={{ minWidth: 190 }}>
+                  <summary className="border px-2 py-1 rounded bg-white cursor-pointer select-none" style={{ listStyle: 'none', height: 26 }}>{selMonths.length ? `Đã chọn ${selMonths.length} tháng` : 'Chọn các tháng…'} ▾</summary>
+                  <div className="absolute bg-white border rounded shadow-lg p-2" style={{ zIndex: 70, top: 28, left: 0, minWidth: 210, maxHeight: 320, overflowY: 'auto' }}>
+                    <button onClick={() => setSelMonths([])} className="mb-1 px-2 py-0.5 rounded border text-red-600">Bỏ chọn tất cả</button>
+                    {(meta && meta.months ? meta.months : []).slice().sort().reverse().map((m) => (
+                      <label key={m} className="flex items-center gap-2 py-0.5 cursor-pointer"><input type="checkbox" checked={selMonths.includes(m)} onChange={() => setSelMonths((v) => (v.includes(m) ? v.filter((x) => x !== m) : [...v, m]))} />{monthLabel(m)}</label>
+                    ))}
+                  </div>
+                </details></div>
+            ) : (
             <div><label className="block font-semibold mb-0.5">So sánh với tháng</label>
               <select value={cmp} onChange={(e) => setCmp(e.target.value)} className="border px-2 py-1 rounded">
                 <option value="auto">Tháng trước (tự động)</option>
                 <option value="none">Không so sánh</option>
                 {meta && meta.months.filter((m) => !(year && month && m === `${year}-${String(month).padStart(2, '0')}`)).map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
               </select></div>
+            )}
             <div><label className="block font-semibold mb-0.5">Nhóm món ăn</label>
               <select value={kind} onChange={(e) => setKind(e.target.value)} className="border px-2 py-1 rounded">
                 <option value="">Tất cả</option>{meta && meta.kinds.map((x) => <option key={x} value={x}>{x}</option>)}
@@ -452,14 +465,6 @@ export default function RevenueReport() {
                       <b>⚠ CẢNH BÁO: {data.notInMenu.length} món có bán nhưng chưa có trong danh mục thực đơn:</b> {data.notInMenu.map((x) => `${x.name} (SL ${num(x.qty)})`).join('; ')}
                     </div>
                   )}
-                  <div className="bg-white border rounded p-2">
-                    <div className="font-bold mb-1">📅 Chọn các tháng cần so sánh (hiện thêm cột SL từng tháng và cột TỔNG các tháng chọn) {selMonths.length > 0 && <button onClick={() => setSelMonths([])} className="ml-2 px-2 py-0.5 rounded border text-red-600">Bỏ chọn</button>}</div>
-                    <div className="flex flex-wrap gap-1">
-                      {Array.from({ length: 18 }, (_, i) => { const d = new Date(Date.UTC(data.year, data.month - 1 - i, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; }).map((m) => (
-                        <button key={m} onClick={() => setSelMonths((s) => (s.includes(m) ? s.filter((x) => x !== m) : [...s, m]))} className={`px-2 py-1 rounded border font-bold ${selMonths.includes(m) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>T{m.slice(5)}/{m.slice(0, 4)}</button>
-                      ))}
-                    </div>
-                  </div>
                   <div className="flex flex-wrap gap-2 items-center">
                     {[['', 'Tất cả', data.speed.length], ['fast', '🟢 Bán chạy', data.speedSummary.fast], ['slow', '🟡 Bán chậm', data.speedSummary.slow], ['veryslow', '🟠 Bán rất ít', data.speedSummary.veryslow], ['none', '⚫ Chưa bán được', data.speedSummary.none], ['low', `⚠ Bán ít (< ${lowQty})`, data.speedSummary.low]].map(([key, label, n]) => (
                       <button key={key || 'all'} onClick={() => setSpeedClass(key)} className={`px-3 py-1.5 rounded font-bold border ${speedClass === key ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>{label} ({n})</button>
