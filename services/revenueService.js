@@ -308,6 +308,9 @@ function buildReport(rawInvoices, rawItems, menu, params) {
     return prev[n];
   };
   const digitsOf = (t) => (t.match(/\d+/g) || []).join('|');
+  const selMonths = Array.from(new Set(params.months || [])).sort();
+  const selByCode = new Map();
+  items.forEach((it) => { if (!selMonths.includes(it.ym)) return; const a = selByCode.get(it.code) || {}; const o = a[it.ym] || (a[it.ym] = { qty: 0, rev: 0 }); o.qty += it.qty; o.rev += it.rev; selByCode.set(it.code, a); });
   const clusters = [];
   Array.from(speedMap.values()).sort((p, q) => q.qty - p.qty || q.rev - p.rev).forEach((x) => {
     const nk = normName(x.name), compact = nk.replace(/ /g, ''), dg = digitsOf(nk);
@@ -322,6 +325,8 @@ function buildReport(rawInvoices, rawItems, menu, params) {
   out.speed = speed.map((x, i) => {
     const before = totalQty ? cum / totalQty : 1;
     cum += x.qty;
+    const mq = {}; let selQty = 0, selRev = 0;
+    selMonths.forEach((m) => { let q = 0; (x.codes || [x.code]).forEach((cd) => { const o = (selByCode.get(cd) || {})[m]; if (o) { q += o.qty; selRev += o.rev; } }); mq[m] = q; selQty += q; });
     const cq = (x.codes || [x.code]).reduce((t, cd) => t + ((cmpSold.get(cd) || {}).qty || 0), 0);
     const c = cq ? { qty: cq } : null;
     let cls;
@@ -329,9 +334,10 @@ function buildReport(rawInvoices, rawItems, menu, params) {
     else if (before < 0.7) cls = 'fast';
     else if (before < 0.95) cls = 'slow';
     else cls = 'veryslow';
-    return { rank: i + 1, code: x.code, merged: (x.codes || []).length > 1 ? x.codes.length : 0, name: x.name, kind: x.kind, category: x.category, qty: x.qty, rev: x.rev, share: totalQty ? x.qty / totalQty : 0, cum: totalQty ? cum / totalQty : 0,
+    return { rank: i + 1, mq, selQty, selRev, code: x.code, merged: (x.codes || []).length > 1 ? x.codes.length : 0, name: x.name, kind: x.kind, category: x.category, qty: x.qty, rev: x.rev, share: totalQty ? x.qty / totalQty : 0, cum: totalQty ? cum / totalQty : 0,
       cls, low: x.qty > 0 && x.qty < lowQty, cmpQty: cmpYm ? (c ? c.qty : 0) : null, changePct: cmpYm && c && c.qty ? (x.qty - c.qty) / c.qty : null, inMenu: x.inMenu };
   });
+  out.selMonths = selMonths;
   out.speedSummary = { fast: 0, slow: 0, veryslow: 0, none: 0, low: 0, lowQty };
   out.speed.forEach((x) => { out.speedSummary[x.cls]++; if (x.low) out.speedSummary.low++; });
   out.notInMenu = (menu && menu.length) ? sold.filter((x) => !menuMap.has(x.code)).map((x) => ({ code: x.code, name: x.name, kind: x.kind, category: x.category, qty: x.qty, rev: x.rev })) : [];

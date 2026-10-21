@@ -495,18 +495,21 @@ app.get('/api/revenue/report/:branchId', async (req, res) => {
     const ym = `${year}-${String(month).padStart(2, '0')}`;
     const prevYm = month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
     const cmp = q.cmp === 'auto' ? prevYm : (/^\d{4}-\d{2}$/.test(String(q.cmp || '')) ? String(q.cmp) : '');
-    const minYear = Math.min(year, cmp ? Number(cmp.slice(0, 4)) : year);
+    const selMonths = String(q.months || '').split(',').filter((m) => /^\d{4}-\d{2}$/.test(m)).slice(0, 24);
+    const allYears = [year, cmp ? Number(cmp.slice(0, 4)) : year, ...selMonths.map((m) => Number(m.slice(0, 4)))];
+    const minYear = Math.min(...allYears);
+    const maxYear = Math.max(...allYears);
     const itemMode = !!(q.kind || q.category);
     const invoices = (await pool.query(`SELECT ref_no, to_char(inv_date, 'YYYY-MM-DD') AS d, time_in, area, shift, customer_name, people, amount, discount, service_fee, tax_reduction
-      FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date >= $2 AND inv_date <= $3`, [branchId, `${minYear}-01-01`, `${year}-12-31`])).rows;
-    const months = itemMode ? null : [ym, cmp].filter(Boolean);
+      FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date >= $2 AND inv_date <= $3`, [branchId, `${minYear}-01-01`, `${maxYear}-12-31`])).rows;
+    const months = itemMode ? null : [ym, cmp, ...selMonths].filter(Boolean);
     const items = (await pool.query(`SELECT i.ref_no, to_char(i.inv_date, 'YYYY-MM-DD') AS d, i.item_code, i.item_name, i.kind, i.category, i.qty, i.amount, i.discount
       FROM cukcuk_invoice_items i
       WHERE i.branch_id = $1 AND i.inv_date >= $2 AND i.inv_date <= $3 AND ($4::text[] IS NULL OR to_char(i.inv_date, 'YYYY-MM') = ANY($4))`,
-    [branchId, `${minYear}-01-01`, `${year}-12-31`, months])).rows;
+    [branchId, `${minYear}-01-01`, `${maxYear}-12-31`, months])).rows;
     const menu = (await pool.query('SELECT item_code, item_name, item_type, category_name, inactive FROM cukcuk_menu WHERE branch_id = $1', [branchId])).rows;
     // danh mục lọc: lấy từ toàn bộ món của năm, không phụ thuộc bộ lọc đang chọn
-    const report = buildReport(invoices, items, menu, { year, month, cmp, kind: q.kind, category: q.category, group: q.group, lowQty: q.lowQty });
+    const report = buildReport(invoices, items, menu, { year, month, cmp, months: selMonths, kind: q.kind, category: q.category, group: q.group, lowQty: q.lowQty });
     if (!itemMode) {
       const cats = (await pool.query(`SELECT DISTINCT kind, category FROM cukcuk_invoice_items WHERE branch_id = $1`, [branchId])).rows;
       report.meta.kinds = Array.from(new Set(cats.map((c) => c.kind || 'Khác'))).sort();

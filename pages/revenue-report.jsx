@@ -100,6 +100,7 @@ export default function RevenueReport() {
   const [category, setCategory] = useState('');
   const [group, setGroup] = useState('');
   const [lowQty, setLowQty] = useState(5);
+  const [selMonths, setSelMonths] = useState([]);
   const [speedClass, setSpeedClass] = useState('');
   const [speedFilters, setSpeedFilters] = useState({});
   const [speedSort, setSpeedSort] = useState(null);
@@ -125,6 +126,7 @@ export default function RevenueReport() {
     if (category) qs.set('category', category);
     if (group) qs.set('group', group);
     qs.set('lowQty', String(lowQty));
+    if (selMonths.length) qs.set('months', selMonths.join(','));
     fetch(`/api/revenue/report/${branch}?${qs.toString()}`).then((r) => r.json()).then((j) => {
       if (dead) return;
       if (!j.success) { setError(j.message || 'Lỗi tải báo cáo'); setData(null); return; }
@@ -137,7 +139,7 @@ export default function RevenueReport() {
       }
     }).catch((e) => !dead && setError(String(e))).finally(() => !dead && setLoading(false));
     return () => { dead = true; };
-  }, [branch, year, month, cmp, kind, category, group, lowQty, reload]);
+  }, [branch, year, month, cmp, kind, category, group, lowQty, selMonths, reload]);
 
   const meta = (data && data.meta) || metaKeep;
   const years = useMemo(() => (meta ? Array.from(new Set(meta.months.map((m) => m.slice(0, 4)))).sort() : []), [meta]);
@@ -157,7 +159,12 @@ export default function RevenueReport() {
     { key: 'status', label: 'Tình trạng', width: 150, type: 'select', get: (r) => CLS[r.cls][0], render: (r) => <span className={`font-bold ${CLS[r.cls][1]}`}>{CLS[r.cls][0]}</span> },
     { key: 'low', label: `Bán ít (< ${lowQty})`, width: 92, type: 'select', get: (r) => (r.low ? 'Bán ít' : '—'), render: (r) => (r.low ? <span className="text-red-600 font-bold">⚠ bán ít</span> : <span className="text-gray-300">—</span>) },
     { key: 'cmpQty', label: data && data.cmpYm ? `SL ${data.cmpYm.slice(5)}/${data.cmpYm.slice(0, 4)}` : 'SL so sánh', width: 96, type: 'number', align: 'right', get: (r) => (r.cmpQty === null ? 0 : r.cmpQty), render: (r) => (r.cmpQty === null ? '—' : num(r.cmpQty)) },
-    { key: 'changePct', label: 'Thay đổi SL', width: 100, type: 'number', align: 'right', get: (r) => (r.changePct === null ? 0 : r.changePct * 100), render: (r) => delta(r.changePct) }
+    { key: 'changePct', label: 'Thay đổi SL', width: 100, type: 'number', align: 'right', get: (r) => (r.changePct === null ? 0 : r.changePct * 100), render: (r) => delta(r.changePct) },
+    ...((data && data.selMonths) || []).map((m) => ({ key: 'mq_' + m, label: `SL ${m.slice(5)}/${m.slice(0, 4)}`, width: 86, type: 'number', align: 'right', get: (r) => (r.mq ? r.mq[m] || 0 : 0), render: (r) => num(r.mq ? r.mq[m] || 0 : 0) })),
+    ...((data && data.selMonths && data.selMonths.length) ? [
+      { key: 'selQty', label: 'TỔNG SL các tháng chọn', width: 120, type: 'number', align: 'right', render: (r) => <b>{num(r.selQty)}</b> },
+      { key: 'selRev', label: 'TỔNG DT các tháng chọn', width: 130, type: 'number', align: 'right', render: (r) => <b>{money(r.selRev)}</b> }
+    ] : [])
   ];
   const speedVisible = useMemo(() => sortRows(filterRows(speedRows, speedCols, speedFilters), speedCols, speedSort),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -445,6 +452,14 @@ export default function RevenueReport() {
                       <b>⚠ CẢNH BÁO: {data.notInMenu.length} món có bán nhưng chưa có trong danh mục thực đơn:</b> {data.notInMenu.map((x) => `${x.name} (SL ${num(x.qty)})`).join('; ')}
                     </div>
                   )}
+                  <div className="bg-white border rounded p-2">
+                    <div className="font-bold mb-1">📅 Chọn các tháng cần so sánh (hiện thêm cột SL từng tháng và cột TỔNG các tháng chọn) {selMonths.length > 0 && <button onClick={() => setSelMonths([])} className="ml-2 px-2 py-0.5 rounded border text-red-600">Bỏ chọn</button>}</div>
+                    <div className="flex flex-wrap gap-1">
+                      {Array.from({ length: 18 }, (_, i) => { const d = new Date(Date.UTC(data.year, data.month - 1 - i, 1)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`; }).map((m) => (
+                        <button key={m} onClick={() => setSelMonths((s) => (s.includes(m) ? s.filter((x) => x !== m) : [...s, m]))} className={`px-2 py-1 rounded border font-bold ${selMonths.includes(m) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>T{m.slice(5)}/{m.slice(0, 4)}</button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-2 items-center">
                     {[['', 'Tất cả', data.speed.length], ['fast', '🟢 Bán chạy', data.speedSummary.fast], ['slow', '🟡 Bán chậm', data.speedSummary.slow], ['veryslow', '🟠 Bán rất ít', data.speedSummary.veryslow], ['none', '⚫ Chưa bán được', data.speedSummary.none], ['low', `⚠ Bán ít (< ${lowQty})`, data.speedSummary.low]].map(([key, label, n]) => (
                       <button key={key || 'all'} onClick={() => setSpeedClass(key)} className={`px-3 py-1.5 rounded font-bold border ${speedClass === key ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>{label} ({n})</button>
