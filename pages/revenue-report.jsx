@@ -158,9 +158,18 @@ export default function RevenueReport() {
     { key: 'cum', label: '% SL tích luỹ', width: 96, type: 'number', align: 'right', get: (r) => r.cum * 100, render: (r) => pc(r.cum) },
     { key: 'status', label: 'Tình trạng', width: 150, type: 'select', get: (r) => CLS[r.cls][0], render: (r) => <span className={`font-bold ${CLS[r.cls][1]}`}>{CLS[r.cls][0]}</span> },
     { key: 'low', label: `Bán ít (< ${lowQty})`, width: 92, type: 'select', get: (r) => (r.low ? 'Bán ít' : '—'), render: (r) => (r.low ? <span className="text-red-600 font-bold">⚠ bán ít</span> : <span className="text-gray-300">—</span>) },
-    { key: 'cmpQty', label: data && data.cmpYm ? `SL ${data.cmpYm.slice(5)}/${data.cmpYm.slice(0, 4)}` : 'SL so sánh', width: 96, type: 'number', align: 'right', get: (r) => (r.cmpQty === null ? 0 : r.cmpQty), render: (r) => (r.cmpQty === null ? '—' : num(r.cmpQty)) },
-    { key: 'changePct', label: 'Thay đổi SL', width: 100, type: 'number', align: 'right', get: (r) => (r.changePct === null ? 0 : r.changePct * 100), render: (r) => delta(r.changePct) },
-    ...((data && data.selMonths) || []).filter((m) => m !== data.cmpYm).map((m) => ({ key: 'mq_' + m, label: `SL ${m.slice(5)}/${m.slice(0, 4)}`, width: 86, type: 'number', align: 'right', get: (r) => (r.mq ? r.mq[m] || 0 : 0), render: (r) => num(r.mq ? r.mq[m] || 0 : 0) })),
+    ...(data && data.selMonths && data.selMonths.length ? [] : [
+      { key: 'cmpQty', label: data && data.cmpYm ? `SL ${data.cmpYm.slice(5)}/${data.cmpYm.slice(0, 4)}` : 'SL so sánh', width: 96, type: 'number', align: 'right', get: (r) => (r.cmpQty === null ? 0 : r.cmpQty), render: (r) => (r.cmpQty === null ? '—' : num(r.cmpQty)) },
+      { key: 'changePct', label: 'Thay đổi SL', width: 100, type: 'number', align: 'right', get: (r) => (r.changePct === null ? 0 : r.changePct * 100), render: (r) => delta(r.changePct) }
+    ]),
+    // các tháng chọn: mỗi tháng gồm cột SL và cột % thay đổi của tháng đang xem so với tháng đó
+    ...((data && data.selMonths) || []).flatMap((m) => {
+      const chg = (r) => { const q = r.mq ? r.mq[m] || 0 : 0; return q ? (r.qty - q) / q : null; };
+      return [
+        { key: 'mq_' + m, label: `SL ${m.slice(5)}/${m.slice(0, 4)}`, width: 86, type: 'number', align: 'right', get: (r) => (r.mq ? r.mq[m] || 0 : 0), render: (r) => num(r.mq ? r.mq[m] || 0 : 0) },
+        { key: 'mc_' + m, label: `Thay đổi so T${m.slice(5)}`, width: 100, type: 'number', align: 'right', get: (r) => { const c = chg(r); return c === null ? 0 : c * 100; }, render: (r) => delta(chg(r)) }
+      ];
+    }),
     ...((data && data.selMonths && data.selMonths.length) ? [
       { key: 'selQty', label: 'TỔNG SL các tháng chọn', width: 120, type: 'number', align: 'right', render: (r) => <b>{num(r.selQty)}</b> },
       { key: 'selRev', label: 'TỔNG DT các tháng chọn', width: 130, type: 'number', align: 'right', render: (r) => <b>{money(r.selRev)}</b> }
