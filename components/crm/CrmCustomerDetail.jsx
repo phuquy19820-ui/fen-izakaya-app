@@ -1,3 +1,4 @@
+import ContactBar from './Contact';
 import React, { useEffect, useState, useCallback } from 'react';
 import MemberCard, { SaveCardButton, CopyLink } from './MemberCard';
 import { api, Card, Kpi, Table, TierBadge, SegmentBadge, Badge, Field, inputCls, ChartBox, money, num, fmtDate, fmtDateTime, TYPE_LABEL, STAGE_LABEL, STAGE_COLOR } from './ui';
@@ -53,6 +54,7 @@ export default function CrmCustomerDetail({ id, meta, go, isManager }) {
               {c.tierOverride && <Badge color="#8b5cf6">Hạng chỉnh tay</Badge>}
             </div>
             <p className="text-sm text-gray-600 mt-1">{c.memberCode}{c.phone ? ' · 📞 ' + c.phone : ''}{c.email ? ' · ✉️ ' + c.email : ''}{c.source ? ' · Nguồn: ' + c.source : ''}{c.refBy ? ' · Giới thiệu: ' + c.refBy : ''}</p>
+            <ContactBar customer={c} settings={d.settings} onLogged={reload} />
             <div className="flex flex-wrap gap-1 mt-1">{c.tags.map((t) => <Badge key={t} color="#0ea5e9">{t}</Badge>)}</div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -89,7 +91,7 @@ export default function CrmCustomerDetail({ id, meta, go, isManager }) {
 
 function Overview({ d, meta, isManager, reload, go }) {
   const c = d.customer;
-  const [v, setV] = useState({ name: c.name, phone: c.phone, email: c.email, gender: c.gender, birthday: c.birthday, address: c.address, company: c.company, source: c.source, notes: c.notes, preferences: c.preferences, allergies: c.allergies, tags: c.tags.join(', '), status: c.status, ownerId: c.ownerId || '', tierOverride: c.tierOverride });
+  const [v, setV] = useState({ name: c.name, phone: c.phone, email: c.email, gender: c.gender, birthday: c.birthday, address: c.address, company: c.company, source: c.source, socialLink: c.socialLink || '', notes: c.notes, preferences: c.preferences, allergies: c.allergies, tags: c.tags.join(', '), status: c.status, ownerId: c.ownerId || '', tierOverride: c.tierOverride });
   const [msg, setMsg] = useState('');
   const save = async () => {
     const j = await api('PUT', `/api/crm/customers/${c.id}`, { ...v, tags: v.tags.split(',').map((t) => t.trim()).filter(Boolean), ownerId: v.ownerId || null });
@@ -112,6 +114,7 @@ function Overview({ d, meta, isManager, reload, go }) {
         <Field label="Giới tính"><select value={v.gender} onChange={(e) => setV({ ...v, gender: e.target.value })} className={inputCls}><option value="">—</option><option value="Nam">Nam</option><option value="Nữ">Nữ</option></select></Field>
         <Field label="Công ty"><input value={v.company} onChange={(e) => setV({ ...v, company: e.target.value })} className={inputCls} /></Field>
         <Field label="Địa chỉ" className="md:col-span-2"><input value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} className={inputCls} /></Field>
+        <Field label="Link Facebook / Zalo / Instagram của khách" className="md:col-span-2"><input value={v.socialLink} onChange={(e) => setV({ ...v, socialLink: e.target.value })} placeholder="vd: facebook.com/ten.khach" className={inputCls} /></Field>
         <Field label="Nguồn khách"><input value={v.source} onChange={(e) => setV({ ...v, source: e.target.value })} className={inputCls} /></Field>
         <Field label="Sở thích ăn uống (món/rượu yêu thích, chỗ ngồi…)" className="md:col-span-3"><textarea rows={2} value={v.preferences} onChange={(e) => setV({ ...v, preferences: e.target.value })} className={inputCls} /></Field>
         <Field label="⚠ Dị ứng / kiêng kỵ" className="md:col-span-3"><textarea rows={2} value={v.allergies} onChange={(e) => setV({ ...v, allergies: e.target.value })} className={inputCls} /></Field>

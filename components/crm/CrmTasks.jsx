@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import ContactBar from './Contact';
 import { api, Card, Badge, Modal, Field, inputCls, fmtDate } from './ui';
 
 const PRIO = { high: ['Cao', '#dc2626'], normal: ['Thường', '#64748b'], low: ['Thấp', '#0ea5e9'] };
@@ -53,6 +54,7 @@ export default function CrmTasks({ meta, go, isManager }) {
                   {t.assignee_name && <span className="text-gray-500">👤 {t.assignee_name}</span>}
                   <Badge color={PRIO[t.priority][1]}>{PRIO[t.priority][0]}</Badge>
                 </div>
+                {t.customer_phone && t.status !== 'done' && <div className="mt-1.5"><ContactBar compact customer={{ id: t.customer_id, name: t.customer_name, phone: t.customer_phone }} settings={meta.settings} /></div>}
               </div>
               {t.due_date && <Badge color={overdue ? '#dc2626' : t.due_date === today ? '#f59e0b' : '#64748b'}>{fmtDate(t.due_date)}{overdue ? ' · quá hạn' : ''}</Badge>}
               <button onClick={() => del(t)} className="text-gray-400 hover:text-red-600 text-sm">✕</button>

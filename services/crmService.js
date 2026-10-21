@@ -20,6 +20,13 @@ const DEFAULT_SETTINGS = {
     { key: 'luxury', name: 'Luxury', min: 30000000, perks: ['Tích điểm x3', 'Quản lý riêng chăm sóc', 'Ưu đãi sự kiện & tiệc riêng'] }
   ],
   pointsRate: 10000, // 10.000đ = 1 điểm
+  // Mẫu tin nhắn gửi nhanh qua Zalo / SMS / Facebook. Biến: {ten} {hang} {quan} {the}
+  messageTemplates: [
+    { name: 'Chúc mừng sinh nhật', text: 'Xin chào {ten}, {quan} xin chúc mừng sinh nhật anh/chị! Mời anh/chị ghé quán trong tháng sinh nhật để nhận quà tặng đặc biệt dành cho thành viên hạng {hang}.' },
+    { name: 'Cảm ơn sau khi ghé quán', text: 'Cảm ơn {ten} đã ghé {quan}. Rất mong nhận được góp ý của anh/chị để chúng tôi phục vụ tốt hơn. Hẹn gặp lại anh/chị!' },
+    { name: 'Mời quay lại', text: 'Xin chào {ten}, lâu rồi {quan} chưa được đón anh/chị. Mời anh/chị ghé quán, chúng tôi có nhiều món mới và ưu đãi dành riêng cho thành viên hạng {hang}.' },
+    { name: 'Thẻ thành viên', text: 'Xin chào {ten}, đây là thẻ thành viên {quan} của anh/chị (hạng {hang}): {the}' }
+  ],
   newDays: 30,
   winbackDays: 60,
   lostDays: 120
@@ -76,6 +83,7 @@ async function init(pool) {
     created_by INT, created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW()
   )`);
   await q('CREATE INDEX IF NOT EXISTS idx_crm_customers_phone ON crm_customers (phone)');
+  await q('ALTER TABLE crm_customers ADD COLUMN IF NOT EXISTS social_link VARCHAR(300)');
   await q(`CREATE TABLE IF NOT EXISTS crm_interactions (
     id SERIAL PRIMARY KEY, customer_id INT NOT NULL, type VARCHAR(20) NOT NULL DEFAULT 'note', content TEXT, rating INT, outcome VARCHAR(120),
     user_id INT, user_name VARCHAR(120), follow_up_date DATE, created_at TIMESTAMP DEFAULT NOW()
@@ -120,6 +128,8 @@ async function getSettings(pool) {
     .map((t) => ({ key: String(t.key), name: String(t.name || t.key), min: Number(t.min) || 0, perks: Array.isArray(t.perks) ? t.perks.map(String) : [] }))
     .sort((a, b) => a.min - b.min);
   if (s.tiers[0]) s.tiers[0].min = 0;
+  s.messageTemplates = (Array.isArray(v.messageTemplates) ? v.messageTemplates : DEFAULT_SETTINGS.messageTemplates)
+    .map((t) => ({ name: String(t.name || '').trim().substring(0, 60), text: String(t.text || '').trim().substring(0, 1000) })).filter((t) => t.name && t.text).slice(0, 12);
   return s;
 }
 async function saveSettings(pool, body) {
@@ -134,6 +144,7 @@ async function saveSettings(pool, body) {
   }
   if (['best_month12', 'rolling12', 'lifetime'].includes(body.tierPeriod)) next.tierPeriod = body.tierPeriod;
   for (const k of ['pointsRate', 'newDays', 'winbackDays', 'lostDays']) if (Number(body[k]) > 0) next[k] = Number(body[k]);
+  if (Array.isArray(body.messageTemplates)) next.messageTemplates = body.messageTemplates;
   if (body.brand) next.brand = String(body.brand).substring(0, 40);
   await pool.query(`INSERT INTO crm_settings (key, value) VALUES ('main', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(next)]);
   cache.at = 0;
@@ -220,7 +231,7 @@ async function loadAll(pool, force = false) {
     const obj = {
       id: c.id, memberNo: c.member_no, memberCode: 'FEN-' + String(c.member_no).padStart(6, '0'), key: c.cust_key, name: c.name, phone: c.phone || '', email: c.email || '', gender: c.gender || '',
       birthday: c.birthday ? new Date(new Date(c.birthday).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10) : '', address: c.address || '', company: c.company || '',
-      source: c.source || '', refBy: c.ref_by || '', notes: c.notes || '', preferences: c.preferences || '', allergies: c.allergies || '', tags: c.tags || [], status: c.status,
+      source: c.source || '', socialLink: c.social_link || '', refBy: c.ref_by || '', notes: c.notes || '', preferences: c.preferences || '', allergies: c.allergies || '', tags: c.tags || [], status: c.status,
       ownerId: c.owner_id, branchId: c.branch_id, isManual: c.is_manual, tierOverride: c.tier_override || '', cardToken: c.card_token, createdAt: c.created_at,
       lastContact: c.last_contact, byBranch: st.branches, branches: Object.keys(st.branches),
       spend, spend12, bestMonth, visits, invoices: bs.reduce((a, b) => a + b.invoices, 0), guests: bs.reduce((a, b) => a + b.guests, 0), firstVisit, lastVisit,

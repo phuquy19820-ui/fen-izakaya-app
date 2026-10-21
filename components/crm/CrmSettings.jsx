@@ -59,6 +59,19 @@ export default function CrmSettings({ meta, reloadMeta }) {
           <Field label="Đã mất: không ghé quá (ngày)"><input type="number" value={s.lostDays} onChange={(e) => setS({ ...s, lostDays: Number(e.target.value) })} className={inputCls} /></Field>
         </div>
       </Card>
+      <Card title="Mẫu tin nhắn liên hệ nhanh (Zalo / SMS / Facebook)">
+        <p className="text-sm text-gray-600 mb-3">Nhân viên bấm nút Zalo / SMS / Facebook trong hồ sơ khách hoặc danh sách công việc, app mở sẵn cuộc trò chuyện và chép tin nhắn mẫu. Biến dùng được: <b>{'{ten}'}</b> tên khách, <b>{'{hang}'}</b> hạng thẻ, <b>{'{quan}'}</b> tên thương hiệu, <b>{'{the}'}</b> link thẻ thành viên.</p>
+        <div className="space-y-2">
+          {(s.messageTemplates || []).map((t, i) => (
+            <div key={i} className="grid grid-cols-1 md:grid-cols-[220px_1fr_auto] gap-2 items-start">
+              <input value={t.name} onChange={(e) => setS({ ...s, messageTemplates: s.messageTemplates.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} className={inputCls} placeholder="Tên mẫu" />
+              <textarea rows={2} value={t.text} onChange={(e) => setS({ ...s, messageTemplates: s.messageTemplates.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)) })} className={inputCls} />
+              <button onClick={() => setS({ ...s, messageTemplates: s.messageTemplates.filter((_, j) => j !== i) })} className="text-red-600 font-bold text-sm">Xóa</button>
+            </div>
+          ))}
+        </div>
+        <button onClick={() => setS({ ...s, messageTemplates: [...(s.messageTemplates || []), { name: 'Mẫu mới', text: 'Xin chào {ten}, ' }] })} className="mt-2 px-4 py-2 rounded-lg border bg-white font-bold">+ Thêm mẫu tin</button>
+      </Card>
       <div className="flex items-center gap-3"><button onClick={save} className="px-6 py-2.5 rounded-lg bg-blue-700 text-white font-bold">Lưu cài đặt</button>{msg && <span className="font-semibold text-sm">{msg}</span>}</div>
     </div>
   );

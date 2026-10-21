@@ -3,7 +3,7 @@ const crm = require('./crmService');
 
 const STAGES = ['new', 'consulting', 'quoted', 'deposit', 'won', 'lost'];
 const TASK_PRIORITIES = ['low', 'normal', 'high'];
-const INTERACTION_TYPES = ['note', 'call', 'zalo', 'sms', 'email', 'meeting', 'visit', 'feedback', 'complaint'];
+const INTERACTION_TYPES = ['note', 'call', 'zalo', 'sms', 'messenger', 'email', 'meeting', 'visit', 'feedback', 'complaint'];
 
 const str = (v, n) => String(v == null ? '' : v).trim().substring(0, n);
 const dateOrNull = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? v : null);
@@ -139,7 +139,7 @@ function register(app, pool) {
     } });
   }));
 
-  const EDITABLE = ['name', 'phone', 'email', 'gender', 'birthday', 'address', 'company', 'source', 'notes', 'preferences', 'allergies'];
+  const EDITABLE = ['name', 'phone', 'email', 'gender', 'birthday', 'address', 'company', 'source', 'notes', 'preferences', 'allergies', 'socialLink'];
   app.put('/api/crm/customers/:id', wrap(async (req, res) => {
     const ctx = await context(req);
     const id = Number(req.params.id);
@@ -154,6 +154,7 @@ function register(app, pool) {
       if (k === 'birthday') set('birthday', dateOrNull(b[k]));
       else if (k === 'phone') set('phone', str(b[k], 20).replace(/[^\d+]/g, '') || null);
       else if (k === 'notes' || k === 'preferences' || k === 'allergies') set(k, str(b[k], 4000));
+      else if (k === 'socialLink') set('social_link', str(b[k], 300) || null);
       else set(k, str(b[k], k === 'name' ? 160 : 300));
     });
     if (Array.isArray(b.tags)) set('tags', b.tags.map((t) => str(t, 30)).filter(Boolean).slice(0, 20));
