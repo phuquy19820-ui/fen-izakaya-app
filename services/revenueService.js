@@ -299,19 +299,37 @@ function buildReport(rawInvoices, rawItems, menu, params) {
     if (fGroup) return; // lọc theo nhóm khách thì chỉ xem món đã bán
     speedMap.set(m.item_code, { code: m.item_code, name: m.item_name, kind, category, qty: 0, rev: 0, inMenu: true });
   });
-  const speed = Array.from(speedMap.values()).sort((a, b) => b.qty - a.qty || b.rev - a.rev || String(a.name).localeCompare(String(b.name), 'vi'));
+  // gộp các món trùng tên hoặc gần giống tên (khác hoa/thường, dấu, khoảng trắng, lỗi gõ nhẹ; khác dung tích/số thì KHÔNG gộp)
+  const normName = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/gi, 'd').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const lev = (x, y) => {
+    const m = x.length, n = y.length; if (Math.abs(m - n) > 2) return 9;
+    let prev = Array.from({ length: n + 1 }, (_, j) => j);
+    for (let i = 1; i <= m; i++) { const cur = [i]; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1)); prev = cur; }
+    return prev[n];
+  };
+  const digitsOf = (t) => (t.match(/\d+/g) || []).join('|');
+  const clusters = [];
+  Array.from(speedMap.values()).sort((p, q) => q.qty - p.qty || q.rev - p.rev).forEach((x) => {
+    const nk = normName(x.name), compact = nk.replace(/ /g, ''), dg = digitsOf(nk);
+    let hit = clusters.find((c) => c.compact === compact || (compact.length >= 8 && c.dg === dg && c.kind === x.kind && lev(c.compact, compact) <= 1));
+    if (!hit) { hit = { compact, dg, kind: x.kind, main: x, codes: [], qty: 0, rev: 0, inMenu: false }; clusters.push(hit); }
+    hit.codes.push(x.code); hit.qty += x.qty; hit.rev += x.rev; hit.inMenu = hit.inMenu || x.inMenu;
+  });
+  const mergedItems = clusters.map((c) => ({ ...c.main, qty: c.qty, rev: c.rev, inMenu: c.inMenu, codes: c.codes }));
+  const speed = mergedItems.sort((a, b) => b.qty - a.qty || b.rev - a.rev || String(a.name).localeCompare(String(b.name), 'vi'));
   const totalQty = speed.reduce((a, x) => a + x.qty, 0);
   let cum = 0;
   out.speed = speed.map((x, i) => {
     const before = totalQty ? cum / totalQty : 1;
     cum += x.qty;
-    const c = cmpSold.get(x.code);
+    const cq = (x.codes || [x.code]).reduce((t, cd) => t + ((cmpSold.get(cd) || {}).qty || 0), 0);
+    const c = cq ? { qty: cq } : null;
     let cls;
     if (x.qty === 0) cls = 'none';
     else if (before < 0.7) cls = 'fast';
     else if (before < 0.95) cls = 'slow';
     else cls = 'veryslow';
-    return { rank: i + 1, code: x.code, name: x.name, kind: x.kind, category: x.category, qty: x.qty, rev: x.rev, share: totalQty ? x.qty / totalQty : 0, cum: totalQty ? cum / totalQty : 0,
+    return { rank: i + 1, code: x.code, merged: (x.codes || []).length > 1 ? x.codes.length : 0, name: x.name, kind: x.kind, category: x.category, qty: x.qty, rev: x.rev, share: totalQty ? x.qty / totalQty : 0, cum: totalQty ? cum / totalQty : 0,
       cls, low: x.qty > 0 && x.qty < lowQty, cmpQty: cmpYm ? (c ? c.qty : 0) : null, changePct: cmpYm && c && c.qty ? (x.qty - c.qty) / c.qty : null, inMenu: x.inMenu };
   });
   out.speedSummary = { fast: 0, slow: 0, veryslow: 0, none: 0, low: 0, lowQty };

@@ -147,7 +147,7 @@ export default function RevenueReport() {
   const CLS = { fast: ['🟢 Bán chạy', 'text-green-700'], slow: ['🟡 Bán chậm', 'text-yellow-700'], veryslow: ['🟠 Bán rất ít', 'text-orange-600'], none: ['⚫ Chưa bán được', 'text-gray-500'] };
   const speedCols = [
     { key: 'rank', label: '#', width: 52, type: 'number', align: 'right' },
-    { key: 'name', label: 'Món', type: 'text', render: (r) => <span className="font-medium">{r.name}</span> },
+    { key: 'name', label: 'Món', type: 'text', render: (r) => <span className="font-medium">{r.name}{r.merged ? <span className="ml-1 text-gray-400 font-normal" title="Đã gộp các món trùng/gần giống tên">(gộp {r.merged} mã)</span> : null}</span> },
     { key: 'kind', label: 'Nhóm F&B', width: 100, type: 'select' },
     { key: 'category', label: 'Nhóm thực đơn', width: 130, type: 'select' },
     { key: 'qty', label: 'SL bán', width: 80, type: 'number', align: 'right', render: (r) => <b>{num(r.qty)}</b> },
