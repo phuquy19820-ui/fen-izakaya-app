@@ -33,7 +33,7 @@ export default function UserBar() {
   return (
     <>
       <div className="print:hidden" style={{ position: 'fixed', left: 8, bottom: 8, zIndex: 60, background: '#fff', border: '1px solid #cbd5e1', borderRadius: 999, boxShadow: '0 2px 8px rgba(0,0,0,.15)', padding: '4px 10px', fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <span>👤 <b>{user.fullName}</b> <span style={{ color: '#64748b' }}>({ROLE[user.role] || user.role})</span></span>
+        <span data-user-name>👤 <b>{user.fullName}</b> <span style={{ color: '#64748b' }}>({ROLE[user.role] || user.role})</span></span>
         <button onClick={() => { setOpen(true); setMsg(''); }} style={{ color: '#2563eb', fontWeight: 600 }}>Đổi mật khẩu</button>
         <button onClick={logout} style={{ color: '#dc2626', fontWeight: 600 }}>Đăng xuất</button>
       </div>

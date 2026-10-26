@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import UserBar from '../components/UserBar';
 import Credit from '../components/Credit';
+import ExportExcel from '../components/ExportExcel';
 import { AuthContext } from '../components/AuthContext';
 import { pathAllowed, homeFor } from '../components/permissions';
 
@@ -55,6 +56,7 @@ function MyApp({ Component, pageProps }) {
     <AuthContext.Provider value={{ user, refresh }}>
       <Component {...pageProps} />
       <Credit />
+      {user && <ExportExcel />}
       {user && !isPublic(path) && <UserBar />}
     </AuthContext.Provider>
   );
