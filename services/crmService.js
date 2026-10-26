@@ -234,7 +234,9 @@ async function loadAll(pool, force = false) {
   per.forEach((r) => { if (!byKey.has(r.cust_key)) byKey.set(r.cust_key, { branches: {}, months: {} }); byKey.get(r.cust_key).branches[r.branch_id] = { invoices: Number(r.invoices), visits: Number(r.visits), firstVisit: r.first_visit, lastVisit: r.last_visit, spend: Number(r.spend) || 0, guests: Number(r.guests) || 0, spend12: Number(r.spend12) || 0 }; });
   months.forEach((r) => { if (byKey.has(r.cust_key)) byKey.get(r.cust_key).months[r.ym] = Number(r.spend) || 0; });
 
-  const list = custs.map((c) => {
+  // chỉ khách có số điện thoại mới là thành viên; khách không có số điện thoại bị loại hoàn toàn khỏi CRM
+  const hasPhone = (c) => String(c.phone || '').replace(/\D/g, '').length >= 8;
+  const list = custs.filter(hasPhone).map((c) => {
     const st = byKey.get(c.cust_key) || { branches: {}, months: {} };
     const bs = Object.values(st.branches);
     const spend = bs.reduce((a, b) => a + b.spend, 0);
