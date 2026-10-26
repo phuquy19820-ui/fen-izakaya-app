@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import MemberCard, { SaveCardButton } from '../../components/crm/MemberCard';
 
 const money = (n) => Math.round(Number(n) || 0).toLocaleString('vi-VN');
-const PERIOD = { best_month12: 'chi tiêu trong một tháng (12 tháng gần nhất)', rolling12: 'tổng chi tiêu 12 tháng gần nhất', lifetime: 'tổng chi tiêu từ trước đến nay' };
+const PERIOD = { best_month12: 'chi tiêu trong một tháng (12 tháng gần nhất)', rolling12: 'chi tiêu tích lũy 12 tháng gần nhất', lifetime: 'tổng chi tiêu từ trước đến nay' };
 
 // Trang thẻ thành viên công khai: khách mở bằng link hoặc quét QR trên điện thoại
 export default function CardPage() {
@@ -45,6 +45,13 @@ export default function CardPage() {
                 </>
               ) : <p className="text-sm font-semibold">🎉 Bạn đang ở hạng cao nhất: {data.tierName}</p>}
             </div>
+
+            {data.validUntil && (
+              <div className="w-full rounded-2xl p-4 text-white text-sm" style={{ background: data.expiringSoon ? 'rgba(220,38,38,.25)' : 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.12)' }}>
+                <div className="font-bold">Hạn hiệu lực hạng: {data.validUntil.split('-').reverse().join('/')}</div>
+                {data.expiringSoon && <div className="mt-1 text-yellow-200">⚠ Hạng sắp hết hạn. Hãy ghé FEN để duy trì hạng — nếu không, hạng sẽ chuyển thành: {data.afterTierName}.</div>}
+              </div>
+            )}
 
             <div className="w-full rounded-2xl p-4 text-white" style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.12)' }}>
               <h2 className="font-bold mb-2">Quyền lợi hạng {data.tierName}</h2>

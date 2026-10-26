@@ -314,9 +314,10 @@ function register(app, pool) {
         let next = `${today.slice(0, 4)}-${mm}-${dd}`;
         if (next < today) next = `${Number(today.slice(0, 4)) + 1}-${mm}-${dd}`;
         const d = crm.daysBetween(today, next);
-        if (d >= 0 && d <= 7) await add(`bday:${c.id}:${next.slice(0, 4)}`, c, `Chúc mừng sinh nhật: ${c.name}`, `Sinh nhật ${dd}/${mm}. Hạng ${c.tierName}. Gửi lời chúc và ưu đãi sinh nhật.`, next, 'high');
+        if (d >= 0 && d <= 7) await add(`bday:${c.id}:${next.slice(0, 4)}`, c, `Chúc mừng sinh nhật: ${c.name}`, `Sinh nhật ${dd}/${mm}. Hạng ${c.tierName}. Gửi lời chúc${(ctx.data.settings.tiers.find((t) => t.key === c.tier) || {}).birthdayVoucher ? ` và voucher sinh nhật ${((ctx.data.settings.tiers.find((t) => t.key === c.tier) || {}).birthdayVoucher).toLocaleString('vi-VN')}đ + bánh sinh nhật (hiệu lực 30 ngày; áp dụng 1 lần/năm, khách đã đăng ký ngày sinh trước ít nhất 30 ngày)` : ''}.`, next, 'high');
       }
     }
+    for (const c of list.filter((x) => x.expiringSoon)) await add(`expire:${c.id}:${c.validUntil}`, c, `Hạng ${c.tierName} sắp hết hạn: ${c.name}`, `Hạng hiệu lực đến ${c.validUntil} (còn ${c.expiresInDays} ngày). Chi tiêu 12 tháng hiện tại ${Math.round(c.spend12).toLocaleString('vi-VN')}đ. Nếu không duy trì đủ chi tiêu: ${c.afterTierName}. Hãy nhắc khách để giữ hạng.`, c.validUntil, 'high');
     const risk = list.filter((c) => c.segment === 'at_risk').sort((a, b) => b.spend12 - a.spend12).slice(0, 30);
     for (const c of risk) await add(`winback:${c.id}:${ym}`, c, `Chăm sóc lại khách lâu chưa quay lại: ${c.name}`, `Lần ghé cuối ${c.lastVisit} (${c.recencyDays} ngày trước), tổng chi tiêu ${Math.round(c.spend).toLocaleString('vi-VN')}đ.`, today, c.spend12 > 5000000 ? 'high' : 'normal');
     res.json({ success: true, data: { created } });
@@ -475,7 +476,7 @@ function register(app, pool) {
     res.json({ success: true, data: {
       brand: data.settings.brand, name: c.name, memberCode: c.memberCode, phone, tier: c.tier, tierName: c.tierName, perks: cur.perks, points: c.points,
       since: (c.firstVisit || String(c.createdAt || '').slice(0, 10)), visits: c.visits,
-      next: next ? { name: next.name, need: Math.max(0, next.min - c.tierMetric), pct } : null, period: data.settings.tierPeriod,
+      next: next ? { name: next.name, need: Math.max(0, next.min - c.tierMetric), pct } : null, period: data.settings.tierPeriod, validUntil: c.validUntil, expiringSoon: c.expiringSoon, afterTierName: c.afterTierName, tierSource: c.tierSource,
       tiers: tiers.map((t) => ({ key: t.key, name: t.name, min: t.min }))
     } });
   }));

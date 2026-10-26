@@ -10,14 +10,15 @@ const PARSE_VERSION = 2;
 
 const DEFAULT_SETTINGS = {
   brand: 'FEN IZAKAYA',
-  // Hạng thẻ theo chi tiêu (đ). Ngưỡng do chủ quán tự nhập trong Cài đặt.
-  tierPeriod: 'best_month12', // best_month12 = tháng chi tiêu cao nhất trong 12 tháng gần nhất; rolling12 = tổng 12 tháng; lifetime = từ trước đến nay
+  // Chính sách hạng thành viên FEN (v3): chi tiêu tích lũy 12 tháng gần nhất; khách mới có hóa đơn lần đầu lớn được xếp hạng ngay.
+  policyVersion: 3,
+  tierPeriod: 'rolling12',
+  cardMonths: 12, // thẻ có hiệu lực 12 tháng kể từ ngày phát sinh
+  expiryWarnDays: 30, // báo trước khi hạng/thẻ sắp hết hạn
   tiers: [
-    { key: 'member', name: 'Thành viên', min: 0, perks: ['Tích điểm mọi hóa đơn', 'Nhận ưu đãi sinh nhật'] },
-    { key: 'silver', name: 'Bạc', min: 10000000, perks: ['Tích điểm x1,2', 'Tặng 1 món tráng miệng/lần ghé', 'Ưu tiên đặt bàn'] },
-    { key: 'gold', name: 'Vàng', min: 15000000, perks: ['Tích điểm x1,5', 'Tặng 1 đồ uống/lần ghé', 'Ưu tiên giữ bàn đẹp'] },
-    { key: 'diamond', name: 'Kim cương', min: 20000000, perks: ['Tích điểm x2', 'Tặng 1 món khai vị/lần ghé', 'Quà sinh nhật đặc biệt'] },
-    { key: 'luxury', name: 'Luxury', min: 30000000, perks: ['Tích điểm x3', 'Quản lý riêng chăm sóc', 'Ưu đãi sự kiện & tiệc riêng'] }
+    { key: 'member', name: 'Chưa đạt hạng', min: 0, newBillMin: 0, discountPct: 0, birthdayVoucher: 0, perks: ['Tích điểm mọi hóa đơn'] },
+    { key: 'diamond', name: 'FEN DIAMOND MEMBER', min: 15000000, newBillMin: 3000000, discountPct: 8, birthdayVoucher: 500000, perks: ['Giảm giá 8% trên tổng hóa đơn', 'Voucher sinh nhật 500.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày)', 'Ưu tiên đặt bàn', 'Ưu đãi riêng theo từng tháng'] },
+    { key: 'luxury', name: 'FEN SIGNATURE MEMBER', min: 35000000, newBillMin: 9000000, discountPct: 15, birthdayVoucher: 1000000, perks: ['Giảm giá 15% trên tổng hóa đơn', 'Voucher sinh nhật 1.000.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày)', 'Quà tặng đặc biệt hàng năm', 'Giữ bàn ưu tiên', 'Ưu tiên trải nghiệm món mới', 'Ưu tiên khu vực chỗ ngồi đẹp trong các dịp lễ cao điểm'] }
   ],
   pointsRate: 10000, // 10.000đ = 1 điểm
   // Mẫu tin nhắn gửi nhanh qua Zalo / SMS / Facebook. Biến: {ten} {hang} {quan} {the}
@@ -123,9 +124,11 @@ async function reparseIfNeeded(pool) {
 async function getSettings(pool) {
   const r = await pool.query("SELECT value FROM crm_settings WHERE key = 'main'");
   const v = r.rows[0] ? r.rows[0].value : {};
+  const fresh = v.policyVersion === DEFAULT_SETTINGS.policyVersion; // cài đặt cũ (chính sách cũ) được thay bằng chính sách mới
   const s = { ...DEFAULT_SETTINGS, ...v };
-  s.tiers = (Array.isArray(v.tiers) && v.tiers.length ? v.tiers : DEFAULT_SETTINGS.tiers)
-    .map((t) => ({ key: String(t.key), name: String(t.name || t.key), min: Number(t.min) || 0, perks: Array.isArray(t.perks) ? t.perks.map(String) : [] }))
+  if (!fresh) s.tierPeriod = DEFAULT_SETTINGS.tierPeriod;
+  s.tiers = (fresh && Array.isArray(v.tiers) && v.tiers.length ? v.tiers : DEFAULT_SETTINGS.tiers)
+    .map((t) => ({ key: String(t.key), name: String(t.name || t.key), min: Number(t.min) || 0, newBillMin: Number(t.newBillMin) || 0, discountPct: Number(t.discountPct) || 0, birthdayVoucher: Number(t.birthdayVoucher) || 0, perks: Array.isArray(t.perks) ? t.perks.map(String) : [] }))
     .sort((a, b) => a.min - b.min);
   if (s.tiers[0]) s.tiers[0].min = 0;
   s.messageTemplates = (Array.isArray(v.messageTemplates) ? v.messageTemplates : DEFAULT_SETTINGS.messageTemplates)
@@ -138,12 +141,14 @@ async function saveSettings(pool, body) {
   if (Array.isArray(body.tiers) && body.tiers.length >= 2) {
     next.tiers = body.tiers.map((t, i) => ({
       key: String(t.key || 'tier' + i).replace(/[^a-z0-9_]/gi, '').toLowerCase() || 'tier' + i, name: String(t.name || '').trim().substring(0, 40) || 'Hạng ' + (i + 1),
-      min: Math.max(0, Number(t.min) || 0), perks: Array.isArray(t.perks) ? t.perks.map((p) => String(p).trim()).filter(Boolean).slice(0, 8) : []
+      min: Math.max(0, Number(t.min) || 0), newBillMin: Math.max(0, Number(t.newBillMin) || 0), discountPct: Math.min(100, Math.max(0, Number(t.discountPct) || 0)), birthdayVoucher: Math.max(0, Number(t.birthdayVoucher) || 0), perks: Array.isArray(t.perks) ? t.perks.map((p) => String(p).trim()).filter(Boolean).slice(0, 8) : []
     })).sort((a, b) => a.min - b.min);
     next.tiers[0].min = 0;
   }
   if (['best_month12', 'rolling12', 'lifetime'].includes(body.tierPeriod)) next.tierPeriod = body.tierPeriod;
   for (const k of ['pointsRate', 'newDays', 'winbackDays', 'lostDays']) if (Number(body[k]) > 0) next[k] = Number(body[k]);
+  next.policyVersion = DEFAULT_SETTINGS.policyVersion;
+  for (const k of ['cardMonths', 'expiryWarnDays']) if (Number(body[k]) > 0) next[k] = Number(body[k]);
   if (Array.isArray(body.messageTemplates)) next.messageTemplates = body.messageTemplates;
   if (body.brand) next.brand = String(body.brand).substring(0, 40);
   await pool.query(`INSERT INTO crm_settings (key, value) VALUES ('main', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(next)]);
@@ -211,6 +216,20 @@ async function loadAll(pool, force = false) {
   const months = (await pool.query(`
     SELECT cust_key, to_char(inv_date, 'YYYY-MM') AS ym, SUM(${REV}) AS spend FROM cukcuk_invoices
     WHERE cust_key <> '' AND inv_date >= date_trunc('month', CURRENT_DATE - interval '11 months') GROUP BY cust_key, ym`)).rows;
+  // hóa đơn lớn nhất trong ngày đầu tiên khách ghé (xét khách mới) và các hóa đơn 12 tháng gần nhất (tính ngày hết hạn hạng)
+  const firstBills = (await pool.query(`
+    SELECT i.cust_key, MAX(${REV}) AS first_bill FROM cukcuk_invoices i
+    JOIN (SELECT cust_key, MIN(inv_date) AS d FROM cukcuk_invoices WHERE cust_key <> '' GROUP BY cust_key) f ON f.cust_key = i.cust_key AND f.d = i.inv_date
+    GROUP BY i.cust_key`)).rows;
+  const firstBillOf = new Map(firstBills.map((r) => [r.cust_key, Number(r.first_bill) || 0]));
+  const recentRows = (await pool.query(`
+    SELECT cust_key, to_char(inv_date, 'YYYY-MM-DD') AS d, SUM(${REV}) AS amt FROM cukcuk_invoices
+    WHERE cust_key <> '' AND inv_date >= CURRENT_DATE - 366 GROUP BY cust_key, inv_date ORDER BY inv_date`)).rows;
+  const recentOf = new Map();
+  recentRows.forEach((r) => { if (!recentOf.has(r.cust_key)) recentOf.set(r.cust_key, []); recentOf.get(r.cust_key).push({ d: r.d, amt: Number(r.amt) || 0 }); });
+  const addDaysStr = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  const cardDays = Math.round((settings.cardMonths || 12) * 30.4375);
+  const levelBySpend = (amt) => { let l = 0; settings.tiers.forEach((t, k) => { if (k > 0 && amt >= t.min) l = k; }); return l; };
   const byKey = new Map();
   per.forEach((r) => { if (!byKey.has(r.cust_key)) byKey.set(r.cust_key, { branches: {}, months: {} }); byKey.get(r.cust_key).branches[r.branch_id] = { invoices: Number(r.invoices), visits: Number(r.visits), firstVisit: r.first_visit, lastVisit: r.last_visit, spend: Number(r.spend) || 0, guests: Number(r.guests) || 0, spend12: Number(r.spend12) || 0 }; });
   months.forEach((r) => { if (byKey.has(r.cust_key)) byKey.get(r.cust_key).months[r.ym] = Number(r.spend) || 0; });
@@ -224,10 +243,38 @@ async function loadAll(pool, force = false) {
     const firstVisit = bs.map((b) => b.firstVisit).sort()[0] || '';
     const lastVisit = bs.map((b) => b.lastVisit).sort().pop() || '';
     const bestMonth = Math.max(0, ...Object.values(st.months));
-    const metric = settings.tierPeriod === 'lifetime' ? spend : settings.tierPeriod === 'rolling12' ? spend12 : bestMonth;
-    const tier = tierFor(settings, metric, c.tier_override);
-    const idx = settings.tiers.findIndex((t) => t.key === tier.key);
-    const next = settings.tiers[idx + 1] || null;
+    const metric = spend12; // chi tiêu tích lũy 12 tháng gần nhất
+    const tiers = settings.tiers;
+    const inv12 = recentOf.get(c.cust_key) || [];
+    const fb = firstBillOf.get(c.cust_key) || 0;
+    const spendLevel = levelBySpend(spend12);
+    // khách mới lần đầu: hóa đơn lần đầu vượt ngưỡng thì được xếp hạng ngay, hiệu lực 12 tháng kể từ ngày đó
+    let newLevel = 0;
+    if (firstVisit && daysBetween(firstVisit, today) <= cardDays) tiers.forEach((t, k) => { if (k > 0 && t.newBillMin > 0 && fb > t.newBillMin) newLevel = k; });
+    const ovIdx = c.tier_override ? tiers.findIndex((t) => t.key === c.tier_override) : -1;
+    const level = Math.max(spendLevel, newLevel, ovIdx);
+    const tier = tiers[level];
+    const source = level === 0 ? 'none' : ovIdx === level ? 'manual' : spendLevel === level ? 'spend' : 'newbill';
+    let validUntil = '';
+    let afterLevel = null;
+    if (level > 0 && ovIdx < level) {
+      const cands = [];
+      if (newLevel >= level) cands.push(addDaysStr(firstVisit, cardDays));
+      if (spendLevel >= level) {
+        let total = spend12;
+        let lapse = '';
+        for (const r of inv12) { if (r.d < addDaysStr(today, -365)) continue; total -= r.amt; if (levelBySpend(total) < level) { lapse = addDaysStr(r.d, 366); break; } }
+        if (lapse) cands.push(lapse);
+      }
+      if (cands.length) {
+        validUntil = cands.sort().pop();
+        const from = addDaysStr(validUntil, -365);
+        afterLevel = levelBySpend(inv12.filter((r) => r.d >= from).reduce((a, r) => a + r.amt, 0));
+        if (afterLevel >= level) afterLevel = Math.max(0, level - 1);
+      }
+    }
+    const expiresInDays = validUntil ? daysBetween(today, validUntil) : null;
+    const next = tiers[level + 1] || null;
     const obj = {
       id: c.id, memberNo: c.member_no, memberCode: 'FEN-' + String(c.member_no).padStart(6, '0'), key: c.cust_key, name: c.name, phone: c.phone || '', email: c.email || '', gender: c.gender || '',
       birthday: c.birthday ? new Date(new Date(c.birthday).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10) : '', address: c.address || '', company: c.company || '',
@@ -236,8 +283,8 @@ async function loadAll(pool, force = false) {
       lastContact: c.last_contact, byBranch: st.branches, branches: Object.keys(st.branches),
       spend, spend12, bestMonth, visits, invoices: bs.reduce((a, b) => a + b.invoices, 0), guests: bs.reduce((a, b) => a + b.guests, 0), firstVisit, lastVisit,
       avgBill: bs.reduce((a, b) => a + b.invoices, 0) ? spend / bs.reduce((a, b) => a + b.invoices, 0) : 0,
-      tier: tier.key, tierName: tier.name, tierMetric: metric,
-      nextTier: next ? { key: next.key, name: next.name, min: next.min, need: Math.max(0, next.min - metric) } : null,
+      tier: tier.key, tierName: tier.name, tierMetric: metric, tierSource: source, validUntil, expiresInDays, expiringSoon: !!validUntil && expiresInDays <= (settings.expiryWarnDays || 30), afterTierName: afterLevel === null ? '' : (afterLevel > 0 ? tiers[afterLevel].name : 'xóa thẻ thành viên'), firstBill: fb, discountPct: tier.discountPct || 0,
+      nextTier: next ? { key: next.key, name: next.name, min: next.min, need: Math.max(0, next.min - metric), newBillMin: next.newBillMin || 0 } : null,
       points: Math.max(0, Math.floor(spend / settings.pointsRate) + Number(c.ledger_points || 0)),
       recencyDays: lastVisit ? daysBetween(lastVisit, today) : null
     };

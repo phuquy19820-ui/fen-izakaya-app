@@ -27,10 +27,11 @@ export default function CrmSettings({ meta, reloadMeta }) {
   return (
     <div className="space-y-3">
       <Card title="Hạng thẻ thành viên">
-        <p className="text-sm text-gray-600 mb-3">Nhập mức chi tiêu để đạt từng hạng. Hạng đầu tiên là mặc định (0 đ). Mã hạng 5 mức cố định theo thứ tự: Thành viên → Bạc → Vàng → Kim cương → Luxury, bạn có thể đổi tên, đổi mức, thêm hoặc bớt hạng.</p>
-        <Field label="Cách tính hạng" className="mb-3">
-          <select value={s.tierPeriod} onChange={(e) => setS({ ...s, tierPeriod: e.target.value })} className={inputCls}>{PERIODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-        </Field>
+        <p className="text-sm text-gray-600 mb-3">Chính sách hạng FEN: hạng tính theo <b>chi tiêu tích lũy 12 tháng gần nhất</b>. Khách mới lần đầu có <b>một hóa đơn trên mức "hóa đơn đầu tiên"</b> của hạng nào thì được xếp thẳng hạng đó (hiệu lực 12 tháng). Hạng Signature duy trì khi đủ 35 triệu/năm, nếu thấp hơn sẽ rớt về Diamond; dưới 15 triệu/năm thì không còn thẻ. Khách VIP chiến lược / Celeb được xét chọn thủ công ở hồ sơ khách. Hạng đầu tiên (0 đ) nghĩa là chưa có thẻ.</p>
+        <div className="grid grid-cols-2 gap-3 mb-3" style={{ maxWidth: 520 }}>
+          <Field label="Thẻ có hiệu lực (tháng)"><input type="number" value={s.cardMonths} onChange={(e) => setS({ ...s, cardMonths: Number(e.target.value) })} className={inputCls} /></Field>
+          <Field label="Báo trước khi hết hạn (ngày)"><input type="number" value={s.expiryWarnDays} onChange={(e) => setS({ ...s, expiryWarnDays: Number(e.target.value) })} className={inputCls} /></Field>
+        </div>
         <div className="space-y-3">
           {s.tiers.map((t, i) => (
             <div key={i} className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4 border rounded-xl p-3">
@@ -40,6 +41,9 @@ export default function CrmSettings({ meta, reloadMeta }) {
                   <input type="number" disabled={i === 0} value={t.min} onChange={(e) => setTier(i, { min: Number(e.target.value) })} className={inputCls} />
                   <div className="text-xs text-gray-500 mt-0.5">{money(t.min)} đ</div>
                 </Field>
+                {i > 0 && <Field label="Hóa đơn đầu tiên (khách mới) trên (đ)"><input type="number" value={t.newBillMin || 0} onChange={(e) => setTier(i, { newBillMin: Number(e.target.value) })} className={inputCls} /><div className="text-xs text-gray-500 mt-0.5">{money(t.newBillMin || 0)} đ</div></Field>}
+                {i > 0 && <Field label="Giảm giá trên tổng hóa đơn (%)"><input type="number" value={t.discountPct || 0} onChange={(e) => setTier(i, { discountPct: Number(e.target.value) })} className={inputCls} /></Field>}
+                {i > 0 && <Field label="Voucher sinh nhật (đ, hiệu lực 30 ngày)"><input type="number" value={t.birthdayVoucher || 0} onChange={(e) => setTier(i, { birthdayVoucher: Number(e.target.value) })} className={inputCls} /><div className="text-xs text-gray-500 mt-0.5">{money(t.birthdayVoucher || 0)} đ</div></Field>}
                 <Field label="Quyền lợi (mỗi dòng một quyền lợi)" className="col-span-2"><textarea rows={4} value={t.perks.join('\n')} onChange={(e) => setTier(i, { perks: e.target.value.split('\n') })} className={inputCls} /></Field>
                 <div className="col-span-2 text-right">{i > 0 && s.tiers.length > 2 && <button onClick={() => delTier(i)} className="text-red-600 text-sm font-bold">Xóa hạng này</button>}</div>
               </div>

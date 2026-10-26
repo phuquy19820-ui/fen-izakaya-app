@@ -39,9 +39,20 @@ export default function CrmCustomerDetail({ id, meta, go, isManager }) {
             <div className="bg-white border rounded-xl p-3">
               <div className="flex justify-between text-xs font-semibold"><span>{c.tierName}</span><span>{c.nextTier.name}</span></div>
               <div className="rounded-full bg-gray-200 mt-1.5 overflow-hidden" style={{ height: 8 }}><div style={{ width: Math.min(100, Math.round((c.tierMetric / c.nextTier.min) * 100)) + '%', height: '100%', background: 'linear-gradient(90deg,#fbbf24,#f59e0b)' }} /></div>
-              <p className="text-xs text-gray-600 mt-1.5">Còn <b>{money(c.nextTier.need)} đ</b> để lên hạng {c.nextTier.name}. Mốc tính hạng: {{ best_month12: 'chi tiêu trong một tháng (12 tháng gần nhất)', rolling12: 'tổng 12 tháng gần nhất', lifetime: 'tổng từ trước đến nay' }[d.settings.tierPeriod]}: <b>{money(c.tierMetric)} đ</b>.</p>
+              <p className="text-xs text-gray-600 mt-1.5">Còn <b>{money(c.nextTier.need)} đ</b> chi tiêu để lên hạng {c.nextTier.name} (chi tiêu tích lũy 12 tháng gần nhất: <b>{money(c.tierMetric)} đ</b>){c.nextTier.newBillMin ? `. Khách mới có hóa đơn lần đầu trên ${money(c.nextTier.newBillMin)} đ cũng đạt hạng này.` : '.'}</p>
             </div>
           ) : <p className="bg-white border rounded-xl p-3 text-sm font-semibold">🎉 Đã đạt hạng cao nhất</p>}
+          <div className="bg-white border rounded-xl p-3 text-sm space-y-1">
+            <div className="font-bold">Hiệu lực hạng thẻ</div>
+            {c.tier === 'member' ? <div className="text-gray-600">Chưa đạt hạng thành viên. Cần chi tiêu tích lũy 12 tháng từ {money(d.settings.tiers[1] ? d.settings.tiers[1].min : 0)} đ.</div> : c.tierSource === 'manual' ? <div className="text-purple-700 font-semibold">Hạng do FEN xét chọn thủ công (khách VIP chiến lược / Celeb…), không tự hết hạn.</div> : (
+              <>
+                <div>{{ spend: 'Đạt hạng theo chi tiêu tích lũy 12 tháng', newbill: 'Đạt hạng nhờ hóa đơn lần đầu (khách mới) ' + money(c.firstBill) + ' đ' }[c.tierSource]}</div>
+                <div>Hiệu lực đến: <b>{c.validUntil ? fmtDate(c.validUntil) : '—'}</b>{c.expiresInDays !== null ? ` (còn ${c.expiresInDays} ngày)` : ''}</div>
+                {c.afterTierName && <div className="text-gray-600">Nếu không chi tiêu thêm, sau ngày này: <b>{c.afterTierName}</b>.</div>}
+                {c.expiringSoon && <div className="text-red-600 font-bold">⚠ Hạng sắp hết hạn — nhắc khách để giữ hạng.</div>}
+              </>
+            )}
+          </div>
         </div>
 
         <div className="space-y-3">
@@ -122,7 +133,7 @@ function Overview({ d, meta, isManager, reload, go }) {
         <Field label="Thẻ (tags), cách nhau dấu phẩy"><input value={v.tags} onChange={(e) => setV({ ...v, tags: e.target.value })} placeholder="VIP, khách công ty, thích sake" className={inputCls} /></Field>
         <Field label="Trạng thái"><select value={v.status} onChange={(e) => setV({ ...v, status: e.target.value })} className={inputCls}><option value="active">Đang chăm sóc</option><option value="vip">VIP</option><option value="blacklist">Danh sách đen</option><option value="inactive">Ngừng chăm sóc</option></select></Field>
         <Field label="Nhân viên phụ trách"><select value={v.ownerId} onChange={(e) => setV({ ...v, ownerId: e.target.value })} className={inputCls}><option value="">Chưa gán</option>{meta.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></Field>
-        {isManager && <Field label="Chỉnh hạng thẻ thủ công (bỏ qua chi tiêu)"><select value={v.tierOverride} onChange={(e) => setV({ ...v, tierOverride: e.target.value })} className={inputCls}><option value="">Tự động theo chi tiêu</option>{d.settings.tiers.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}</select></Field>}
+        {isManager && <Field label="Xét chọn hạng thủ công (VIP chiến lược, Celeb… — bỏ qua chi tiêu)"><select value={v.tierOverride} onChange={(e) => setV({ ...v, tierOverride: e.target.value })} className={inputCls}><option value="">Tự động theo chi tiêu</option>{d.settings.tiers.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}</select></Field>}
       </div>
       <div className="flex items-center gap-3 mt-4">
         <button onClick={save} className="px-5 py-2 rounded-lg bg-blue-700 text-white font-bold">Lưu thay đổi</button>
