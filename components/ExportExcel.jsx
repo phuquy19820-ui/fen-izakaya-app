@@ -71,13 +71,44 @@ export default function ExportExcel() {
   const run = async () => {
     setBusy(true);
     try {
-      const XLSX = await import('xlsx');
-      const wb = XLSX.utils.book_new();
+      const mod = await import('exceljs/dist/exceljs.min.js');
+      const ExcelJS = mod.default || mod;
+      const wb = new ExcelJS.Workbook();
+      wb.creator = 'Fen Izakaya'; wb.created = new Date();
+      const FONT = 'Times New Roman';
+      const thin = { style: 'thin', color: { argb: 'FF7F7F7F' } };
+      const border = { top: thin, left: thin, bottom: thin, right: thin };
       const title = clean((document.querySelector('h1') || {}).textContent) || 'Báo cáo';
       const sub = clean((document.querySelector('header p') || {}).textContent);
+      const user = clean((document.querySelector('[data-user-name]') || {}).textContent).replace(/^👤\s*/, '');
       const now = new Date();
-      const info = [['Báo cáo', title], ['Mô tả', sub], ['Địa chỉ trang', window.location.href], ['Xuất lúc', now.toLocaleString('vi-VN')], ['Người xuất', clean((document.querySelector('[data-user-name]') || {}).textContent)]];
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(info), 'Thông tin');
+      const nowText = now.toLocaleString('vi-VN');
+
+      const setupPage = (ws, landscape, headerRow) => {
+        ws.pageSetup = { paperSize: 9, orientation: landscape ? 'landscape' : 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.4, right: 0.4, top: 0.6, bottom: 0.7, header: 0.3, footer: 0.3 } };
+        if (headerRow) ws.pageSetup.printTitlesRow = `${headerRow}:${headerRow}`;
+        ws.headerFooter = { oddFooter: `&L&"${FONT},Italic"&8Fen Izakaya&C&"${FONT},Regular"&9Trang &P / &N&R&"${FONT},Italic"&8In ngày &D` };
+      };
+
+      // Sheet thông tin
+      const info = wb.addWorksheet('Thông tin');
+      info.columns = [{ width: 22 }, { width: 80 }];
+      info.mergeCells('A1:B1');
+      info.getCell('A1').value = 'FEN IZAKAYA';
+      info.getCell('A1').font = { name: FONT, size: 16, bold: true, color: { argb: 'FF0073C5' } };
+      info.getCell('A1').alignment = { horizontal: 'center' };
+      info.mergeCells('A2:B2');
+      info.getCell('A2').value = title.toUpperCase();
+      info.getCell('A2').font = { name: FONT, size: 14, bold: true };
+      info.getCell('A2').alignment = { horizontal: 'center', wrapText: true };
+      [['Mô tả', sub], ['Địa chỉ trang', window.location.href], ['Xuất lúc', nowText], ['Người xuất', user]].forEach((r, k) => {
+        const row = info.getRow(4 + k);
+        row.getCell(1).value = r[0]; row.getCell(1).font = { name: FONT, size: 11, bold: true };
+        row.getCell(2).value = r[1]; row.getCell(2).font = { name: FONT, size: 11 }; row.getCell(2).alignment = { wrapText: true, vertical: 'top' };
+        [1, 2].forEach((c) => { row.getCell(c).border = border; });
+      });
+      setupPage(info, false, null);
+
       const used = new Set(['thông tin']);
       let count = 0;
       Array.from(document.querySelectorAll('table')).forEach((table) => {
@@ -86,22 +117,83 @@ export default function ExportExcel() {
         const rows = tableToRows(table);
         if (rows.length < 2) return;
         count += 1;
-        const ws = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map((c) => (c && typeof c === 'object' ? c.v : c))));
-        rows.forEach((r, ri) => r.forEach((c, ci) => {
-          const ref = XLSX.utils.encode_cell({ r: ri, c: ci });
-          if (c && typeof c === 'object' && ws[ref]) ws[ref].z = '0.0%';
-          else if (typeof c === 'number' && ws[ref]) ws[ref].z = Number.isInteger(c) ? '#,##0' : '#,##0.###';
-        }));
+        const name = sheetName(table, used, count);
+        const ncol = Math.max(...rows.map((r) => r.length));
+        const ws = wb.addWorksheet(name);
+        const raw = (c) => (c && typeof c === 'object' ? c.v : c);
+
+        // độ rộng cột theo nội dung
         const widths = [];
-        rows.slice(0, 200).forEach((r) => r.forEach((c, ci) => { const len = String(c && typeof c === 'object' ? '00.0%' : c).length; widths[ci] = Math.min(60, Math.max(widths[ci] || 8, len + 2)); }));
-        ws['!cols'] = widths.map((w) => ({ wch: w }));
-        ws['!freeze'] = { xSplit: 0, ySplit: 1 };
-        XLSX.utils.book_append_sheet(wb, ws, sheetName(table, used, count));
+        rows.slice(0, 300).forEach((r) => r.forEach((c, ci) => { const len = c && typeof c === 'object' ? 7 : (typeof c === 'number' ? String(Math.round(c)).length + 3 : String(c).length); widths[ci] = Math.min(46, Math.max(widths[ci] || 6, len + 2)); }));
+        for (let ci = 0; ci < ncol; ci++) ws.getColumn(ci + 1).width = widths[ci] || 10;
+        const totalWidth = widths.reduce((a, b) => a + b, 0);
+        const landscape = ncol > 6 || totalWidth > 95;
+
+        // khối tiêu đề
+        const mergeRow = (rn) => { if (ncol > 1) ws.mergeCells(rn, 1, rn, ncol); };
+        mergeRow(1); ws.getCell(1, 1).value = 'FEN IZAKAYA'; ws.getCell(1, 1).font = { name: FONT, size: 12, bold: true, color: { argb: 'FF0073C5' } }; ws.getCell(1, 1).alignment = { horizontal: 'left' };
+        mergeRow(2); ws.getCell(2, 1).value = (name || title).toUpperCase(); ws.getCell(2, 1).font = { name: FONT, size: 15, bold: true }; ws.getCell(2, 1).alignment = { horizontal: 'center', vertical: 'middle' }; ws.getRow(2).height = 26;
+        mergeRow(3); ws.getCell(3, 1).value = [title, sub].filter(Boolean).join(' — '); ws.getCell(3, 1).font = { name: FONT, size: 10, italic: true }; ws.getCell(3, 1).alignment = { horizontal: 'center', wrapText: true }; ws.getRow(3).height = sub && sub.length > 90 ? 28 : 16;
+        mergeRow(4); ws.getCell(4, 1).value = `Ngày xuất: ${nowText}${user ? ' — Người lập: ' + user : ''}`; ws.getCell(4, 1).font = { name: FONT, size: 10, italic: true }; ws.getCell(4, 1).alignment = { horizontal: 'center' };
+
+        const headerRow = 6;
+        // dòng đầu của bảng là tiêu đề cột; các dòng sau là dữ liệu
+        rows.forEach((r, ri) => {
+          const row = ws.getRow(headerRow + ri);
+          const isHeader = ri === 0;
+          const firstText = String(raw(r[0]) === undefined ? '' : raw(r[0]));
+          const isTotal = !isHeader && /^(tổng|cộng|total)/i.test(firstText.trim());
+          for (let ci = 0; ci < ncol; ci++) {
+            const c = r[ci] === undefined ? '' : r[ci];
+            const cell = row.getCell(ci + 1);
+            const v = raw(c);
+            cell.value = v === '' ? null : v;
+            cell.border = border;
+            if (isHeader) {
+              cell.font = { name: FONT, size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0073C5' } };
+              cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            } else {
+              cell.font = { name: FONT, size: 11, bold: isTotal };
+              if (isTotal) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F1FA' } };
+              else if (ri % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F9FC' } };
+              if (c && typeof c === 'object') { cell.numFmt = '0.0%'; cell.alignment = { horizontal: 'right', vertical: 'middle' }; }
+              else if (typeof c === 'number') { cell.numFmt = Number.isInteger(c) ? '#,##0' : '#,##0.###'; cell.alignment = { horizontal: 'right', vertical: 'middle' }; }
+              else cell.alignment = { horizontal: /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(String(c)) ? 'center' : 'left', vertical: 'middle', wrapText: true };
+            }
+          }
+          if (isHeader) row.height = 32;
+        });
+        ws.views = [{ state: 'frozen', ySplit: headerRow, xSplit: 0 }];
+
+        // chữ ký
+        const sigRow = headerRow + rows.length + 2;
+        const labels = ['Người lập biểu', 'Kế toán trưởng', 'Giám đốc'];
+        const span = Math.max(1, Math.floor(ncol / 3));
+        labels.forEach((lb, k) => {
+          const from = k * span + 1;
+          const to = k === 2 ? ncol : (k + 1) * span;
+          if (from > ncol) return;
+          if (to > from) ws.mergeCells(sigRow, from, sigRow, to);
+          const cell = ws.getCell(sigRow, from);
+          cell.value = lb; cell.font = { name: FONT, size: 11, bold: true }; cell.alignment = { horizontal: 'center' };
+          if (to > from) ws.mergeCells(sigRow + 1, from, sigRow + 1, to);
+          const c2 = ws.getCell(sigRow + 1, from);
+          c2.value = '(Ký, ghi rõ họ tên)'; c2.font = { name: FONT, size: 10, italic: true }; c2.alignment = { horizontal: 'center' };
+        });
+        setupPage(ws, landscape, headerRow);
+        ws.pageSetup.printArea = `A1:${ws.getColumn(ncol).letter}${sigRow + 5}`;
       });
       if (count === 0) { alert('Màn hình này chưa có bảng số liệu nào để xuất. Hãy chọn kỳ báo cáo / bấm Xem rồi thử lại.'); return; }
       const p = (n) => String(n).padStart(2, '0');
       const slug = title.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[đĐ]/g, 'd').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').substring(0, 50);
-      XLSX.writeFile(wb, `${slug || 'bao_cao'}_${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}.xlsx`);
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${slug || 'bao_cao'}_${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     } catch (e) {
       alert('Không xuất được file Excel: ' + (e && e.message ? e.message : e));
     } finally { setBusy(false); }
