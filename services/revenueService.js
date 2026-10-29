@@ -70,6 +70,18 @@ function hourBucket(startHour) {
   return h < 17 ? 0 : h < 18 ? 1 : h < 20 ? 2 : h < 22 ? 3 : 4;
 }
 
+// Ngày của hóa đơn tính theo GIỜ MỞ BILL (ngày kinh doanh: bill mở trước 6h sáng thuộc ngày hôm trước).
+// Quy tắc cũ tính theo giờ thanh toán; hàm này đổi ngày cũ sang ngày mới để dữ liệu đã có và dữ liệu từ tiện ích cũ vẫn khớp.
+function legacyToOpenDate(legacyDate, timeIn) {
+  const m = String(timeIn || '').match(/(\d+):(\d+)\s*-\s*(\d+):(\d+)/);
+  if (!m || !/^\d{4}-\d{2}-\d{2}$/.test(String(legacyDate || ''))) return legacyDate;
+  const hin = Number(m[1]); const min = Number(m[2]); const hout = Number(m[3]); const mout = Number(m[4]);
+  const checkout = hout < 6 ? addDays(legacyDate, 1) : legacyDate; // ngày thanh toán thực tế
+  const crossed = hin * 60 + min > hout * 60 + mout; // mở bill trước nửa đêm, thanh toán sau nửa đêm
+  const opened = crossed ? addDays(checkout, -1) : checkout;
+  return hin < 6 ? addDays(opened, -1) : opened;
+}
+
 const n0 = (v) => Number(v) || 0;
 const pct = (a, b) => (b ? (a - b) / b : null);
 
@@ -373,4 +385,5 @@ function buildReport(rawInvoices, rawItems, menu, params) {
   return out;
 }
 
-module.exports = { buildReport, customerGroup, wgCountry, GROUPS };
+module.exports = {
+  legacyToOpenDate, buildReport, customerGroup, wgCountry, GROUPS };

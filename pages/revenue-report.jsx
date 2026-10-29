@@ -291,11 +291,27 @@ export default function RevenueReport() {
           {loading && <p className="p-4 text-gray-600">Đang tải…</p>}
           {error && <p className="p-3 bg-red-50 text-red-700 rounded border border-red-300">❌ {error}</p>}
           {!loading && empty && (
-            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu hóa đơn. Cài tiện ích Chrome bản <b>1.9.0</b> rồi vào <b>Đồng bộ & ghép món</b>, chọn tháng và bấm Đồng bộ để lấy dữ liệu hóa đơn từ CUKCUK.</p>
+            <p className="bg-white rounded border p-6 text-gray-600">Chưa có dữ liệu hóa đơn. Cài tiện ích Chrome bản <b>1.9.1</b> rồi vào <b>Đồng bộ & ghép món</b>, chọn tháng và bấm Đồng bộ để lấy dữ liệu hóa đơn từ CUKCUK.</p>
           )}
 
           {!loading && data && !empty && (
             <>
+              {data.lastData && (() => {
+                const L = data.lastData;
+                const vnToday = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+                const yest = new Date(Date.now() + 7 * 3600 * 1000 - 86400000).toISOString().slice(0, 10);
+                const stale = L.date < yest;
+                const fmt = (d) => d.split('-').reverse().join('/');
+                const sync = L.syncedAt ? new Date(L.syncedAt).toLocaleString('vi-VN') : '';
+                return (
+                  <div className="rounded border px-3 py-1.5 mb-2 flex flex-wrap items-center gap-x-4 gap-y-1" style={{ background: stale ? '#fffbeb' : '#f0fdf4', borderColor: stale ? '#fcd34d' : '#86efac', color: stale ? '#92400e' : '#166534' }}>
+                    <span className="font-bold">📅 Dữ liệu cập nhật đến hết ngày {fmt(L.date)}{L.openTime ? ` (hóa đơn cuối mở lúc ${L.openTime})` : ''}</span>
+                    {sync && <span>Đồng bộ lần cuối: {sync}</span>}
+                    <span style={{ opacity: 0.85 }}>Ngày hóa đơn tính theo giờ mở bill</span>
+                    {stale && <span className="font-bold">⚠ Chưa có dữ liệu từ ngày {fmt(new Date(Date.parse(L.date + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10))} đến {fmt(vnToday)} — hãy đồng bộ ở tab "Đồng bộ & ghép món".</span>}
+                  </div>
+                );
+              })()}
               {/* ===== DASHBOARD ===== */}
               {tab === 'dash' && (
                 <div className="space-y-2">

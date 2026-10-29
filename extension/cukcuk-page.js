@@ -281,11 +281,16 @@
 
   const localDate = (iso) => new Date(new Date(iso).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
   const shiftDay = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
-  // Ngày kinh doanh của POS: hóa đơn thanh toán sau nửa đêm (đến 6h sáng) vẫn thuộc ngày làm việc hôm trước
+  // Ngày của hóa đơn tính theo GIỜ MỞ BILL: bill mở trước nửa đêm nhưng thanh toán sau nửa đêm thuộc ngày mở;
+  // bill mở trước 6h sáng vẫn thuộc ngày làm việc hôm trước.
   const bizDate = (iso, timeInOut) => {
-    const d = localDate(iso);
-    const m = String(timeInOut || '').match(/-\s*(\d+):\d+/);
-    return m && Number(m[1]) < 6 ? shiftDay(d, -1) : d;
+    const d = localDate(iso); // ngày thanh toán
+    const m = String(timeInOut || '').match(/(\d+):(\d+)\s*-\s*(\d+):(\d+)/);
+    if (!m) return d;
+    const hin = Number(m[1]);
+    const crossed = hin * 60 + Number(m[2]) > Number(m[3]) * 60 + Number(m[4]);
+    const opened = crossed ? shiftDay(d, -1) : d;
+    return hin < 6 ? shiftDay(opened, -1) : opened;
   };
 
   async function run(job) {
@@ -339,7 +344,7 @@
           if (bd < job.fromDate || bd > job.toDate) continue;
           if (r.RefNo) invoices.add(r.RefNo);
           if (r.RefNo && !r.InventoryItemCode && r.RefDetailType === 0 && !invDocs.has(r.RefNo)) {
-            invDocs.set(r.RefNo, { refNo: r.RefNo, date: bd, timeIn: r.TimeInOut || '', area: r.AreaName || '', shift: r.ShiftName || '',
+            invDocs.set(r.RefNo, { rule: 'open', refNo: r.RefNo, date: bd, timeIn: r.TimeInOut || '', area: r.AreaName || '', shift: r.ShiftName || '',
               customer: r.CustomerName || '', people: Number(r.NumberOfPeople) || 0, amount: Number(r.Amount) || 0, discount: Number(r.DiscountAmount) || 0,
               serviceFee: Number(r.CostAmount) || 0, taxReduction: Number(r.TaxReductionAmount) || 0, vat: Number(r.VATAmount) || 0 });
           }

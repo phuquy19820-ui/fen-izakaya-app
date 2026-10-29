@@ -17,7 +17,7 @@ const { defaultConversion } = require('./services/unitService');
 const { parseAndSaveBOM } = require('./services/bomService');
 const { classifyMaterial } = require('./services/materialClassificationService');
 const PurchasePlanService = require('./services/purchasePlanService');
-const { buildReport } = require('./services/revenueService');
+const { buildReport, legacyToOpenDate } = require('./services/revenueService');
 const auth = require('./services/authService');
 const crmService = require('./services/crmService');
 const crmRoutes = require('./services/crmRoutes');
@@ -421,19 +421,48 @@ app.post('/api/menu/add-missing', async (req, res) => {
   }
 });
 
+// Một lần: đổi ngày các hóa đơn đã lưu từ "giờ thanh toán" sang "giờ mở bill"
+async function migrateInvoiceOpenDates(pool) {
+  await pool.query('CREATE TABLE IF NOT EXISTS app_flags (name VARCHAR(80) PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())');
+  if ((await pool.query("SELECT 1 FROM app_flags WHERE name = 'invoice_open_date_v1'")).rowCount) return;
+  const rows = (await pool.query("SELECT branch_id, ref_no, to_char(inv_date, 'YYYY-MM-DD') AS d, time_in FROM cukcuk_invoices")).rows;
+  let moved = 0; let skipped = 0;
+  for (const r of rows) {
+    const nd = legacyToOpenDate(r.d, r.time_in);
+    if (nd === r.d) continue;
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('UPDATE cukcuk_invoices SET inv_date = $4 WHERE branch_id = $1 AND ref_no = $2 AND inv_date = $3', [r.branch_id, r.ref_no, r.d, nd]);
+      await c.query('UPDATE cukcuk_invoice_items SET inv_date = $4 WHERE branch_id = $1 AND ref_no = $2 AND inv_date = $3', [r.branch_id, r.ref_no, r.d, nd]);
+      await c.query('COMMIT'); moved += 1;
+    } catch (e) { await c.query('ROLLBACK').catch(() => {}); skipped += 1; } finally { c.release(); }
+  }
+  await pool.query("INSERT INTO app_flags (name) VALUES ('invoice_open_date_v1') ON CONFLICT DO NOTHING");
+  console.log(`Đổi ngày hóa đơn theo giờ mở bill: ${moved} hóa đơn đã đổi, ${skipped} bỏ qua`);
+}
+
 // ====== BÁO CÁO DOANH THU THEO HÓA ĐƠN (nhóm khách, khung giờ, khu vực, so sánh tháng...) ======
 app.post('/api/revenue/import', async (req, res) => {
   const { branchId, invoices, items } = req.body;
   if (!branchId || !Array.isArray(invoices)) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc dữ liệu hóa đơn' });
   const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-  const inv0 = invoices.filter((r) => r && r.refNo && dateRe.test(String(r.date || '')));
+  // tiện ích cũ gửi ngày theo giờ thanh toán -> đổi sang ngày theo giờ mở bill
+  let invoicesN = invoices;
+  let itemsN = Array.isArray(items) ? items : [];
+  if (!invoices.some((r) => r && r.rule === 'open')) {
+    const timeOf = new Map(invoices.filter((r) => r && r.refNo).map((r) => [String(r.date) + '|' + String(r.refNo), r.timeIn]));
+    invoicesN = invoices.map((r) => (r ? { ...r, date: legacyToOpenDate(r.date, r.timeIn) } : r));
+    itemsN = itemsN.map((r) => (r ? { ...r, date: legacyToOpenDate(r.date, timeOf.get(String(r.date) + '|' + String(r.refNo))) } : r));
+  }
+  const inv0 = invoicesN.filter((r) => r && r.refNo && dateRe.test(String(r.date || '')));
   if (inv0.length === 0) return res.json({ success: true, message: 'Không có hóa đơn trong kỳ (bỏ qua)', data: { invoices: 0, items: 0 } });
   // Khóa hóa đơn = (ngày, số hóa đơn): cùng số ở ngày khác là hóa đơn khác
   const seenInv = new Set();
   const inv = inv0.map((r) => ({ ...r, refNo: String(r.refNo) })).filter((r) => { const k = r.date + '|' + r.refNo; if (seenInv.has(k)) return false; seenInv.add(k); return true; });
   const dateOfRef = new Map();
   inv.forEach((r) => { if (!dateOfRef.has(r.refNo)) dateOfRef.set(r.refNo, r.date); });
-  const its = (Array.isArray(items) ? items : []).filter((r) => r && r.refNo).map((r) => {
+  const its = itemsN.filter((r) => r && r.refNo).map((r) => {
     const ref = String(r.refNo);
     const d = dateRe.test(String(r.date || '')) ? r.date : dateOfRef.get(ref);
     return { ...r, refNo: ref, date: d };
@@ -519,6 +548,9 @@ app.get('/api/revenue/report/:branchId', async (req, res) => {
       report.meta.kinds = Array.from(new Set(cats.map((c) => c.kind || 'Khác'))).sort();
       report.meta.categories = Array.from(new Set(cats.map((c) => c.category || '(Không có nhóm)'))).sort((a, b) => a.localeCompare(b, 'vi'));
     }
+    const lastRow = (await pool.query("SELECT time_in FROM cukcuk_invoices WHERE branch_id = $1 AND inv_date = $2 ORDER BY split_part(time_in, ' - ', 1) DESC LIMIT 1", [branchId, last])).rows[0];
+    const syncRow = (await pool.query("SELECT MAX(synced_at) AS t FROM cukcuk_sync_logs WHERE branch_id = $1 AND sync_type = 'INVOICES' AND status = 'SUCCESS'", [branchId])).rows[0];
+    report.lastData = { date: last, openTime: lastRow ? String(lastRow.time_in || '').split('-')[0].trim() : '', syncedAt: syncRow && syncRow.t ? new Date(syncRow.t).toISOString() : '' };
     report.year = year; report.month = month;
     return res.json({ success: true, data: report });
   } catch (error) {
@@ -2677,6 +2709,7 @@ app.all('*', (req, res) => {
     await initializeDatabase();
     await auth.init(pool);
     await crmService.init(pool);
+    await migrateInvoiceOpenDates(pool).catch((e) => console.error('Migrate invoice open dates error:', e.message));
     console.log('✅ Database schema initialized');
 
     // Prepare Next.js
