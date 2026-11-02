@@ -691,7 +691,7 @@ app.put('/api/materials/manual/:branchId/:id', async (req, res) => {
     const cycle = ['FRESH_3DAYS', 'WEEKLY_7DAYS'].includes(b.cycle) ? b.cycle : null;
     const unit = String(b.unit || '').trim().substring(0, 20) || null;
     await pool.query(`UPDATE raw_materials SET material_name = $2, normalized_name = $3, unit_purchase = COALESCE($4, unit_purchase), unit_recipe = COALESCE($4, unit_recipe),
-        unit_cost = $5, price_source = CASE WHEN $5 > 0 THEN 'FILE' ELSE price_source END, sub_group = COALESCE($6, sub_group), purchase_cycle = COALESCE($7, purchase_cycle), updated_at = NOW()
+        unit_cost = $5::numeric, price_source = CASE WHEN $5::numeric > 0 THEN 'FILE' ELSE price_source END, sub_group = COALESCE($6, sub_group), purchase_cycle = COALESCE($7, purchase_cycle), updated_at = NOW()
       WHERE material_id = $1`, [id, name.substring(0, 255), norm.substring(0, 255), unit, Math.max(0, Number(b.price) || 0), sub, cycle]);
     await pool.query('UPDATE stock_code_map SET cukcuk_name = $2 WHERE cukcuk_code = $1', [id, name.substring(0, 255)]);
     return res.json({ success: true, message: 'Đã lưu mã hàng' });
