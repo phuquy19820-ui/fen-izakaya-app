@@ -9,7 +9,7 @@ const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"
 // lines: [{ materialId?, code, name, group, unit, qty, price }] — các NVL đã chọn đặt mua, hiện thành bảng để kiểm tra / sửa / bỏ bớt.
 // suppliers: danh sách nhà cung cấp; materialSuppliers: { [material_id]: [{ supplier_code, price, last_date }] }
 // onSavePlan(edits): lưu kế hoạch mua hàng (kèm các số lượng/đơn giá đã sửa trong cửa sổ này); trả về true nếu lưu được.
-export default function PurchaseOrderModal({ open, onClose, branch, lines, cycleLabel, onCompanySaved, suppliers = [], materialSuppliers = null, onOrderCreated, onNewSupplier, onSavePlan }) {
+export default function PurchaseOrderModal({ open, onClose, branch, lines, cycleLabel, onCompanySaved, suppliers = [], materialSuppliers = null, onOrderCreated, onNewSupplier, onSavePlan, candidates = [] }) {
   const [buyer, setBuyer] = useState('');
   const [supplierCode, setSupplierCode] = useState('');
   const [supplierText, setSupplierText] = useState('');
@@ -21,6 +21,7 @@ export default function PurchaseOrderModal({ open, onClose, branch, lines, cycle
   const [info, setInfo] = useState('');
   const [order, setOrder] = useState(null);
   const [rows, setRows] = useState([]);
+  const [onlyBoughtOpt, setOnlyBoughtOpt] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -41,6 +42,21 @@ export default function PurchaseOrderModal({ open, onClose, branch, lines, cycle
   const hitOf = (l) => (supplier && materialSuppliers && l.materialId ? (materialSuppliers[l.materialId] || []).find((s) => s.supplier_code === supplier.code) : null);
 
   const effLines = useMemo(() => rows.filter((l) => (Number(l.qty) || 0) > 0).map((l) => ({ ...l, qty: Number(l.qty) || 0, price: Number(l.price) || 0 })), [rows]);
+  const inRows = useMemo(() => new Set(rows.map((r) => r.rowKey)), [rows]);
+  const addable = useMemo(() => candidates.filter((c) => !inRows.has(c.materialId || c.code) && (!onlyBoughtOpt || !supplier || !materialSuppliers || hitOf(c))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [candidates, inRows, onlyBoughtOpt, supplierCode, materialSuppliers]);
+  const addOptions = useMemo(() => addable.map((c) => ({ value: c.materialId || c.code, label: `${c.name}`, hint: [c.code, c.group, c.unit, (Number(c.qty) || 0) > 0 ? `đề xuất ${num(c.qty)}` : ''].filter(Boolean).join(' · ') })), [addable]);
+  const addRow = (key) => {
+    const c = candidates.find((x) => (x.materialId || x.code) === key);
+    if (!c || inRows.has(key)) return;
+    setRows((rs) => [...rs, { ...c, rowKey: key, origQty: c.qty, origPrice: c.price }]);
+  };
+  const addBoughtBySupplier = () => {
+    const add = candidates.filter((c) => !inRows.has(c.materialId || c.code) && hitOf(c));
+    setRows((rs) => [...rs, ...add.map((c) => ({ ...c, rowKey: c.materialId || c.code, origQty: c.qty, origPrice: c.price }))]);
+  };
+  const boughtAddable = supplier && materialSuppliers ? candidates.filter((c) => !inRows.has(c.materialId || c.code) && hitOf(c)).length : 0;
   const notBought = supplier && materialSuppliers ? rows.filter((l) => !hitOf(l)).length : 0;
 
   if (!open) return null;
@@ -225,6 +241,17 @@ ${showPrice ? `<tfoot><tr><td colspan="6" class="r"><b>TỔNG CỘNG:</b></td><t
           <button onClick={() => setRows((rs) => rs.filter((l) => (Number(l.qty) || 0) > 0))} className="px-2 py-1 rounded border font-bold">Bỏ các dòng chưa có số lượng</button>
         </div>
 
+        <div className="flex flex-wrap items-end gap-2 bg-blue-50 border border-blue-200 rounded p-2">
+          <div style={{ minWidth: 380, flex: 1 }}>
+            <label className="block font-semibold mb-1">➕ Thêm NVL vào đơn (gõ tên hoặc mã để tìm, {addable.length} NVL có thể thêm)</label>
+            <SearchSelect className="w-full" options={addOptions} value="" onChange={(v) => v && addRow(v)} placeholder="🔍 Tìm NVL cần đặt mua…" />
+          </div>
+          {supplier && materialSuppliers && (
+            <button onClick={addBoughtBySupplier} disabled={boughtAddable === 0} className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold disabled:opacity-50">Thêm {boughtAddable} NVL NCC này từng bán</button>
+          )}
+          {supplier && materialSuppliers && <label className="flex items-center gap-1 pb-2 cursor-pointer"><input type="checkbox" checked={onlyBoughtOpt} onChange={(e) => setOnlyBoughtOpt(e.target.checked)} /> Ô tìm chỉ hiện NVL NCC này từng bán</label>}
+        </div>
+
         <div className="border rounded overflow-auto" style={{ maxHeight: '42vh' }}>
           <table className="w-full border-collapse">
             <thead style={{ position: 'sticky', top: 0 }}>
@@ -232,7 +259,7 @@ ${showPrice ? `<tfoot><tr><td colspan="6" class="r"><b>TỔNG CỘNG:</b></td><t
                 <th className={th} style={{ width: 96 }}>SL đặt</th><th className={th} style={{ width: 110 }}>Đơn giá (đ)</th><th className={th} style={{ width: 110 }}>Thành tiền (đ)</th><th className={th} style={{ width: 170 }}>NCC này đã từng mua?</th><th className={th} style={{ width: 34 }}></th></tr>
             </thead>
             <tbody>
-              {rows.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-gray-500">Chưa có NVL nào. Đóng cửa sổ, tick chọn các NVL cần đặt trong bảng Kế hoạch mua rồi mở lại.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-gray-500">Chưa có NVL nào trong đơn. Dùng ô "➕ Thêm NVL vào đơn" ở trên để tìm và thêm NVL cần đặt (hoặc bấm "Thêm … NVL NCC này từng bán"), rồi nhập số lượng.</td></tr>}
               {rows.map((l, i) => {
                 const h = hitOf(l);
                 const q = Number(l.qty) || 0;

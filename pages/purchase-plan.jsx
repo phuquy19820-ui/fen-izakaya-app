@@ -360,6 +360,7 @@ export default function PurchasePlanMisaUI() {
         suppliers={suppliers}
         onNewSupplier={() => setNewSupOpen(true)}
         onSavePlan={savePlanFromOrder}
+        candidates={planData.map(mapLine)}
         materialSuppliers={matSup}
         onCompanySaved={(name) => setCurrentBranch((b) => (b ? { ...b, buyer_company: name } : b))}
       />
