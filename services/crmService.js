@@ -10,15 +10,22 @@ const PARSE_VERSION = 2;
 
 const DEFAULT_SETTINGS = {
   brand: 'FEN IZAKAYA',
-  // Chính sách hạng thành viên FEN (v3): chi tiêu tích lũy 12 tháng gần nhất; khách mới có hóa đơn lần đầu lớn được xếp hạng ngay.
-  policyVersion: 3,
+  // Chính sách hạng thành viên FEN (v4): Silver (cơ bản, khi để lại thông tin) -> Diamond -> Signature.
+  // Hạng chỉ xét theo TỔNG CHI TIÊU tại quán trong 12 tháng gần nhất (không xét theo điểm tích lũy); khách mới có 1 hóa đơn lớn được xếp hạng ngay.
+  policyVersion: 4,
   tierPeriod: 'rolling12',
   cardMonths: 12, // thẻ có hiệu lực 12 tháng kể từ ngày phát sinh
-  expiryWarnDays: 30, // báo trước khi hạng/thẻ sắp hết hạn
+  expiryWarnDays: 30, // báo trước khi hạng sắp hết hạn
   tiers: [
-    { key: 'member', name: 'Chưa đạt hạng', min: 0, newBillMin: 0, discountPct: 0, birthdayVoucher: 0, perks: ['Tích điểm mọi hóa đơn'] },
-    { key: 'diamond', name: 'FEN DIAMOND MEMBER', min: 15000000, newBillMin: 3000000, discountPct: 8, birthdayVoucher: 500000, perks: ['Giảm giá 8% trên tổng hóa đơn', 'Voucher sinh nhật 500.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày)', 'Ưu tiên đặt bàn', 'Ưu đãi riêng theo từng tháng'] },
-    { key: 'luxury', name: 'FEN SIGNATURE MEMBER', min: 35000000, newBillMin: 9000000, discountPct: 15, birthdayVoucher: 1000000, perks: ['Giảm giá 15% trên tổng hóa đơn', 'Voucher sinh nhật 1.000.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày)', 'Quà tặng đặc biệt hàng năm', 'Giữ bàn ưu tiên', 'Ưu tiên trải nghiệm món mới', 'Ưu tiên khu vực chỗ ngồi đẹp trong các dịp lễ cao điểm'] }
+    { key: 'silver', name: 'FEN SILVER MEMBER', min: 0, newBillMin: 0, discountPct: 0, birthdayVoucher: 0, perks: ['Hạng thành viên cơ bản: khách để lại thông tin (số điện thoại) là có thẻ', 'Cập nhật chương trình và ưu đãi mới của FEN', 'Chi tiêu tích lũy để nâng lên hạng Diamond và Signature'] },
+    { key: 'diamond', name: 'FEN DIAMOND MEMBER', min: 15000000, newBillMin: 3000000, discountPct: 8, birthdayVoucher: 500000, perks: ['Giảm giá 8% trên tổng hóa đơn (không áp dụng đồng thời với các CTKM, combo khuyến mãi khác)', 'Voucher sinh nhật 500.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày, tặng 1 lần/năm)', 'Ưu tiên đặt bàn', 'Ưu đãi riêng theo từng tháng'] },
+    { key: 'luxury', name: 'FEN SIGNATURE MEMBER', min: 35000000, newBillMin: 9000000, discountPct: 15, birthdayVoucher: 1000000, perks: ['Giảm giá 15% trên tổng hóa đơn (không áp dụng đồng thời với các CTKM, combo khuyến mãi khác)', 'Voucher sinh nhật 1.000.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày, tặng 1 lần/năm)', 'Quà tặng đặc biệt hàng năm', 'Giữ bàn ưu tiên', 'Ưu tiên trải nghiệm món mới', 'Ưu tiên khu vực chỗ ngồi đẹp trong các dịp lễ cao điểm'] }
+  ],
+  // Điều kiện sử dụng ưu đãi (hiển thị trên thẻ thành viên)
+  terms: [
+    'Đã áp dụng giảm giá thành viên (8% / 15%) thì không áp dụng đồng thời với các chương trình khuyến mãi, combo khuyến mãi khác.',
+    'Voucher sinh nhật chỉ tặng 1 lần/năm, hiệu lực 30 ngày, không ràng buộc điều kiện áp dụng khác.',
+    'Hạng thành viên chỉ xét theo tổng chi tiêu tại quán (không xét theo điểm tích lũy): đủ mức thì nâng hạng, không duy trì đủ mức thì hạ hạng.'
   ],
   pointsRate: 10000, // 10.000đ = 1 điểm
   // Mẫu tin nhắn gửi nhanh qua Zalo / SMS / Facebook. Biến: {ten} {hang} {quan} {the}
@@ -131,6 +138,7 @@ async function getSettings(pool) {
     .map((t) => ({ key: String(t.key), name: String(t.name || t.key), min: Number(t.min) || 0, newBillMin: Number(t.newBillMin) || 0, discountPct: Number(t.discountPct) || 0, birthdayVoucher: Number(t.birthdayVoucher) || 0, perks: Array.isArray(t.perks) ? t.perks.map(String) : [] }))
     .sort((a, b) => a.min - b.min);
   if (s.tiers[0]) s.tiers[0].min = 0;
+  s.terms = (fresh && Array.isArray(v.terms) ? v.terms : DEFAULT_SETTINGS.terms).map((t) => String(t || '').trim().substring(0, 300)).filter(Boolean).slice(0, 10);
   s.messageTemplates = (Array.isArray(v.messageTemplates) ? v.messageTemplates : DEFAULT_SETTINGS.messageTemplates)
     .map((t) => ({ name: String(t.name || '').trim().substring(0, 60), text: String(t.text || '').trim().substring(0, 1000) })).filter((t) => t.name && t.text).slice(0, 12);
   return s;
@@ -149,6 +157,7 @@ async function saveSettings(pool, body) {
   for (const k of ['pointsRate', 'newDays', 'winbackDays', 'lostDays']) if (Number(body[k]) > 0) next[k] = Number(body[k]);
   next.policyVersion = DEFAULT_SETTINGS.policyVersion;
   for (const k of ['cardMonths', 'expiryWarnDays']) if (Number(body[k]) > 0) next[k] = Number(body[k]);
+  if (Array.isArray(body.terms)) next.terms = body.terms;
   if (Array.isArray(body.messageTemplates)) next.messageTemplates = body.messageTemplates;
   if (body.brand) next.brand = String(body.brand).substring(0, 40);
   await pool.query(`INSERT INTO crm_settings (key, value) VALUES ('main', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [JSON.stringify(next)]);
@@ -285,7 +294,7 @@ async function loadAll(pool, force = false) {
       lastContact: c.last_contact, byBranch: st.branches, branches: Object.keys(st.branches),
       spend, spend12, bestMonth, visits, invoices: bs.reduce((a, b) => a + b.invoices, 0), guests: bs.reduce((a, b) => a + b.guests, 0), firstVisit, lastVisit,
       avgBill: bs.reduce((a, b) => a + b.invoices, 0) ? spend / bs.reduce((a, b) => a + b.invoices, 0) : 0,
-      tier: tier.key, tierName: tier.name, tierMetric: metric, tierSource: source, validUntil, expiresInDays, expiringSoon: !!validUntil && expiresInDays <= (settings.expiryWarnDays || 30), afterTierName: afterLevel === null ? '' : (afterLevel > 0 ? tiers[afterLevel].name : 'xóa thẻ thành viên'), firstBill: fb, discountPct: tier.discountPct || 0,
+      tier: tier.key, tierName: tier.name, tierMetric: metric, tierSource: source, validUntil, expiresInDays, expiringSoon: !!validUntil && expiresInDays <= (settings.expiryWarnDays || 30), afterTierName: afterLevel === null ? '' : tiers[afterLevel].name, firstBill: fb, discountPct: tier.discountPct || 0,
       nextTier: next ? { key: next.key, name: next.name, min: next.min, need: Math.max(0, next.min - metric), newBillMin: next.newBillMin || 0 } : null,
       points: Math.max(0, Math.floor(spend / settings.pointsRate) + Number(c.ledger_points || 0)),
       recencyDays: lastVisit ? daysBetween(lastVisit, today) : null

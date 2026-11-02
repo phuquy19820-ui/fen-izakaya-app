@@ -60,6 +60,13 @@ export default function CardPage() {
               </ul>
             </div>
 
+            {data.terms && data.terms.length > 0 && (
+              <div className="w-full rounded-2xl p-4 text-white" style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.12)' }}>
+                <h2 className="font-bold mb-2">Điều kiện sử dụng ưu đãi</h2>
+                <ul className="space-y-1.5 text-sm text-gray-200 list-disc pl-5">{data.terms.map((t, i) => <li key={i}>{t}</li>)}</ul>
+              </div>
+            )}
+
             <div className="w-full rounded-2xl p-4 text-white" style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.12)' }}>
               <h2 className="font-bold mb-2">Các hạng thành viên</h2>
               <div className="space-y-1 text-sm">

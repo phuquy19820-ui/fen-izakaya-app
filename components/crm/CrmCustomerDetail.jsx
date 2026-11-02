@@ -44,7 +44,7 @@ export default function CrmCustomerDetail({ id, meta, go, isManager }) {
           ) : <p className="bg-white border rounded-xl p-3 text-sm font-semibold">🎉 Đã đạt hạng cao nhất</p>}
           <div className="bg-white border rounded-xl p-3 text-sm space-y-1">
             <div className="font-bold">Hiệu lực hạng thẻ</div>
-            {c.tier === 'member' ? <div className="text-gray-600">Chưa đạt hạng thành viên. Cần chi tiêu tích lũy 12 tháng từ {money(d.settings.tiers[1] ? d.settings.tiers[1].min : 0)} đ.</div> : c.tierSource === 'manual' ? <div className="text-purple-700 font-semibold">Hạng do FEN xét chọn thủ công (khách VIP chiến lược / Celeb…), không tự hết hạn.</div> : (
+            {c.tier === d.settings.tiers[0].key ? <div className="text-gray-600">Hạng thành viên cơ bản ({c.tierName}). Chi tiêu tích lũy 12 tháng từ {money(d.settings.tiers[1] ? d.settings.tiers[1].min : 0)} đ (hoặc một hóa đơn lần đầu trên {money(d.settings.tiers[1] ? d.settings.tiers[1].newBillMin : 0)} đ) để lên hạng {d.settings.tiers[1] ? d.settings.tiers[1].name : ''}.</div> : c.tierSource === 'manual' ? <div className="text-purple-700 font-semibold">Hạng do FEN xét chọn thủ công (khách VIP chiến lược / Celeb…), không tự hết hạn.</div> : (
               <>
                 <div>{{ spend: 'Đạt hạng theo chi tiêu tích lũy 12 tháng', newbill: 'Đạt hạng nhờ hóa đơn lần đầu (khách mới) ' + money(c.firstBill) + ' đ' }[c.tierSource]}</div>
                 <div>Hiệu lực đến: <b>{c.validUntil ? fmtDate(c.validUntil) : '—'}</b>{c.expiresInDays !== null ? ` (còn ${c.expiresInDays} ngày)` : ''}</div>

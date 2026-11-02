@@ -27,7 +27,7 @@ export default function CrmSettings({ meta, reloadMeta }) {
   return (
     <div className="space-y-3">
       <Card title="Hạng thẻ thành viên">
-        <p className="text-sm text-gray-600 mb-3">Chính sách hạng FEN: hạng tính theo <b>chi tiêu tích lũy 12 tháng gần nhất</b>. Khách mới lần đầu có <b>một hóa đơn trên mức "hóa đơn đầu tiên"</b> của hạng nào thì được xếp thẳng hạng đó (hiệu lực 12 tháng). Hạng Signature duy trì khi đủ 35 triệu/năm, nếu thấp hơn sẽ rớt về Diamond; dưới 15 triệu/năm thì không còn thẻ. Khách VIP chiến lược / Celeb được xét chọn thủ công ở hồ sơ khách. Hạng đầu tiên (0 đ) nghĩa là chưa có thẻ.</p>
+        <p className="text-sm text-gray-600 mb-3">Chính sách hạng FEN: hạng chỉ xét theo <b>tổng chi tiêu tại quán trong 12 tháng gần nhất</b> (không xét theo điểm tích lũy) để nâng hoặc hạ hạng. Hạng đầu tiên (0 đ) là hạng cơ bản <b>Silver</b>: khách để lại thông tin là có thẻ. Khách có <b>một hóa đơn trên mức "hóa đơn đầu tiên"</b> của hạng nào thì được xếp thẳng hạng đó (hiệu lực 12 tháng). Không duy trì đủ chi tiêu thì hạ xuống hạng thấp hơn (Signature → Diamond → Silver), không xóa thẻ. Khách VIP chiến lược / Celeb được xét chọn thủ công ở hồ sơ khách.</p>
         <div className="grid grid-cols-2 gap-3 mb-3" style={{ maxWidth: 520 }}>
           <Field label="Thẻ có hiệu lực (tháng)"><input type="number" value={s.cardMonths} onChange={(e) => setS({ ...s, cardMonths: Number(e.target.value) })} className={inputCls} /></Field>
           <Field label="Báo trước khi hết hạn (ngày)"><input type="number" value={s.expiryWarnDays} onChange={(e) => setS({ ...s, expiryWarnDays: Number(e.target.value) })} className={inputCls} /></Field>
@@ -62,6 +62,10 @@ export default function CrmSettings({ meta, reloadMeta }) {
           <Field label="Có nguy cơ rời bỏ: không ghé quá (ngày)"><input type="number" value={s.winbackDays} onChange={(e) => setS({ ...s, winbackDays: Number(e.target.value) })} className={inputCls} /></Field>
           <Field label="Đã mất: không ghé quá (ngày)"><input type="number" value={s.lostDays} onChange={(e) => setS({ ...s, lostDays: Number(e.target.value) })} className={inputCls} /></Field>
         </div>
+      </Card>
+      <Card title="Điều kiện sử dụng ưu đãi (hiển thị trên thẻ thành viên)">
+        <p className="text-sm text-gray-600 mb-2">Mỗi dòng là một điều kiện.</p>
+        <textarea rows={5} value={(s.terms || []).join('\n')} onChange={(e) => setS({ ...s, terms: e.target.value.split('\n') })} className={inputCls} />
       </Card>
       <Card title="Mẫu tin nhắn liên hệ nhanh (Zalo / SMS / Facebook)">
         <p className="text-sm text-gray-600 mb-3">Nhân viên bấm nút Zalo / SMS / Facebook trong hồ sơ khách hoặc danh sách công việc, app mở sẵn cuộc trò chuyện và chép tin nhắn mẫu. Biến dùng được: <b>{'{ten}'}</b> tên khách, <b>{'{hang}'}</b> hạng thẻ, <b>{'{quan}'}</b> tên thương hiệu, <b>{'{the}'}</b> link thẻ thành viên.</p>
