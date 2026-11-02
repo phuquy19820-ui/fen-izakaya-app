@@ -22,6 +22,7 @@ const auth = require('./services/authService');
 const crmService = require('./services/crmService');
 const crmRoutes = require('./services/crmRoutes');
 const kitchenOrders = require('./services/kitchenOrders');
+const { itemGroupOf } = require('./services/itemGroup');
 
 const dev = process.env.NODE_ENV !== 'production';
 const nextApp = next({ dev });
@@ -2201,13 +2202,15 @@ app.get('/api/purchase-books/lines/:branchId', async (req, res) => {
              CASE WHEN COALESCE(b.total_amount, 0) > 0 THEN b.total_amount ELSE b.amount END AS total_amount,
              s.n AS history_count, s.avg_large, s.min_large, s.max_large,
              CASE WHEN s.n > 1 AND s.avg_large > 0 THEN (b.unit_price * b.ratio - s.avg_large) / s.avg_large * 100 END AS deviation_pct,
-             m.material_id
+             m.material_id,
+             (SELECT sd.category_name FROM cukcuk_stock_daily sd WHERE sd.branch_id = b.branch_id AND sd.item_code = b.item_code AND COALESCE(sd.category_name, '') <> '' LIMIT 1) AS category_name
       FROM base b
       JOIN stats s ON s.item_code = b.item_code
       LEFT JOIN stock_code_map m ON m.branch_id = b.branch_id AND m.cukcuk_code = b.item_code
       WHERE b.purchase_date BETWEEN $2 AND $3
       ORDER BY b.purchase_date DESC, b.supplier_name, b.item_name`, [branchId, from, to])).rows;
     const range = (await pool.query('SELECT MIN(purchase_date) AS min_date, MAX(purchase_date) AS max_date FROM supplier_purchases WHERE branch_id = $1', [branchId])).rows[0];
+    rows.forEach((r) => { r.item_group = itemGroupOf(r.item_code, r.item_name, r.category_name); });
     return res.json({ success: true, data: { range, rows } });
   } catch (error) {
     console.error('Purchase lines error:', error);

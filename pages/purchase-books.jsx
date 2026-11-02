@@ -22,10 +22,19 @@ const TABS = [
 ];
 
 // ---------- Tab 1: mua hàng theo NVL từng ngày ----------
-function DailyTab({ lines }) {
+const GROUPS = [['food', '🍽️ Đồ ăn'], ['drink', '🍺 Đồ uống'], ['ccdc', '🧰 CCDC'], ['all', 'Tất cả']];
+function DailyTab({ lines: allLines }) {
+  const [group, setGroup] = useState('food');
   const [metric, setMetric] = useState('qty');
   const [filters, setFilters] = useState({});
   const [sort, setSort] = useState(null);
+
+  const groupStats = useMemo(() => {
+    const st = { food: { items: new Set(), amount: 0 }, drink: { items: new Set(), amount: 0 }, ccdc: { items: new Set(), amount: 0 }, all: { items: new Set(), amount: 0 } };
+    allLines.forEach((l) => { const g = st[l.item_group] || st.food; g.items.add(l.item_code); g.amount += Number(l.amount) || 0; st.all.items.add(l.item_code); st.all.amount += Number(l.amount) || 0; });
+    return st;
+  }, [allLines]);
+  const lines = useMemo(() => (group === 'all' ? allLines : allLines.filter((l) => (l.item_group || 'food') === group)), [allLines, group]);
 
   const { rows, dates } = useMemo(() => {
     const dset = new Set();
@@ -61,12 +70,19 @@ function DailyTab({ lines }) {
 
   return (
     <div className="space-y-2">
+      <div className="flex flex-wrap gap-2 items-center">
+        {GROUPS.map(([k, l]) => (
+          <button key={k} onClick={() => { setGroup(k); setFilters({}); }} className={`px-4 py-2 rounded-lg font-bold border-2 ${group === k ? 'bg-blue-700 text-white border-blue-700' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'}`}>
+            {l} <span className="font-normal opacity-90">({groupStats[k].items.size} mặt hàng · {money(groupStats[k].amount)} đ)</span>
+          </button>
+        ))}
+      </div>
       <div className="flex gap-2 items-center">
         <button onClick={() => setMetric('qty')} className={`px-3 py-1.5 rounded font-bold border ${metric === 'qty' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Số lượng (ĐVT lớn)</button>
         <button onClick={() => setMetric('amount')} className={`px-3 py-1.5 rounded font-bold border ${metric === 'amount' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Thành tiền (đ)</button>
         <span className="text-gray-500 ml-2">Mỗi dòng là một NVL, mỗi cột là một ngày mua. Số lượng theo đơn vị tính lớn (sửa ở tab Đơn vị tính quy đổi).</span>
       </div>
-      {rows.length === 0 ? <p className="bg-white border rounded p-6 text-gray-600">Chưa có dữ liệu mua hàng trong khoảng ngày này.</p> : (
+      {rows.length === 0 ? <p className="bg-white border rounded p-6 text-gray-600">Chưa có dữ liệu mua hàng thuộc nhóm này trong khoảng ngày này.</p> : (
         <DataTable
           columns={columns} allRows={rows} rows={visible} rowKey={(r) => r.key}
           filters={filters} onFiltersChange={setFilters} sort={sort} onSortChange={setSort} maxHeight="calc(100vh - 380px)"
