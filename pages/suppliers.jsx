@@ -34,7 +34,7 @@ export default function Suppliers() {
   }, [branch]);
 
   const supCols = [
-    { key: 'name', label: 'Nhà cung cấp', width: 330, type: 'text', render: (r) => <span className={r.inactive ? 'text-gray-400 line-through' : 'font-medium'}>{r.name}</span> },
+    { key: 'name', label: 'Nhà cung cấp', width: 330, type: 'text', render: (r) => <span className={r.inactive ? 'text-gray-400 line-through' : 'font-medium'}>{r.name}{r.is_manual ? <span className="ml-1 text-green-700 font-bold" title="Tạo trong app, chưa có trên CUKCUK">(mới tạo)</span> : null}</span> },
     { key: 'category', label: 'Nhóm', width: 170, type: 'select', get: (r) => r.category || '(chưa phân nhóm)' },
     { key: 'phone', label: 'Điện thoại', width: 120, type: 'text', get: (r) => r.phone || '' },
     { key: 'address', label: 'Địa chỉ', minWidth: 300, type: 'text', get: (r) => r.address || '' },

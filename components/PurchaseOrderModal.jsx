@@ -6,7 +6,7 @@ const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"
 
 // lines: [{ materialId?, code, name, group, unit, qty, price }]
 // suppliers: danh sách nhà cung cấp; materialSuppliers: { [material_id]: [{ supplier_code, price, last_date }] }
-export default function PurchaseOrderModal({ open, onClose, branch, lines, cycleLabel, onCompanySaved, suppliers = [], materialSuppliers = null, onOrderCreated }) {
+export default function PurchaseOrderModal({ open, onClose, branch, lines, cycleLabel, onCompanySaved, suppliers = [], materialSuppliers = null, onOrderCreated, onNewSupplier }) {
   const [buyer, setBuyer] = useState('');
   const [supplierCode, setSupplierCode] = useState('');
   const [supplierText, setSupplierText] = useState('');
@@ -198,6 +198,7 @@ ${showPrice ? `<tfoot><tr><td colspan="6" class="r"><b>TỔNG CỘNG:</b></td><t
             <div className="flex gap-2">
               <SearchSelect className="flex-1" options={supplierOptions} value={supplierCode} onChange={setSupplierCode} placeholder="🔍 Chọn nhà cung cấp…" />
               {supplierCode && <button type="button" onClick={() => setSupplierCode('')} className="px-2 border rounded text-red-600 font-bold" title="Bỏ chọn">✕</button>}
+              {onNewSupplier && <button type="button" onClick={onNewSupplier} className="px-2 border rounded text-green-700 font-bold whitespace-nowrap" title="Tạo nhà cung cấp mới">➕ NCC mới</button>}
             </div>
           ) : (
             <p className="text-xs text-gray-500">Chưa có danh sách nhà cung cấp. Bấm "Đồng bộ doanh số từ CUKCUK" để lấy từ CUKCUK, hoặc nhập tên bên dưới.</p>

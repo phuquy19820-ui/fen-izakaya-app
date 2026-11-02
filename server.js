@@ -189,6 +189,7 @@ async function initializeDatabase() {
         tax_code VARCHAR(60), contact VARCHAR(255), category VARCHAR(120), inactive BOOLEAN DEFAULT FALSE,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, code)
       )`);
+      migrations.push('ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS is_manual BOOLEAN DEFAULT FALSE');
       migrations.push(`CREATE TABLE IF NOT EXISTS supplier_purchases (
         branch_id VARCHAR(50) NOT NULL, detail_id VARCHAR(80) NOT NULL, ref_no VARCHAR(60), purchase_date DATE NOT NULL,
         supplier_code VARCHAR(60), supplier_name VARCHAR(255), item_code VARCHAR(100) NOT NULL, item_name VARCHAR(255),
@@ -583,7 +584,7 @@ app.post('/api/branches/purge-sync', async (req, res) => {
     await run('cong_no_cukcuk', 'DELETE FROM supplier_debt_snapshot WHERE branch_id = $1');
     await run('cong_no_phat_sinh_ngay', 'DELETE FROM supplier_debt_daily WHERE branch_id = $1');
     await run('no_dau_ky_cukcuk', "DELETE FROM supplier_opening_debt WHERE branch_id = $1 AND COALESCE(source, 'IMPORT') = 'CUKCUK'");
-    await run('nha_cung_cap', 'DELETE FROM suppliers WHERE branch_id = $1');
+    await run('nha_cung_cap', 'DELETE FROM suppliers WHERE branch_id = $1 AND is_manual IS NOT TRUE');
     await run('nhat_ky_dong_bo', 'DELETE FROM cukcuk_sync_logs WHERE branch_id = $1');
     await client.query('COMMIT');
     return res.json({ success: true, message: 'Đã xóa số liệu đồng bộ của chi nhánh', data: counts });
@@ -632,6 +633,19 @@ app.post('/api/bom/upload', upload.single('file'), async (req, res) => {
 });
 
 const STOCK_DEPS = { normalizeString, categorize, subGroupOf, matchDish };
+// Sau khi đồng bộ CUKCUK: tự ghép hàng/NVL mới của CUKCUK theo TÊN với NVL đã tạo trong app (không xóa, không tạo trùng)
+const materialSyncBusy = new Set();
+function autoSyncMaterials(branchId) {
+  if (materialSyncBusy.has(branchId)) return;
+  materialSyncBusy.add(branchId);
+  (async () => {
+    const client = await pool.connect();
+    try {
+      const r = await stockMaterials.syncStockMaterials(client, branchId, STOCK_DEPS);
+      if (r.created || r.mapped) await rebuildInventory(client, branchId);
+    } catch (e) { console.error('Auto sync materials error:', e.message); } finally { client.release(); materialSyncBusy.delete(branchId); }
+  })();
+}
 // Đồng bộ NVL/hàng hóa từ tồn kho CUKCUK vào danh mục NVL của app (ghép theo tên nếu khác mã)
 app.post('/api/materials/sync-stock/:branchId', async (req, res) => {
   const client = await pool.connect();
@@ -1526,6 +1540,7 @@ app.post('/api/inventory/import', async (req, res) => {
     await client.query(
       "INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, 'STOCK_REPORT', 'SUCCESS', $2)", [branchId, clean.length]);
     await client.query('COMMIT');
+    autoSyncMaterials(branchId);
 
     const stat = await pool.query(`
       SELECT COUNT(*) AS total_codes, COUNT(*) FILTER (WHERE material_id IS NOT NULL) AS matched_codes
@@ -1669,10 +1684,20 @@ app.post('/api/suppliers/import', async (req, res) => {
   try {
     await client.query('BEGIN');
     let supCount = 0;
+    let adopted = 0;
     if (Array.isArray(suppliers) && suppliers.length) {
+      // NCC do người dùng tạo trong app: giữ nguyên; nếu CUKCUK có NCC cùng TÊN (khác mã) thì ghép lại và đổi sang mã CUKCUK
+      const manual = new Map((await client.query('SELECT code, name FROM suppliers WHERE branch_id = $1 AND is_manual IS TRUE', [branchId])).rows.map((r) => [normalizeString(r.name), r.code]));
+      const have = new Set((await client.query('SELECT code FROM suppliers WHERE branch_id = $1', [branchId])).rows.map((r) => r.code));
       for (const s of suppliers) {
         const code = String(s.code || '').trim();
         if (!code) continue;
+        const oldCode = manual.get(normalizeString(s.name));
+        if (oldCode && oldCode !== code.substring(0, 60) && !have.has(code.substring(0, 60))) {
+          await client.query('UPDATE suppliers SET code = $3, is_manual = FALSE WHERE branch_id = $1 AND code = $2', [branchId, oldCode, code.substring(0, 60)]);
+          await client.query('UPDATE purchase_orders SET supplier_code = $3 WHERE branch_id = $1 AND supplier_code = $2', [branchId, oldCode, code.substring(0, 60)]);
+          manual.delete(normalizeString(s.name)); have.add(code.substring(0, 60)); adopted++;
+        }
         await client.query(`
           INSERT INTO suppliers (branch_id, code, name, phone, address, tax_code, contact, category, inactive, updated_at)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
@@ -1718,7 +1743,8 @@ app.post('/api/suppliers/import', async (req, res) => {
     await client.query(
       "INSERT INTO cukcuk_sync_logs (branch_id, sync_type, status, records_imported) VALUES ($1, 'SUPPLIERS', 'SUCCESS', $2)", [branchId, supCount + purCount]);
     await client.query('COMMIT');
-    return res.json({ success: true, message: 'Đã nhập nhà cung cấp và lịch sử mua', data: { suppliers: supCount, purchases: purCount } });
+    autoSyncMaterials(branchId);
+    return res.json({ success: true, message: 'Đã nhập nhà cung cấp và lịch sử mua', data: { suppliers: supCount, purchases: purCount, adopted } });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Suppliers import error:', error);
@@ -2008,11 +2034,37 @@ app.get('/api/payables/:branchId', async (req, res) => {
 });
 
 // Danh sách nhà cung cấp kèm số NVL đã mua và lần mua gần nhất
+// Tạo nhà cung cấp mới (chưa có trong CUKCUK); không bị xóa khi đồng bộ, tự ghép theo tên khi CUKCUK có NCC cùng tên
+app.post('/api/suppliers/create', async (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!b.branchId || !name) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh hoặc tên nhà cung cấp' });
+  try {
+    const all = (await pool.query('SELECT code, name FROM suppliers WHERE branch_id = $1', [b.branchId])).rows;
+    const dup = all.find((r) => normalizeString(r.name) === normalizeString(name));
+    if (dup) return res.status(409).json({ success: false, message: `Nhà cung cấp này đã có: ${dup.name} (mã ${dup.code})`, data: { code: dup.code, name: dup.name } });
+    let code = String(b.code || '').trim().toUpperCase().replace(/[^A-Z0-9_.-]/g, '').substring(0, 40);
+    if (code) {
+      if (all.some((r) => r.code.toUpperCase() === code)) return res.status(409).json({ success: false, message: `Mã ${code} đã tồn tại, hãy chọn mã khác` });
+    } else {
+      const mx = all.reduce((m, r) => { const x = /^NCC(\d+)$/.exec(r.code); return x ? Math.max(m, Number(x[1])) : m; }, 0);
+      code = 'NCC' + String(mx + 1).padStart(4, '0');
+    }
+    await pool.query(`INSERT INTO suppliers (branch_id, code, name, phone, address, tax_code, contact, category, inactive, is_manual, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE,TRUE,NOW())`,
+    [b.branchId, code, name.substring(0, 255), String(b.phone || '').substring(0, 60), String(b.address || '').substring(0, 500), String(b.tax || '').substring(0, 60),
+      String(b.contact || '').substring(0, 255), String(b.category || '').substring(0, 120)]);
+    return res.json({ success: true, message: 'Đã tạo nhà cung cấp mới', data: { code, name, phone: b.phone || '', address: b.address || '', category: b.category || '', is_manual: true } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 app.get('/api/suppliers/:branchId', async (req, res) => {
   const { branchId } = req.params;
   try {
     const rows = (await pool.query(`
-      SELECT s.code, s.name, s.phone, s.address, s.tax_code, s.contact, s.category, s.inactive,
+      SELECT s.code, s.name, s.phone, s.address, s.tax_code, s.contact, s.category, s.inactive, COALESCE(s.is_manual, FALSE) AS is_manual,
              COALESCE(p.items, 0) AS item_count, COALESCE(p.times, 0) AS purchase_count, p.last_date, COALESCE(p.total, 0) AS total_amount
       FROM suppliers s
       LEFT JOIN (SELECT supplier_code, COUNT(DISTINCT item_code) AS items, COUNT(DISTINCT ref_no) AS times,

@@ -6,6 +6,7 @@ import DataTable, { filterRows, sortRows } from '../components/DataTable';
 import PurchaseOrderModal from '../components/PurchaseOrderModal';
 import DrinkPlanPanel from '../components/DrinkPlanPanel';
 import NewPurchaseItemModal from '../components/NewPurchaseItemModal';
+import NewSupplierModal from '../components/NewSupplierModal';
 
 const CATEGORY_LABELS = {
   FRESH_MEAT: 'Thịt tươi', SEAFOOD: 'Hải sản', VEGETABLE: 'Rau củ quả', HERB_SEASONING: 'Thảo mộc',
@@ -32,6 +33,7 @@ export default function PurchasePlanMisaUI() {
   const [saving, setSaving] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
   const [newItemOpen, setNewItemOpen] = useState(false);
+  const [newSupOpen, setNewSupOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
   const [matSup, setMatSup] = useState(null);
@@ -244,6 +246,7 @@ export default function PurchasePlanMisaUI() {
           </div>
           {cycleType !== 'DRINKS' && <div className="absolute flex gap-2 flex-wrap justify-end" style={{ right: 24, top: 8 }}>
             <button onClick={() => setNewItemOpen(true)} className="bg-white text-green-800 hover:bg-green-50 px-3 py-1.5 rounded font-bold">➕ Tạo mã mới</button>
+            <button onClick={() => setNewSupOpen(true)} className="bg-white text-green-800 hover:bg-green-50 px-3 py-1.5 rounded font-bold">➕ Tạo NCC mới</button>
             <button onClick={syncStock} disabled={syncing} title="Đưa toàn bộ NVL/hàng hóa có trong tồn kho CUKCUK vào kế hoạch (kể cả hàng không có bán), ghép theo tên nếu khác mã" className="bg-white text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded font-bold disabled:opacity-50">{syncing ? '⏳ Đang đồng bộ…' : '🔄 Đồng bộ NVL từ tồn kho'}</button>
             <button onClick={generatePurchasePlan} disabled={generating} className="bg-yellow-600 hover:bg-yellow-700 px-3 py-1.5 rounded font-bold disabled:opacity-50">
               {generating ? '⏳ Đang tính...' : '🔄 Tạo Kế Hoạch'}
@@ -326,9 +329,12 @@ export default function PurchasePlanMisaUI() {
         lines={orderLines}
         cycleLabel={cycleLabel}
         suppliers={suppliers}
+        onNewSupplier={() => setNewSupOpen(true)}
         materialSuppliers={matSup}
         onCompanySaved={(name) => setCurrentBranch((b) => (b ? { ...b, buyer_company: name } : b))}
       />
+      <NewSupplierModal open={newSupOpen} branchId={branch} onClose={() => setNewSupOpen(false)}
+        onCreated={(s, msg) => { setNewSupOpen(false); setSuppliers((list) => [s, ...list]); alert(`✅ ${msg}: ${s.name} (mã ${s.code}). Chọn NCC này khi xuất đơn mua hàng.`); }} />
       <NewPurchaseItemModal open={newItemOpen} branchId={branch} onClose={() => setNewItemOpen(false)}
         onCreated={(m, msg) => { setNewItemOpen(false); refreshAfterChange(`✅ ${msg}: ${m.material_name} (mã ${m.material_id}).`); }} />
     </>
