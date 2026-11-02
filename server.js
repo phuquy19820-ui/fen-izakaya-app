@@ -22,7 +22,7 @@ const auth = require('./services/authService');
 const crmService = require('./services/crmService');
 const crmRoutes = require('./services/crmRoutes');
 const kitchenOrders = require('./services/kitchenOrders');
-const { itemGroupOf } = require('./services/itemGroup');
+const { itemGroupOf, materialGroupOf } = require('./services/itemGroup');
 const stockMaterials = require('./services/stockMaterials');
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -2165,6 +2165,8 @@ app.get('/api/units/:branchId', async (req, res) => {
       FROM unit_conversions u
       LEFT JOIN (SELECT item_code, COUNT(*) AS n FROM supplier_purchases WHERE branch_id = $1 GROUP BY item_code) p ON p.item_code = u.item_code
       WHERE u.branch_id = $1 ORDER BY u.item_name`, [branchId])).rows;
+    const cats = new Map((await pool.query(`SELECT DISTINCT ON (item_code) item_code, category_name FROM cukcuk_stock_daily WHERE branch_id = $1 AND COALESCE(category_name, '') <> '' ORDER BY item_code, stock_date DESC`, [branchId])).rows.map((r) => [r.item_code, r.category_name]));
+    rows.forEach((r) => { r.item_group = itemGroupOf(r.item_code, r.item_name, cats.get(r.item_code) || ''); });
     return res.json({ success: true, data: rows });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -2238,7 +2240,14 @@ app.get('/api/purchase-books/lines/:branchId', async (req, res) => {
       ORDER BY b.purchase_date DESC, b.supplier_name, b.item_name`, [branchId, from, to])).rows;
     const range = (await pool.query('SELECT MIN(purchase_date) AS min_date, MAX(purchase_date) AS max_date FROM supplier_purchases WHERE branch_id = $1', [branchId])).rows[0];
     rows.forEach((r) => { r.item_group = itemGroupOf(r.item_code, r.item_name, r.category_name); });
-    return res.json({ success: true, data: { range, rows } });
+    // toàn bộ NVL/hàng hóa trong tồn kho CUKCUK (kể cả hàng không mua trong kỳ) để hiện đủ danh mục
+    const stockItems = (await pool.query(`
+      SELECT s.item_code, s.item_name, s.category_name, COALESCE(c.large_unit, s.unit_name) AS large_unit, s.unit_name AS small_unit
+      FROM (SELECT DISTINCT ON (item_code) item_code, item_name, category_name, unit_name FROM cukcuk_stock_daily WHERE branch_id = $1 ORDER BY item_code, stock_date DESC) s
+      LEFT JOIN unit_conversions c ON c.branch_id = $1 AND c.item_code = s.item_code
+      ORDER BY s.item_name`, [branchId])).rows;
+    stockItems.forEach((r) => { r.item_group = itemGroupOf(r.item_code, r.item_name, r.category_name); });
+    return res.json({ success: true, data: { range, rows, stockItems } });
   } catch (error) {
     console.error('Purchase lines error:', error);
     return res.status(500).json({ success: false, message: error.message });
@@ -2310,6 +2319,8 @@ app.get('/api/purchase-books/compare/:branchId', async (req, res) => {
       pct: r.ordered_month > 0 ? Math.round((r.received_cum / r.ordered_month) * 1000) / 10 : null,
       status: r.ordered_month === 0 ? 'Nhập ngoài đơn' : r.received_cum === 0 ? 'Chưa nhập' : r.received_cum + 1e-9 >= r.ordered_month * 0.95 ? 'Đã đủ' : 'Nhập một phần'
     })).sort((a, b) => a.material_name.localeCompare(b.material_name, 'vi'));
+    const subs = new Map((await pool.query('SELECT material_id, sub_group FROM raw_materials WHERE material_id = ANY($1)', [out.map((r) => String(r.material_id).replace(/^CK:/, ''))])).rows.map((r) => [r.material_id, r.sub_group]));
+    out.forEach((r) => { r.item_group = materialGroupOf(r.material_id, r.material_name, subs.get(String(r.material_id).replace(/^CK:/, ''))); });
     return res.json({ success: true, data: { from, to, monthStart, monthEnd, rows: out } });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -2333,7 +2344,7 @@ async function orderFulfilment(db, branchId, order) {
     const r = recMap[l.code] || 0;
     ordered += q;
     got += Math.min(q, r);
-    return { index, code: l.code, name: l.name, group: l.group, unit: l.unit, ordered: q, price: Number(l.price) || 0, received: Math.round(r * 1000) / 1000, missing: Math.max(0, Math.round((q - r) * 1000) / 1000) };
+    return { index, item_group: materialGroupOf(l.code, l.name, l.group), code: l.code, name: l.name, group: l.group, unit: l.unit, ordered: q, price: Number(l.price) || 0, received: Math.round(r * 1000) / 1000, missing: Math.max(0, Math.round((q - r) * 1000) / 1000) };
   });
   const pct = ordered > 0 ? Math.round((got / ordered) * 1000) / 10 : 0;
   return { pct, status: pct === 0 ? 'Chưa nhận' : pct >= 95 ? 'Đã nhận đủ' : 'Nhận một phần', detail, from, to };
@@ -2355,7 +2366,8 @@ app.get('/api/purchase-books/orders/:branchId', async (req, res) => {
       out.push({
         id: o.id, order_no: o.order_no, created_at: o.created_at, buyer_company: o.buyer_company, supplier_name: o.supplier_name,
         total_amount: o.total_amount, line_count: o.line_count, cycle_label: (o.payload || {}).cycleLabel || '',
-        fulfil_pct: f.pct, status: f.status
+        fulfil_pct: f.pct, status: f.status,
+        line_groups: ((o.payload || {}).lines || []).reduce((a, l) => { const g = materialGroupOf(l.code, l.name, l.group); a[g] = (a[g] || 0) + 1; return a; }, { food: 0, drink: 0, ccdc: 0 })
       });
     }
     return res.json({ success: true, data: { windowDays: RECEIVE_WINDOW_DAYS, orders: out } });

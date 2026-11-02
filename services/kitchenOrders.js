@@ -1,6 +1,7 @@
 // Theo dõi đơn đặt hàng của Bếp: tải file "Đơn đặt mua nguyên vật liệu" (xuất từ app) mỗi ngày,
 // so sánh số lượng ĐẶT với số lượng dự kiến DÙNG theo bán hàng (định lượng món) và số lượng THỰC MUA.
 
+const { materialGroupOf } = require('./itemGroup');
 const dateOnly = (s, fallback) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : fallback);
 const SMALL_UNITS_SQL = "lower(p.unit_name) IN ('gram', 'gr', 'g', 'ml')";
 
@@ -110,13 +111,13 @@ function register(app, pool) {
       GROUP BY i.item_code ORDER BY qty DESC LIMIT 10`, [branchId, from, to])).rows;
 
     const codes = Array.from(new Set([...ordered.map((r) => r.code), ...sold.map((r) => r.code), ...bought.map((r) => r.code)]));
-    const metaRows = codes.length ? (await pool.query('SELECT material_id, material_name, unit_purchase, category, unit_cost FROM raw_materials WHERE material_id = ANY($1)', [codes])).rows : [];
+    const metaRows = codes.length ? (await pool.query('SELECT material_id, material_name, unit_purchase, category, unit_cost, sub_group FROM raw_materials WHERE material_id = ANY($1)', [codes])).rows : [];
     const meta = new Map(metaRows.map((r) => [r.material_id, r]));
     const rows = new Map();
     const get = (code) => {
       if (!rows.has(code)) {
         const m = meta.get(code) || {};
-        rows.set(code, { code, name: m.material_name || '', unit: m.unit_purchase || '', group: m.category || '', ordered: 0, sold: 0, bought: 0, boughtAmount: 0, orderedUnit: '', daily: {} });
+        rows.set(code, { code, name: m.material_name || '', unit: m.unit_purchase || '', group: m.category || '', subGroup: m.sub_group || '', ordered: 0, sold: 0, bought: 0, boughtAmount: 0, orderedUnit: '', daily: {} });
       }
       return rows.get(code);
     };
@@ -126,7 +127,7 @@ function register(app, pool) {
     bought.forEach((o) => { const r = get(o.code); r.bought += Number(o.qty) || 0; r.boughtAmount += Number(o.amount) || 0; day(r, o.d).bought += Number(o.qty) || 0; });
     const round = (v) => Math.round(v * 1000) / 1000;
     const out = Array.from(rows.values()).map((r) => ({
-      code: r.code, name: r.name || r.code, unit: r.unit, group: r.group, ordered: round(r.ordered), sold: round(r.sold), bought: round(r.bought), boughtAmount: Math.round(r.boughtAmount),
+      code: r.code, name: r.name || r.code, unit: r.unit, group: r.group, itemGroup: materialGroupOf(r.code, r.name, r.subGroup || r.group), ordered: round(r.ordered), sold: round(r.sold), bought: round(r.bought), boughtAmount: Math.round(r.boughtAmount),
       unitMismatch: !!(r.orderedUnit && r.unit && r.orderedUnit.trim().toLowerCase() !== r.unit.trim().toLowerCase()),
       daily: Object.values(r.daily).sort((a, b) => a.d.localeCompare(b.d)).map((x) => ({ d: x.d, ordered: round(x.ordered), sold: round(x.sold), bought: round(x.bought) }))
     })).filter((r) => r.ordered > 0 || r.sold > 0 || r.bought > 0).sort((a, b) => (a.group || '').localeCompare(b.group || '', 'vi') || a.name.localeCompare(b.name, 'vi'));

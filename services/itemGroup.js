@@ -20,5 +20,13 @@ function itemGroupOf(code, name, category) {
   return 'food';
 }
 
+// NVL trong app: nhóm hàng (sub_group) 'Đồ uống' / 'CCDC' ưu tiên, còn lại theo mã và tên
+function materialGroupOf(code, name, subGroup) {
+  const sg = norm(subGroup);
+  if (sg === 'ccdc') return 'ccdc';
+  if (sg === 'do uong') return 'drink';
+  return itemGroupOf(String(code || '').replace(/^CK:/, ''), name, '');
+}
+
 const GROUP_LABEL = { food: 'Đồ ăn', drink: 'Đồ uống', ccdc: 'CCDC' };
-module.exports = { itemGroupOf, GROUP_LABEL };
+module.exports = { itemGroupOf, materialGroupOf, GROUP_LABEL };

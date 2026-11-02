@@ -3,6 +3,7 @@ import Head from 'next/head';
 import { useRouter } from 'next/router';
 import BranchNav from '../components/BranchNav';
 import DataTable, { filterRows, sortRows } from '../components/DataTable';
+import GroupBar, { inGroup } from '../components/GroupBar';
 
 const num = (n) => (Number(n) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 2 });
 const money = (n) => Math.round(Number(n) || 0).toLocaleString('vi-VN');
@@ -67,6 +68,7 @@ export default function KitchenOrders() {
   const [errors, setErrors] = useState([]);
   const [msg, setMsg] = useState('');
   const [reload, setReload] = useState(0);
+  const [group, setGroup] = useState('food');
   const fileRef = useRef(null);
 
   const [from, to] = mode === 'week' ? weekRange(anchor) : mode === 'month' ? monthRange(month) : [rangeFrom, rangeTo];
@@ -133,10 +135,12 @@ export default function KitchenOrders() {
     if (r.ordered < r.sold * (1 - t)) return 'Đặt thấp hơn nhu cầu bán';
     return 'Khớp';
   };
-  const rows = useMemo(() => (data ? data.rows.map((r) => ({
+  const rowsAll = useMemo(() => (data ? data.rows.map((r) => ({
     ...r, diffOS: Math.round((r.ordered - r.sold) * 1000) / 1000, pctOS: r.sold > 0 ? (r.ordered / r.sold) * 100 : null,
     diffBO: Math.round((r.bought - r.ordered) * 1000) / 1000, diffBS: Math.round((r.bought - r.sold) * 1000) / 1000, status: statusOf(r)
   })) : []), [data, tol]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rows = useMemo(() => rowsAll.filter((r) => inGroup(group, r.itemGroup)), [rowsAll, group]);
+  const groupStats = useMemo(() => { const st = { food: { n: 0 }, drink: { n: 0 }, ccdc: { n: 0 }, all: { n: rowsAll.length } }; rowsAll.forEach((r) => { (st[r.itemGroup] || st.food).n += 1; }); return st; }, [rowsAll]);
   const cols = [
     { key: 'code', label: 'Mã NVL', width: 100, type: 'text' },
     { key: 'name', label: 'Nguyên vật liệu', width: 230, type: 'text', render: (r) => <span className="font-medium">{r.name}{r.unitMismatch ? <span className="ml-1 text-orange-600" title="ĐVT trong file đặt khác ĐVT mua của app, số liệu có thể lệch">⚠ ĐVT</span> : null}</span> },
@@ -227,6 +231,7 @@ export default function KitchenOrders() {
             <input type="number" value={tol} onChange={(e) => setTol(Math.max(0, Number(e.target.value) || 0))} className="border rounded px-2 py-1" style={{ width: 56 }} /><span>%</span>
           </div>
 
+          <GroupBar group={group} onChange={setGroup} stats={groupStats} note="Tách riêng Đồ ăn / Đồ uống / CCDC cho bảng so sánh bên dưới" />
           {loading && <p className="p-4 text-gray-500">Đang tải…</p>}
           {data && (
             <>

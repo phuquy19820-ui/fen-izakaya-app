@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import BranchNav from '../components/BranchNav';
 import DataTable, { filterRows, sortRows } from '../components/DataTable';
 import DateRangeBar, { presetRange } from '../components/DateRangeBar';
+import GroupBar, { inGroup } from '../components/GroupBar';
 
 const money = (n) => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 const num = (n) => (Number(n) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
@@ -22,19 +23,13 @@ const TABS = [
 ];
 
 // ---------- Tab 1: mua hàng theo NVL từng ngày ----------
-const GROUPS = [['food', '🍽️ Đồ ăn'], ['drink', '🍺 Đồ uống'], ['ccdc', '🧰 CCDC'], ['all', 'Tất cả']];
-function DailyTab({ lines: allLines }) {
-  const [group, setGroup] = useState('food');
+function DailyTab({ lines: allLines, stockItems, group }) {
   const [metric, setMetric] = useState('qty');
+  const [onlyBought, setOnlyBought] = useState(false);
   const [filters, setFilters] = useState({});
   const [sort, setSort] = useState(null);
 
-  const groupStats = useMemo(() => {
-    const st = { food: { items: new Set(), amount: 0 }, drink: { items: new Set(), amount: 0 }, ccdc: { items: new Set(), amount: 0 }, all: { items: new Set(), amount: 0 } };
-    allLines.forEach((l) => { const g = st[l.item_group] || st.food; g.items.add(l.item_code); g.amount += Number(l.amount) || 0; st.all.items.add(l.item_code); st.all.amount += Number(l.amount) || 0; });
-    return st;
-  }, [allLines]);
-  const lines = useMemo(() => (group === 'all' ? allLines : allLines.filter((l) => (l.item_group || 'food') === group)), [allLines, group]);
+  const lines = useMemo(() => allLines.filter((l) => inGroup(group, l.item_group)), [allLines, group]);
 
   const { rows, dates } = useMemo(() => {
     const dset = new Set();
@@ -52,13 +47,21 @@ function DailyTab({ lines: allLines }) {
       cur.amount += Number(l.amount) || 0;
       map.set(key, cur);
     });
+    // hàng có trong Tồn kho nhưng không mua trong kỳ: vẫn hiện (số 0) để có đủ danh mục
+    const bought = new Set(lines.map((l) => l.item_code));
+    if (!onlyBought) {
+      (stockItems || []).filter((it) => inGroup(group, it.item_group) && !bought.has(it.item_code)).forEach((it) => {
+        const key = it.item_code + '|' + it.large_unit;
+        if (!map.has(key)) map.set(key, { key, name: it.item_name, unit: it.large_unit || '', byDate: {}, qty: 0, amount: 0, noPurchase: true });
+      });
+    }
     return { rows: Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, 'vi')), dates: Array.from(dset).sort() };
-  }, [lines]);
+  }, [lines, stockItems, group, onlyBought]);
 
   const val = (r, d) => (r.byDate[d] ? r.byDate[d][metric] : 0);
   const fmt = (v) => (v ? (metric === 'qty' ? num(v) : money(v)) : <span className="text-gray-300">·</span>);
   const columns = [
-    { key: 'name', label: 'Nguyên vật liệu', width: 300, type: 'text', render: (r) => <span className="font-medium">{r.name}</span> },
+    { key: 'name', label: 'Nguyên vật liệu', width: 300, type: 'text', render: (r) => <span className="font-medium" style={r.noPurchase ? { color: '#94a3b8' } : undefined}>{r.name}</span> },
     { key: 'unit', label: 'ĐVT lớn', width: 66, type: 'select', align: 'center' },
     ...dates.map((d) => ({ key: 'd' + d, label: short(d), width: 84, type: 'number', align: 'right', get: (r) => val(r, d), render: (r) => fmt(val(r, d)) })),
     { key: 'total', label: 'Tổng', minWidth: 100, type: 'number', align: 'right', get: (r) => r[metric], render: (r) => <b>{metric === 'qty' ? num(r.qty) : money(r.amount)}</b> }
@@ -70,17 +73,11 @@ function DailyTab({ lines: allLines }) {
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-2 items-center">
-        {GROUPS.map(([k, l]) => (
-          <button key={k} onClick={() => { setGroup(k); setFilters({}); }} className={`px-4 py-2 rounded-lg font-bold border-2 ${group === k ? 'bg-blue-700 text-white border-blue-700' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'}`}>
-            {l} <span className="font-normal opacity-90">({groupStats[k].items.size} mặt hàng · {money(groupStats[k].amount)} đ)</span>
-          </button>
-        ))}
-      </div>
       <div className="flex gap-2 items-center">
         <button onClick={() => setMetric('qty')} className={`px-3 py-1.5 rounded font-bold border ${metric === 'qty' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Số lượng (ĐVT lớn)</button>
         <button onClick={() => setMetric('amount')} className={`px-3 py-1.5 rounded font-bold border ${metric === 'amount' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Thành tiền (đ)</button>
-        <span className="text-gray-500 ml-2">Mỗi dòng là một NVL, mỗi cột là một ngày mua. Số lượng theo đơn vị tính lớn (sửa ở tab Đơn vị tính quy đổi).</span>
+        <label className="ml-2 flex items-center gap-1 font-semibold"><input type="checkbox" checked={onlyBought} onChange={(e) => setOnlyBought(e.target.checked)} />Chỉ hàng có mua trong kỳ</label>
+        <span className="text-gray-500 ml-2">Mỗi dòng là một NVL ({rows.length} dòng, gồm cả hàng trong Tồn kho chưa mua trong kỳ), mỗi cột là một ngày mua. Số lượng theo đơn vị tính lớn (sửa ở tab Đơn vị tính quy đổi).</span>
       </div>
       {rows.length === 0 ? <p className="bg-white border rounded p-6 text-gray-600">Chưa có dữ liệu mua hàng thuộc nhóm này trong khoảng ngày này.</p> : (
         <DataTable
@@ -98,7 +95,8 @@ function DailyTab({ lines: allLines }) {
 }
 
 // ---------- Tab 2: sổ nhập hàng theo NCC và NVL, có đơn giá và cảnh báo lệch giá ----------
-function BookTab({ lines }) {
+function BookTab({ lines: allLines, group }) {
+  const lines = useMemo(() => allLines.filter((l) => inGroup(group, l.item_group)), [allLines, group]);
   const [view, setView] = useState('detail');
   const [threshold, setThreshold] = useState(30);
   const [onlyWarn, setOnlyWarn] = useState(false);
@@ -202,7 +200,7 @@ function BookTab({ lines }) {
 }
 
 // ---------- Tab 3: sổ theo dõi đơn đặt hàng (có xóa đơn / xóa dòng) ----------
-function OrdersTab({ branch, branchInfo, from, to, version }) {
+function OrdersTab({ branch, branchInfo, from, to, version, group }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({});
@@ -261,7 +259,7 @@ function OrdersTab({ branch, branchInfo, from, to, version }) {
     load();
   };
 
-  const orders = data ? data.orders : [];
+  const orders = useMemo(() => (data ? data.orders : []).filter((o) => group === 'all' || ((o.line_groups || {})[group] || 0) > 0), [data, group]);
   const columns = [
     { key: 'order_no', label: 'Số đơn', width: 100, type: 'text', render: (r) => <b className="text-blue-700">{r.order_no}</b> },
     { key: 'created', label: 'Ngày lập', width: 140, type: 'text', get: (r) => iso(r.created_at), render: (r) => new Date(r.created_at).toLocaleString('vi-VN') },
@@ -303,7 +301,7 @@ function OrdersTab({ branch, branchInfo, from, to, version }) {
             <table className="w-full border-collapse text-xs">
               <thead><tr className="bg-gray-100">{['Nguyên vật liệu', 'Nhóm', 'ĐVT', 'Đặt', 'Đơn giá', 'Đã nhận', 'Còn thiếu', ''].map((h) => <th key={h} className="border px-2 py-1 text-left">{h}</th>)}</tr></thead>
               <tbody>
-                {detail.detail.map((l) => (
+                {detail.detail.filter((l) => inGroup(group, l.item_group)).map((l) => (
                   <tr key={l.index} className={l.missing > 0 ? 'bg-orange-50' : ''}>
                     <td className="border px-2 py-1">{l.name}</td><td className="border px-2 py-1">{l.group}</td><td className="border px-2 py-1 text-center">{l.unit}</td>
                     <td className="border px-2 py-1 text-right">{num(l.ordered)}</td><td className="border px-2 py-1 text-right">{money(l.price)}</td>
@@ -325,7 +323,7 @@ function OrdersTab({ branch, branchInfo, from, to, version }) {
 }
 
 // ---------- Tab 4: nhập thực tế so với đơn đặt hàng (theo khoảng ngày) ----------
-function CompareTab({ branch, suppliers, from, to, version }) {
+function CompareTab({ branch, suppliers, from, to, version, group }) {
   const [supplier, setSupplier] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -346,7 +344,7 @@ function CompareTab({ branch, suppliers, from, to, version }) {
   };
   useEffect(() => { load(); }, [branch, from, to, supplier, version]);
 
-  const rows = data ? data.rows : [];
+  const rows = useMemo(() => (data ? data.rows : []).filter((r) => inGroup(group, r.item_group)), [data, group]);
   const columns = [
     { key: 'material_name', label: 'Nguyên vật liệu', width: 300, type: 'text', render: (r) => <span className="font-medium">{r.material_name}</span> },
     { key: 'unit', label: 'ĐVT', width: 56, type: 'select', align: 'center' },
@@ -399,8 +397,8 @@ const addD = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toI
 const mondayOf = (d) => { const dow = (new Date(d + 'T00:00:00Z').getUTCDay() + 6) % 7; return addD(d, -dow); };
 const MODES = [['day', 'Theo ngày'], ['week', 'Theo tuần'], ['month', 'Theo tháng'], ['months', 'So sánh nhiều tháng']];
 
-function PriceCompareTab({ branch, version }) {
-  const [all, setAll] = useState([]);
+function PriceCompareTab({ branch, version, group }) {
+  const [allRaw, setAll] = useState([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState('month');
   const [from, setFrom] = useState('');
@@ -427,6 +425,7 @@ function PriceCompareTab({ branch, version }) {
     }).finally(() => setLoading(false));
   }, [branch, version]);
 
+  const all = useMemo(() => allRaw.filter((l) => inGroup(group, l.item_group)), [allRaw, group]);
   const months = useMemo(() => Array.from(new Set(all.map((l) => iso(l.date).slice(0, 7)))).sort(), [all]);
   const supplierNames = useMemo(() => Array.from(new Set(all.map((l) => l.supplier_name).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi')), [all]);
   const minD = useMemo(() => all.reduce((m, x) => (iso(x.date) < m ? iso(x.date) : m), '9999-12-31'), [all]);
@@ -566,8 +565,8 @@ function PriceCompareTab({ branch, version }) {
 }
 
 // ---------- Tab 5: đơn vị tính quy đổi ----------
-function UnitsTab({ branch }) {
-  const [rows, setRows] = useState([]);
+function UnitsTab({ branch, group }) {
+  const [rowsAll, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({});
   const [sort, setSort] = useState(null);
@@ -581,6 +580,7 @@ function UnitsTab({ branch }) {
   };
   useEffect(() => { load(); }, [branch]);
 
+  const rows = useMemo(() => rowsAll.filter((r) => inGroup(group, r.item_group)), [rowsAll, group]);
   const flash = (t) => { setMsg(t); setTimeout(() => setMsg(''), 2500); };
   const save = async (code, patch) => {
     setRows((rs) => rs.map((r) => (r.item_code === code ? { ...r, ...patch, source: 'MANUAL' } : r)));
@@ -637,6 +637,8 @@ export default function PurchaseBooks() {
   const [tab, setTab] = useState('daily');
   const [branchInfo, setBranchInfo] = useState(null);
   const [lines, setLines] = useState([]);
+  const [stockItems, setStockItems] = useState([]);
+  const [group, setGroup] = useState('food');
   const [range, setRange] = useState(null);
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -654,7 +656,7 @@ export default function PurchaseBooks() {
       if (f) qs.set('from', f);
       if (t) qs.set('to', t);
       const j = await (await fetch(`/api/purchase-books/lines/${branch}?${qs.toString()}`)).json();
-      if (j.success) { setLines(j.data.rows); setRange(j.data.range); }
+      if (j.success) { setLines(j.data.rows); setStockItems(j.data.stockItems || []); setRange(j.data.range); }
     } finally { setLoading(false); }
   };
 
@@ -665,6 +667,12 @@ export default function PurchaseBooks() {
   }, [branch]);
   useEffect(() => { loadLines(applied.from, applied.to); }, [branch, applied.from, applied.to, version]);
 
+  const groupStats = useMemo(() => {
+    const st = { food: { set: new Set(), amount: 0 }, drink: { set: new Set(), amount: 0 }, ccdc: { set: new Set(), amount: 0 }, all: { set: new Set(), amount: 0 } };
+    stockItems.forEach((it) => { (st[it.item_group] || st.food).set.add(it.item_code); st.all.set.add(it.item_code); });
+    lines.forEach((l) => { const g = st[l.item_group] || st.food; g.set.add(l.item_code); g.amount += Number(l.amount) || 0; st.all.set.add(l.item_code); st.all.amount += Number(l.amount) || 0; });
+    return Object.fromEntries(Object.entries(st).map(([k, v]) => [k, { n: v.set.size, amount: v.amount }]));
+  }, [lines, stockItems]);
   const apply = (f, t) => { setApplied({ from: f, to: t }); setVersion((v) => v + 1); };
   const minDate = range && range.min_date ? iso(range.min_date) : '';
   const maxDate = range && range.max_date ? iso(range.max_date) : '';
@@ -687,17 +695,18 @@ export default function PurchaseBooks() {
               <button key={t.key} onClick={() => setTab(t.key)} className={`px-3 py-1.5 rounded font-bold border ${tab === t.key ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>{t.label}</button>
             ))}
           </div>
+          <GroupBar group={group} onChange={setGroup} stats={groupStats} note="Áp dụng cho tất cả các tab bên dưới · số mặt hàng gồm cả hàng có trong Tồn kho" />
           {tab !== 'units' && tab !== 'price' && (
             <DateRangeBar from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} onApply={apply} minDate={minDate} maxDate={maxDate}>
               {range && range.min_date && <span className="text-gray-600">Dữ liệu mua hàng có từ {vn(range.min_date)} đến {vn(range.max_date)}{(tab === 'daily' || tab === 'book') ? ` · ${lines.length} dòng trong kỳ` : ''}</span>}
             </DateRangeBar>
           )}
-          {tab === 'daily' ? (loading ? <p className="p-4 text-gray-600">Đang tải…</p> : <DailyTab lines={lines} />)
-            : tab === 'book' ? (loading ? <p className="p-4 text-gray-600">Đang tải…</p> : <BookTab lines={lines} />)
-              : tab === 'orders' ? <OrdersTab branch={branch} branchInfo={branchInfo} from={applied.from} to={applied.to} version={version} />
-                : tab === 'compare' ? <CompareTab branch={branch} suppliers={suppliers} from={applied.from} to={applied.to} version={version} />
-                  : tab === 'price' ? <PriceCompareTab branch={branch} version={version} />
-                    : <UnitsTab branch={branch} />}
+          {tab === 'daily' ? (loading ? <p className="p-4 text-gray-600">Đang tải…</p> : <DailyTab lines={lines} stockItems={stockItems} group={group} />)
+            : tab === 'book' ? (loading ? <p className="p-4 text-gray-600">Đang tải…</p> : <BookTab lines={lines} group={group} />)
+              : tab === 'orders' ? <OrdersTab branch={branch} branchInfo={branchInfo} from={applied.from} to={applied.to} version={version} group={group} />
+                : tab === 'compare' ? <CompareTab branch={branch} suppliers={suppliers} from={applied.from} to={applied.to} version={version} group={group} />
+                  : tab === 'price' ? <PriceCompareTab branch={branch} version={version} group={group} />
+                    : <UnitsTab branch={branch} group={group} />}
         </div>
       </div>
     </>
