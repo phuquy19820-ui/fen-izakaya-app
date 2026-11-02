@@ -57,7 +57,7 @@ function MyApp({ Component, pageProps }) {
       <Component {...pageProps} />
       <Credit />
       {user && <ExportExcel />}
-      {user && !isPublic(path) && <UserBar />}
+      {user && !isPublic(path) && path === '/' && <UserBar />}
     </AuthContext.Provider>
   );
 }
