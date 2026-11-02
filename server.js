@@ -2047,8 +2047,8 @@ app.post('/api/suppliers/create', async (req, res) => {
     if (code) {
       if (all.some((r) => r.code.toUpperCase() === code)) return res.status(409).json({ success: false, message: `Mã ${code} đã tồn tại, hãy chọn mã khác` });
     } else {
-      const mx = all.reduce((m, r) => { const x = /^NCC(\d+)$/.exec(r.code); return x ? Math.max(m, Number(x[1])) : m; }, 0);
-      code = 'NCC' + String(mx + 1).padStart(4, '0');
+      const mx = all.reduce((m, r) => { const x = /^NCCM(\d+)$/.exec(r.code); return x ? Math.max(m, Number(x[1])) : m; }, 0);
+      code = 'NCCM' + String(mx + 1).padStart(4, '0');
     }
     await pool.query(`INSERT INTO suppliers (branch_id, code, name, phone, address, tax_code, contact, category, inactive, is_manual, updated_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE,TRUE,NOW())`,

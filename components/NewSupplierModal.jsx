@@ -32,7 +32,7 @@ export default function NewSupplierModal({ open, branchId, onClose, onCreated })
           <input value={v.name} onChange={set('name')} className="w-full border p-2 rounded" placeholder="VD: Công ty TNHH Thực phẩm ABC" autoFocus />
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><label className={lbl}>Mã NCC (để trống = tự sinh)</label><input value={v.code} onChange={set('code')} className="w-full border p-2 rounded font-mono" placeholder="VD: NCC0001" /></div>
+          <div><label className={lbl}>Mã NCC (để trống = tự sinh)</label><input value={v.code} onChange={set('code')} className="w-full border p-2 rounded font-mono" placeholder="VD: NCCM0001" /></div>
           <div><label className={lbl}>Điện thoại</label><input value={v.phone} onChange={set('phone')} className="w-full border p-2 rounded" /></div>
           <div className="col-span-2"><label className={lbl}>Địa chỉ</label><input value={v.address} onChange={set('address')} className="w-full border p-2 rounded" /></div>
           <div><label className={lbl}>Mã số thuế</label><input value={v.tax} onChange={set('tax')} className="w-full border p-2 rounded" /></div>
