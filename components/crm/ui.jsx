@@ -10,9 +10,14 @@ export const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('vi-VN') : '')
 let crmBranch = '';
 export const setCrmBranch = (b) => { crmBranch = b || ''; };
 export const getCrmBranch = () => crmBranch;
+// Tháng đang lọc (YYYY-MM, rỗng = toàn bộ thời gian); tự gắn ?month= cho mọi lời gọi /api/crm/*
+let crmMonth = '';
+export const setCrmMonth = (m) => { crmMonth = m || ''; };
+export const getCrmMonth = () => crmMonth;
 
 export async function api(method, url, body) {
   if (crmBranch && url.startsWith('/api/crm/') && !/[?&]branch=/.test(url)) url += (url.includes('?') ? '&' : '?') + 'branch=' + encodeURIComponent(crmBranch);
+  if (crmMonth && url.startsWith('/api/crm/') && !/[?&]month=/.test(url)) url += (url.includes('?') ? '&' : '?') + 'month=' + encodeURIComponent(crmMonth);
   const res = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
   let j;
   try { j = await res.json(); } catch (e) { j = { success: false, message: 'Lỗi máy chủ (' + res.status + ')' }; }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api, Card, Kpi, ChartBox, Table, TierBadge, SegmentBadge, money, num, pc, fmtDate, STAGE_LABEL, STAGE_COLOR, TIER_COLORS, SEGMENT_COLORS } from './ui';
+import { getCrmMonth, api, Card, Kpi, ChartBox, Table, TierBadge, SegmentBadge, money, num, pc, fmtDate, STAGE_LABEL, STAGE_COLOR, TIER_COLORS, SEGMENT_COLORS } from './ui';
 
 export default function CrmDashboard({ meta, go }) {
   const [d, setD] = useState(null);
@@ -14,8 +14,8 @@ export default function CrmDashboard({ meta, go }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
-        <Kpi label="Tổng khách hàng" value={num(k.total)} sub={`${num(k.withPhone)} khách có số điện thoại`} />
-        <Kpi label="Khách mới tháng này" value={num(k.newThisMonth)} sub={growth === null ? 'Tháng trước: ' + num(k.newLastMonth) : `${growth >= 0 ? '▲' : '▼'} ${Math.abs(growth * 100).toFixed(0)}% so với tháng trước`} color="#16a34a" />
+        <Kpi label={getCrmMonth() ? 'Khách hoạt động trong tháng' : 'Tổng khách hàng'} value={num(k.total)} sub={`${num(k.withPhone)} khách có số điện thoại`} />
+        <Kpi label={getCrmMonth() ? `Khách mới tháng ${getCrmMonth().slice(5)}/${getCrmMonth().slice(0, 4)}` : 'Khách mới tháng này'} value={num(k.newThisMonth)} sub={growth === null ? 'Tháng trước: ' + num(k.newLastMonth) : `${growth >= 0 ? '▲' : '▼'} ${Math.abs(growth * 100).toFixed(0)}% so với tháng trước`} color="#16a34a" />
         <Kpi label="Khách còn hoạt động (90 ngày)" value={num(k.active90)} sub={`${pc(k.total ? k.active90 / k.total : 0)} tổng khách`} color="#0ea5e9" />
         <Kpi label="Tỷ lệ khách quay lại" value={pc(k.returningRate)} sub="Khách ghé từ 2 lần trở lên" color="#8b5cf6" />
         <Kpi label="Chi tiêu TB / khách" value={money(k.avgSpend) + ' đ'} sub={`Top 10% khách chiếm ${pc(k.top10share)} doanh thu`} color="#d97706" />

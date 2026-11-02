@@ -24,9 +24,33 @@ function register(app, pool) {
     // Tab chi nhánh: ?branch=<mã> chỉ xem số liệu của đúng chi nhánh đó (phải nằm trong quyền của người dùng)
     const only = String(req.query.branch || '');
     if (only && allowed.some((b) => b.branch_id === only)) scope = new Set([only]);
-    return { branches: allowed, scope, data, allIds, only: scope && scope.size === 1 && only ? only : '' };
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : '';
+    let monthMap = null;
+    if (month) {
+      // số liệu từng khách trong đúng tháng được chọn (theo chi nhánh đang xem)
+      const brIds = scope ? Array.from(scope) : allIds;
+      const rows = (await pool.query(`SELECT cust_key, branch_id, COUNT(*) AS inv, COUNT(DISTINCT inv_date) AS visits, SUM(${crm.REV}) AS spend, SUM(people) AS guests, to_char(MAX(inv_date), 'YYYY-MM-DD') AS last
+        FROM cukcuk_invoices WHERE cust_key <> '' AND branch_id = ANY($1) AND to_char(inv_date, 'YYYY-MM') = $2 GROUP BY cust_key, branch_id`, [brIds, month])).rows;
+      monthMap = new Map();
+      rows.forEach((r) => {
+        const m = monthMap.get(r.cust_key) || { inv: 0, visits: 0, spend: 0, guests: 0, last: '', byBranch: {} };
+        m.inv += Number(r.inv); m.visits += Number(r.visits); m.spend += Number(r.spend) || 0; m.guests += Number(r.guests) || 0; if (r.last > m.last) m.last = r.last;
+        m.byBranch[r.branch_id] = { invoices: Number(r.inv), visits: Number(r.visits), spend: Number(r.spend) || 0, guests: Number(r.guests) || 0, firstVisit: r.last, lastVisit: r.last, spend12: Number(r.spend) || 0 };
+        monthMap.set(r.cust_key, m);
+      });
+    }
+    return { branches: allowed, scope, data, allIds, month, monthMap, only: scope && scope.size === 1 && only ? only : '' };
   }
-  const visibleList = (ctx) => ctx.data.list.filter((c) => crm.visibleTo(c, ctx.scope)).map((c) => crm.maskFor(c, ctx.scope, ctx.data.settings, ctx.data.today));
+  // raw = true: toàn bộ khách (bỏ lọc tháng). Mặc định: nếu đang lọc theo tháng thì chỉ khách có phát sinh trong tháng, số liệu chi tiêu/lượt ghé là của riêng tháng đó.
+  const visibleList = (ctx, raw) => {
+    const base = ctx.data.list.filter((c) => crm.visibleTo(c, ctx.scope)).map((c) => crm.maskFor(c, ctx.scope, ctx.data.settings, ctx.data.today));
+    if (raw || !ctx.monthMap) return base;
+    return base.map((c) => {
+      const m = ctx.monthMap.get(c.key);
+      if (!m) return null;
+      return { ...c, spend: m.spend, visits: m.visits, invoices: m.inv, guests: m.guests, avgBill: m.inv ? m.spend / m.inv : 0, lastVisit: m.last, byBranch: m.byBranch, branches: Object.keys(m.byBranch) };
+    }).filter(Boolean);
+  };
   const slim = (c) => ({
     id: c.id, memberCode: c.memberCode, name: c.name, phone: c.phone, source: c.source, tier: c.tier, tierName: c.tierName, segment: c.segment, visits: c.visits, lastVisit: c.lastVisit,
     spend: c.spend, spend12: c.spend12, points: c.points, tags: c.tags, status: c.status, branches: c.branches, birthday: c.birthday, ownerId: c.ownerId, recencyDays: c.recencyDays,
@@ -252,11 +276,12 @@ function register(app, pool) {
     const vals = [];
     const where = [];
     if (status) { vals.push(status); where.push(`t.status = $${vals.length}`); }
+    if (/^\d{4}-\d{2}$/.test(String(req.query.month || ''))) { vals.push(String(req.query.month)); where.push(`to_char(t.due_date, 'YYYY-MM') = $${vals.length}`); }
     if (!isManager(req.user) || req.query.scope === 'mine') { vals.push(req.user.id); where.push(`(t.assignee_id = $${vals.length} OR t.created_by = $${vals.length})`); }
     if (req.query.branch) {
       const ctx = await context(req);
       if (ctx.only) {
-        const ids = visibleList(ctx).map((c) => c.id);
+        const ids = visibleList(ctx, true).map((c) => c.id);
         vals.push(ids);
         where.push(`(t.customer_id IS NULL OR t.customer_id = ANY($${vals.length}::int[]))`);
       }
@@ -299,7 +324,7 @@ function register(app, pool) {
   // Tự tạo việc chăm sóc: sinh nhật trong 7 ngày tới, khách có nguy cơ rời bỏ (ưu tiên chi tiêu cao)
   app.post('/api/crm/tasks/generate', wrap(async (req, res) => {
     const ctx = await context(req);
-    const list = visibleList(ctx).filter((c) => c.status === 'active' || c.status === 'vip');
+    const list = visibleList(ctx, true).filter((c) => c.status === 'active' || c.status === 'vip');
     const today = ctx.data.today;
     const ym = today.slice(0, 7);
     let created = 0;
@@ -327,9 +352,11 @@ function register(app, pool) {
   app.get('/api/crm/deals', wrap(async (req, res) => {
     const ctx = await context(req);
     const vals = [branchAllowedSql(ctx)];
+    let monthSql = '';
+    if (ctx.month) { vals.push(ctx.month); monthSql = ` AND to_char(d.event_date, 'YYYY-MM') = $2`; }
     const r = await pool.query(`SELECT d.*, to_char(d.event_date, 'YYYY-MM-DD') AS event, c.name AS customer_name, c.phone AS customer_phone, u.full_name AS owner_name
       FROM crm_deals d LEFT JOIN crm_customers c ON c.id = d.customer_id LEFT JOIN app_users u ON u.id = d.owner_id
-      WHERE ${ctx.only ? 'd.branch_id = ANY($1)' : '(d.branch_id IS NULL OR d.branch_id = ANY($1))'} ORDER BY d.event_date NULLS LAST, d.id DESC LIMIT 500`, vals);
+      WHERE ${ctx.only ? 'd.branch_id = ANY($1)' : '(d.branch_id IS NULL OR d.branch_id = ANY($1))'}${monthSql} ORDER BY d.event_date NULLS LAST, d.id DESC LIMIT 500`, vals);
     res.json({ success: true, data: r.rows.map((d) => ({ ...d, event_date: d.event, expected_value: Number(d.expected_value) || 0, deposit: Number(d.deposit) || 0 })) });
   }));
   const dealFields = (b) => ({
@@ -369,7 +396,7 @@ function register(app, pool) {
   // ---- tăng trưởng khách mới / khách cũ quay lại theo tháng (lọc theo tháng, so sánh hai tháng, theo nhóm khách)
   app.get('/api/crm/growth', wrap(async (req, res) => {
     const ctx = await context(req);
-    const members = new Map(visibleList(ctx).filter((c) => c.status !== 'inactive').map((c) => [c.key, c]));
+    const members = new Map(visibleList(ctx, true).filter((c) => c.status !== 'inactive').map((c) => [c.key, c]));
     const br = branchAllowedSql(ctx);
     const rows = (await pool.query(`SELECT cust_key, to_char(inv_date, 'YYYY-MM') AS ym, MAX(cust_group) AS grp, SUM(${crm.REV}) AS rev, COUNT(*) AS inv
       FROM cukcuk_invoices WHERE cust_key <> '' AND branch_id = ANY($1) GROUP BY cust_key, ym`, [br])).rows;
@@ -443,9 +470,11 @@ function register(app, pool) {
     const ctx = await context(req);
     const list = visibleList(ctx).filter((c) => c.status !== 'inactive');
     const today = ctx.data.today;
-    const ym = today.slice(0, 7);
-    const prevYm = (() => { const d = new Date(Date.parse(today.slice(0, 7) + '-01T00:00:00Z')); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); })();
+    const ym = ctx.month || today.slice(0, 7);
+    const prevYm = (() => { const d = new Date(Date.parse(ym + '-01T00:00:00Z')); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); })();
     const withVisits = list.filter((c) => c.visits > 0);
+    const rawAll = visibleList(ctx, true).filter((c) => c.status !== 'inactive');
+    const withVisitsAll = rawAll.filter((c) => c.visits > 0);
     const count = (f) => list.filter(f).length;
     const tally = (fn, labels) => {
       const m = {};
@@ -455,17 +484,17 @@ function register(app, pool) {
     const tierLabels = Object.fromEntries(ctx.data.settings.tiers.map((t) => [t.key, t.name]));
     const monthly = [];
     for (let i = 11; i >= 0; i--) {
-      const d = new Date(Date.parse(today.slice(0, 7) + '-01T00:00:00Z'));
+      const d = new Date(Date.parse(ym + '-01T00:00:00Z'));
       d.setUTCMonth(d.getUTCMonth() - i);
       const k = d.toISOString().slice(0, 7);
-      monthly.push({ ym: k, newCustomers: withVisits.filter((c) => c.firstVisit.startsWith(k)).length });
+      monthly.push({ ym: k, newCustomers: withVisitsAll.filter((c) => c.firstVisit.startsWith(k)).length });
     }
     const br = branchAllowedSql(ctx);
-    const rev = (await pool.query(`SELECT to_char(inv_date, 'YYYY-MM') AS ym, SUM(${crm.REV}) FILTER (WHERE cust_key <> '') AS member_rev, SUM(${crm.REV}) AS total_rev,
-      COUNT(*) FILTER (WHERE cust_key <> '') AS member_inv, COUNT(*) AS total_inv
-      FROM cukcuk_invoices WHERE branch_id = ANY($1) AND inv_date >= date_trunc('month', CURRENT_DATE - interval '11 months') GROUP BY ym ORDER BY ym`, [br])).rows;
+    const rev = (await pool.query(`SELECT to_char(inv_date, 'YYYY-MM') AS ym, SUM(${crm.REV}) FILTER (WHERE cust_key = ANY($3::text[])) AS member_rev, SUM(${crm.REV}) AS total_rev,
+      COUNT(*) FILTER (WHERE cust_key = ANY($3::text[])) AS member_inv, COUNT(*) AS total_inv
+      FROM cukcuk_invoices WHERE branch_id = ANY($1) AND inv_date >= ($2 || '-01')::date - interval '11 months' AND inv_date < ($2 || '-01')::date + interval '1 month' GROUP BY ym ORDER BY ym`, [br, ym, rawAll.map((c) => c.key)])).rows;
     monthly.forEach((m) => { const r = rev.find((x) => x.ym === m.ym); m.memberRev = r ? Number(r.member_rev) || 0 : 0; m.totalRev = r ? Number(r.total_rev) || 0 : 0; });
-    const birthdays = list.filter((c) => c.birthday).map((c) => {
+    const birthdays = rawAll.filter((c) => c.birthday).map((c) => {
       const [, mm, dd] = c.birthday.split('-');
       let next = `${today.slice(0, 4)}-${mm}-${dd}`;
       if (next < today) next = `${Number(today.slice(0, 4)) + 1}-${mm}-${dd}`;
@@ -481,15 +510,15 @@ function register(app, pool) {
     const top10pct = sortedSpend.slice(0, Math.max(1, Math.ceil(sortedSpend.length * 0.1))).reduce((a, c) => a + c.spend, 0);
     res.json({ success: true, data: {
       kpi: {
-        total: list.length, withPhone: count((c) => c.phone), withVisits: withVisits.length, newThisMonth: withVisits.filter((c) => c.firstVisit.startsWith(ym)).length,
-        newLastMonth: withVisits.filter((c) => c.firstVisit.startsWith(prevYm)).length, active90: count((c) => c.recencyDays !== null && c.recencyDays <= 90),
+        total: list.length, withPhone: count((c) => c.phone), withVisits: withVisits.length, newThisMonth: withVisitsAll.filter((c) => c.firstVisit.startsWith(ym)).length,
+        newLastMonth: withVisitsAll.filter((c) => c.firstVisit.startsWith(prevYm)).length, active90: count((c) => c.recencyDays !== null && c.recencyDays <= 90),
         returningRate: withVisits.length ? withVisits.filter((c) => c.visits >= 2).length / withVisits.length : 0, avgSpend: withVisits.length ? totalSpend / withVisits.length : 0,
-        top10share: totalSpend ? top10pct / totalSpend : 0, atRiskVip: count((c) => c.segment === 'at_risk' && c.tier !== ctx.data.settings.tiers[0].key), totalPoints: list.reduce((a, c) => a + c.points, 0)
+        top10share: totalSpend ? top10pct / totalSpend : 0, atRiskVip: rawAll.filter((c) => c.segment === 'at_risk' && c.tier !== ctx.data.settings.tiers[0].key).length, totalPoints: list.reduce((a, c) => a + c.points, 0)
       },
       tiers: ctx.data.settings.tiers.map((t) => ({ key: t.key, label: t.name, n: list.filter((c) => c.tier === t.key).length })),
       segments: tally((c) => c.segment, crm.SEGMENTS), sources: tally((c) => c.source || 'Không rõ nguồn').slice(0, 10), monthly, birthdays,
-      topCustomers: [...withVisits].sort((a, b) => b.spend12 - a.spend12).slice(0, 10).map(slim),
-      atRisk: list.filter((c) => c.segment === 'at_risk').sort((a, b) => b.spend12 - a.spend12).slice(0, 8).map(slim),
+      topCustomers: [...withVisits].sort((a, b) => (ctx.month ? b.spend - a.spend : b.spend12 - a.spend12)).slice(0, 10).map(slim),
+      atRisk: rawAll.filter((c) => c.segment === 'at_risk').sort((a, b) => b.spend12 - a.spend12).slice(0, 8).map(slim),
       tasks: { open: Number(myTasks.open) || 0, overdue: Number(myTasks.overdue) || 0, today: Number(myTasks.today) || 0 },
       deals: deals.map((d) => ({ stage: d.stage, n: Number(d.n), value: Number(d.value) })), upcomingEvents: upcomingEvents.map((e) => ({ ...e, expected_value: Number(e.expected_value) || 0 }))
     } });
@@ -498,9 +527,10 @@ function register(app, pool) {
   app.get('/api/crm/reports', wrap(async (req, res) => {
     const ctx = await context(req);
     const list = visibleList(ctx).filter((c) => c.visits > 0 && c.status !== 'inactive');
+    const rawList = visibleList(ctx, true).filter((c) => c.visits > 0 && c.status !== 'inactive');
     const months = {};
-    list.forEach((c) => { const k = c.firstVisit.slice(0, 7); const m = months[k] = months[k] || { ym: k, n: 0, repeat: 0, spend: 0 }; m.n += 1; if (c.visits >= 2) m.repeat += 1; m.spend += c.spend; });
-    const cohorts = Object.values(months).sort((a, b) => a.ym.localeCompare(b.ym)).slice(-12).map((m) => ({ ...m, repeatRate: m.n ? m.repeat / m.n : 0, avgSpend: m.n ? m.spend / m.n : 0 }));
+    rawList.forEach((c) => { const k = c.firstVisit.slice(0, 7); const m = months[k] = months[k] || { ym: k, n: 0, repeat: 0, spend: 0 }; m.n += 1; if (c.visits >= 2) m.repeat += 1; m.spend += c.spend; });
+    const cohorts = Object.values(months).sort((a, b) => a.ym.localeCompare(b.ym)).filter((m) => !ctx.month || m.ym <= ctx.month).slice(-12).map((m) => ({ ...m, repeatRate: m.n ? m.repeat / m.n : 0, avgSpend: m.n ? m.spend / m.n : 0 }));
     const bySource = {};
     list.forEach((c) => { const k = c.source || 'Không rõ nguồn'; const s = bySource[k] = bySource[k] || { source: k, customers: 0, spend: 0, visits: 0 }; s.customers += 1; s.spend += c.spend; s.visits += c.visits; });
     const byTier = ctx.data.settings.tiers.map((t) => {
@@ -514,8 +544,8 @@ function register(app, pool) {
     const brs = {};
     list.forEach((c) => Object.entries(c.byBranch).forEach(([b, v]) => { const x = brs[b] = brs[b] || { branch: b, customers: 0, spend: 0, visits: 0 }; x.customers += 1; x.spend += v.spend; x.visits += v.visits; }));
     const names = Object.fromEntries(ctx.branches.map((b) => [b.branch_id, b.branch_name]));
-    const feedback = (await pool.query(`SELECT COUNT(*) AS n, AVG(rating) AS avg, COUNT(*) FILTER (WHERE type = 'complaint') AS complaints FROM crm_interactions WHERE created_at >= NOW() - interval '90 days' AND (rating IS NOT NULL OR type IN ('feedback','complaint'))`)).rows[0];
-    const byType = (await pool.query(`SELECT type, COUNT(*) AS n FROM crm_interactions WHERE created_at >= NOW() - interval '30 days' GROUP BY type ORDER BY n DESC`)).rows;
+    const feedback = (await pool.query(`SELECT COUNT(*) AS n, AVG(rating) AS avg, COUNT(*) FILTER (WHERE type = 'complaint') AS complaints FROM crm_interactions WHERE ${ctx.month ? `to_char(created_at, 'YYYY-MM') = '${ctx.month}'` : "created_at >= NOW() - interval '90 days'"} AND (rating IS NOT NULL OR type IN ('feedback','complaint'))`)).rows[0];
+    const byType = (await pool.query(`SELECT type, COUNT(*) AS n FROM crm_interactions WHERE ${ctx.month ? `to_char(created_at, 'YYYY-MM') = '${ctx.month}'` : "created_at >= NOW() - interval '30 days'"} GROUP BY type ORDER BY n DESC`)).rows;
     res.json({ success: true, data: {
       cohorts, bySource: Object.values(bySource).sort((a, b) => b.spend - a.spend), byTier, bySegment,
       byBranch: Object.values(brs).map((b) => ({ ...b, name: names[b.branch] || b.branch })).sort((a, b) => b.spend - a.spend),

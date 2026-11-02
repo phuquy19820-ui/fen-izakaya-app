@@ -7,8 +7,7 @@ const growth = (a, b) => (b ? (a - b) / b : null);
 const Delta = ({ v }) => (v === null || v === undefined ? <span className="text-gray-400">—</span> : <span style={{ color: v >= 0 ? '#16a34a' : '#dc2626', fontWeight: 700 }}>{v >= 0 ? '▲' : '▼'} {Math.abs(v * 100).toFixed(1)}%</span>);
 
 // Báo cáo tăng trưởng khách mới / khách cũ quay lại theo tháng + nhóm khách
-export default function CrmGrowth() {
-  const [month, setMonth] = useState('');
+export default function CrmGrowth({ month, setMonth }) {
   const [cmp, setCmp] = useState('auto');
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
@@ -18,7 +17,7 @@ export default function CrmGrowth() {
     const qs = new URLSearchParams();
     if (month) qs.set('month', month);
     qs.set('cmp', cmp);
-    api('GET', '/api/crm/growth?' + qs.toString()).then((j) => { if (j.success) { setD(j.data); if (!month) setMonth(j.data.month); } else setErr(j.message); });
+    api('GET', '/api/crm/growth?' + qs.toString()).then((j) => { if (j.success) setD(j.data); else setErr(j.message); });
   }, [month, cmp]);
 
   if (err) return <p className="text-red-600 p-4">{err}</p>;
