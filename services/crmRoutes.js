@@ -366,6 +366,78 @@ function register(app, pool) {
     res.json({ success: true });
   }));
 
+  // ---- tăng trưởng khách mới / khách cũ quay lại theo tháng (lọc theo tháng, so sánh hai tháng, theo nhóm khách)
+  app.get('/api/crm/growth', wrap(async (req, res) => {
+    const ctx = await context(req);
+    const members = new Map(visibleList(ctx).filter((c) => c.status !== 'inactive').map((c) => [c.key, c]));
+    const br = branchAllowedSql(ctx);
+    const rows = (await pool.query(`SELECT cust_key, to_char(inv_date, 'YYYY-MM') AS ym, MAX(cust_group) AS grp, SUM(${crm.REV}) AS rev, COUNT(*) AS inv
+      FROM cukcuk_invoices WHERE cust_key <> '' AND branch_id = ANY($1) GROUP BY cust_key, ym`, [br])).rows;
+    const startRow = (await pool.query("SELECT to_char(MIN(inv_date), 'YYYY-MM') AS m FROM cukcuk_invoices WHERE branch_id = ANY($1)", [br])).rows[0];
+    const today = ctx.data.today;
+    const curYm = today.slice(0, 7);
+    const dataStart = (startRow && startRow.m) || curYm;
+    const addM = (ym, n) => { const d = new Date(Date.parse(ym + '-01T00:00:00Z')); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 7); };
+    const available = [];
+    for (let m = dataStart; m <= curYm; m = addM(m, 1)) available.push(m);
+
+    // dữ liệu theo từng khách thành viên
+    const per = new Map();
+    rows.forEach((r) => {
+      const c = members.get(r.cust_key);
+      if (!c) return;
+      if (!per.has(r.cust_key)) per.set(r.cust_key, { c, months: {}, first: r.ym });
+      const p = per.get(r.cust_key);
+      p.months[r.ym] = { rev: Number(r.rev) || 0, grp: r.grp || 'OTHER' };
+      if (r.ym < p.first) p.first = r.ym;
+    });
+    const groupLabel = Object.fromEntries(require('./revenueService').GROUPS.map((g) => [g.key, g.label]));
+    const tierLabel = Object.fromEntries(ctx.data.settings.tiers.map((t) => [t.key, t.name]));
+    const blank = () => ({ active: 0, newC: 0, consecutive: 0, reactivated: 0, returning: 0, rev: 0, newRev: 0, retRev: 0 });
+    const add = (o, kind, rev) => {
+      o.active += 1; o.rev += rev;
+      if (kind === 'new') { o.newC += 1; o.newRev += rev; } else { o.returning += 1; o.retRev += rev; if (kind === 'consecutive') o.consecutive += 1; else o.reactivated += 1; }
+    };
+    const summary = (ym) => {
+      const s = { ym, ...blank(), byGroup: {}, byTier: {}, prevActive: 0, retained: 0 };
+      const prev = addM(ym, -1);
+      per.forEach((p) => {
+        if (p.months[prev]) s.prevActive += 1;
+        const m = p.months[ym];
+        if (!m) return;
+        if (p.months[prev]) s.retained += 1;
+        const kind = p.first === ym ? 'new' : (p.months[prev] ? 'consecutive' : 'reactivated');
+        add(s, kind, m.rev);
+        add(s.byGroup[m.grp] = s.byGroup[m.grp] || blank(), kind, m.rev);
+        add(s.byTier[p.c.tier] = s.byTier[p.c.tier] || blank(), kind, m.rev);
+      });
+      s.retention = s.prevActive ? s.retained / s.prevActive : null;
+      return s;
+    };
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : curYm;
+    const cmpQ = String(req.query.cmp === undefined ? 'auto' : req.query.cmp);
+    const cmp = cmpQ === 'none' || cmpQ === '' ? '' : (/^\d{4}-\d{2}$/.test(cmpQ) ? cmpQ : addM(month, -1));
+    const pct = (a, b) => (b ? (a - b) / b : null);
+    const trend = [];
+    for (let i = 11; i >= 0; i--) {
+      const m = addM(month, -i);
+      const s = summary(m);
+      const p = trend.length ? trend[trend.length - 1] : summary(addM(m, -1));
+      trend.push({ ym: m, active: s.active, newC: s.newC, returning: s.returning, consecutive: s.consecutive, reactivated: s.reactivated, rev: s.rev, newRev: s.newRev, retRev: s.retRev, retention: s.retention,
+        newGrowth: pct(s.newC, p.newC), returningGrowth: pct(s.returning, p.returning), activeGrowth: pct(s.active, p.active) });
+    }
+    const cur = summary(month);
+    const cmpS = cmp ? summary(cmp) : null;
+    const keysOf = (a, b, field) => Array.from(new Set([...Object.keys(a[field]), ...(b ? Object.keys(b[field]) : [])]));
+    const pack = (field, labels) => keysOf(cur, cmpS, field).map((k) => ({ key: k, label: labels[k] || k, cur: cur[field][k] || blank(), cmp: cmpS ? (cmpS[field][k] || blank()) : null }))
+      .sort((x, y) => y.cur.active - x.cur.active);
+    res.json({ success: true, data: {
+      dataStart, available, month, cmp, trend, cur: { ...cur, byGroup: undefined, byTier: undefined }, cmpSummary: cmpS ? { ...cmpS, byGroup: undefined, byTier: undefined } : null,
+      groups: pack('byGroup', groupLabel), tiers: pack('byTier', tierLabel), members: per.size,
+      firstMonthNote: month <= dataStart || (cmp && cmp <= dataStart)
+    } });
+  }));
+
   // ---- tổng quan
   app.get('/api/crm/dashboard', wrap(async (req, res) => {
     const ctx = await context(req);

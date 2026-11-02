@@ -11,6 +11,7 @@ import CrmCustomerDetail from '../components/crm/CrmCustomerDetail';
 import CrmTasks from '../components/crm/CrmTasks';
 import CrmDeals from '../components/crm/CrmDeals';
 import CrmReports from '../components/crm/CrmReports';
+import CrmGrowth from '../components/crm/CrmGrowth';
 import CrmSettings from '../components/crm/CrmSettings';
 import CrmUsers from '../components/crm/CrmUsers';
 
@@ -37,7 +38,7 @@ export default function Crm() {
   const isAdmin = meta && meta.user.role === 'admin';
   const isManager = meta && (meta.user.role === 'admin' || meta.user.role === 'manager');
 
-  const NAV = [['dashboard', '📊 Tổng quan'], ['customers', '👥 Khách hàng'], ['tasks', '✅ Công việc'], ['deals', '🎉 Cơ hội / Tiệc'], ['reports', '📈 Báo cáo']];
+  const NAV = [['dashboard', '📊 Tổng quan'], ['customers', '👥 Khách hàng'], ['tasks', '✅ Công việc'], ['deals', '🎉 Cơ hội / Tiệc'], ['growth', '📊 Tăng trưởng khách'], ['reports', '📈 Báo cáo']];
   if (isAdmin) NAV.push(['settings', '💎 Hạng thẻ'], ['users', '🔐 Tài khoản']);
   const active = view === 'customer' ? 'customers' : view;
 
@@ -80,6 +81,7 @@ export default function Crm() {
           {meta && view === 'customer' && id && <CrmCustomerDetail key={branch + '-' + id} id={id} meta={meta} go={go} isManager={isManager} />}
           {meta && view === 'tasks' && <CrmTasks key={branch} meta={meta} go={go} isManager={isManager} />}
           {meta && view === 'deals' && <CrmDeals key={branch} meta={meta} go={go} isManager={isManager} branch={branch} />}
+          {meta && view === 'growth' && <CrmGrowth key={branch} />}
           {meta && view === 'reports' && <CrmReports key={branch} meta={meta} />}
           {meta && view === 'settings' && isAdmin && <CrmSettings meta={meta} reloadMeta={loadMeta} />}
           {meta && view === 'users' && isAdmin && <CrmUsers meta={meta} />}
