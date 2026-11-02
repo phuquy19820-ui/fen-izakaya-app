@@ -3,6 +3,7 @@
 // Cho phép tạo mã hàng mới để mua (đồng bộ với CUKCUK theo tên khi CUKCUK có hàng cùng tên nhưng khác mã).
 
 const { itemGroupOf } = require('./itemGroup');
+const { defaultConversion } = require('./unitService');
 
 function placement(deps, code, name, categoryName) {
   const { categorize, subGroupOf } = deps;
@@ -18,9 +19,9 @@ async function insertMaterial(db, deps, m) {
   await db.query(`
     INSERT INTO raw_materials (material_id, material_name, normalized_name, category, category_group, purchase_cycle, unit_recipe, unit_purchase,
       conversion_rate, unit_cost, lead_time_days, waste_rate, shelf_life_days, is_auto_created, is_active, sub_group, price_source, is_manual)
-    VALUES ($1,$2,$3,$4,$4,$5,$6,$6,1,$7,$8,$9,$10,FALSE,TRUE,$11,$12,$13)`,
+    VALUES ($1,$2,$3,$4,$4,$5,$14,$6,$15,$7,$8,$9,$10,FALSE,TRUE,$11,$12,$13)`,
   [m.id, m.name.substring(0, 255), norm.substring(0, 255), p.category, p.cycle, (m.unit || 'cái').substring(0, 20), Math.max(0, Number(m.price) || 0),
-    p.cycle === 'FRESH_3DAYS' ? 1 : 3, p.waste, p.shelf, p.sub, Number(m.price) > 0 ? 'FILE' : 'MISSING', !!m.manual]);
+    p.cycle === 'FRESH_3DAYS' ? 1 : 3, p.waste, p.shelf, p.sub, Number(m.price) > 0 ? 'FILE' : 'MISSING', !!m.manual, (m.recipeUnit || m.unit || 'cái').substring(0, 20), Number(m.conv) > 0 ? Number(m.conv) : 1]);
 }
 
 async function upsertMap(db, branchId, code, name, unit, materialId, type, score) {
@@ -52,6 +53,9 @@ async function syncStockMaterials(db, branchId, deps) {
   const fuzzyList = mats.map((m) => ({ dish_id: m.material_id, dish_name: m.material_name }));
   let mapped = 0; let created = 0; let kept = 0;
   const newMats = []; const mapRows = [];
+  // Đơn vị mua / đơn vị định lượng / tỷ lệ quy đổi theo bảng "Đơn vị tính quy đổi" (đã sửa tay thì dùng số đã sửa), mặc định 1 kg = 1.000 gr, 1 lít = 1.000 ml
+  const uc = new Map((await db.query('SELECT item_code, small_unit, large_unit, ratio FROM unit_conversions WHERE branch_id = $1', [branchId])).rows.map((r) => [r.item_code, r]));
+  const convFor = (it) => { const u = uc.get(it.code); if (u && Number(u.ratio) > 0 && u.large_unit) return { small: u.small_unit || it.unit, large: u.large_unit, ratio: Number(u.ratio) }; return defaultConversion(it.name, it.unit); };
 
   for (const it of items.values()) {
     const cur = maps.get(it.code);
@@ -68,7 +72,8 @@ async function syncStockMaterials(db, branchId, deps) {
       let id = it.code.substring(0, 50);
       if (ids.has(id)) id = `${branchId}_${it.code}`.substring(0, 50);
       if (ids.has(id)) continue;
-      newMats.push({ id, name: it.name, unit: it.unit, price: it.price, place: placement(deps, it.code, it.name, it.cat) });
+      const cv = convFor(it);
+      newMats.push({ id, name: it.name, unit: cv.large, recipeUnit: cv.small, conv: cv.ratio, price: (Number(it.price) || 0) * cv.ratio, place: placement(deps, it.code, it.name, it.cat) });
       ids.add(id); byNorm.set(norm, id); fuzzyList.push({ dish_id: id, dish_name: it.name });
       target = id; type = 'NEW'; score = 1; created += 1;
     } else mapped += 1;
@@ -82,13 +87,14 @@ async function syncStockMaterials(db, branchId, deps) {
     await db.query(`
       INSERT INTO raw_materials (material_id, material_name, normalized_name, category, category_group, purchase_cycle, unit_recipe, unit_purchase,
         conversion_rate, unit_cost, lead_time_days, waste_rate, shelf_life_days, is_auto_created, is_active, sub_group, price_source)
-      SELECT t.id, t.name, t.norm, t.cat, t.cat, t.cycle, t.unit, t.unit, 1, t.price, t.lead, t.waste, t.shelf, FALSE, TRUE, t.sub, t.src
-      FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::numeric[], $8::int[], $9::numeric[], $10::int[], $11::text[], $12::text[])
-        AS t(id, name, norm, cat, cycle, unit, price, lead, waste, shelf, sub, src)
+      SELECT t.id, t.name, t.norm, t.cat, t.cat, t.cycle, t.runit, t.unit, t.conv, t.price, t.lead, t.waste, t.shelf, FALSE, TRUE, t.sub, t.src
+      FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::numeric[], $8::int[], $9::numeric[], $10::int[], $11::text[], $12::text[], $13::text[], $14::numeric[])
+        AS t(id, name, norm, cat, cycle, unit, price, lead, waste, shelf, sub, src, runit, conv)
       ON CONFLICT (material_id) DO NOTHING`,
     [c.map((m) => m.id), c.map((m) => m.name.substring(0, 255)), c.map((m) => normalizeString(m.name).substring(0, 255)), c.map((m) => m.place.category), c.map((m) => m.place.cycle),
       c.map((m) => (m.unit || 'cái').substring(0, 20)), c.map((m) => Math.max(0, Number(m.price) || 0)), c.map((m) => (m.place.cycle === 'FRESH_3DAYS' ? 1 : 3)),
-      c.map((m) => m.place.waste), c.map((m) => m.place.shelf), c.map((m) => m.place.sub), c.map((m) => (Number(m.price) > 0 ? 'FILE' : 'MISSING'))]);
+      c.map((m) => m.place.waste), c.map((m) => m.place.shelf), c.map((m) => m.place.sub), c.map((m) => (Number(m.price) > 0 ? 'FILE' : 'MISSING')),
+      c.map((m) => (m.recipeUnit || m.unit || 'cái').substring(0, 20)), c.map((m) => (Number(m.conv) > 0 ? Number(m.conv) : 1))]);
   }
   for (let i = 0; i < mapRows.length; i += CH) {
     const c = mapRows.slice(i, i + CH);
@@ -130,7 +136,9 @@ async function createPurchaseItem(db, deps, p) {
   const place = g === base.group ? base : (g === 'food' ? placement(deps, 'NVL', name, '') : { group: g, category: 'DRY_GOODS', cycle: 'WEEKLY_7DAYS', sub: g === 'drink' ? 'Đồ uống' : 'CCDC', waste: 0, shelf: 30 });
   if (p.cycle === 'FRESH_3DAYS' || p.cycle === 'WEEKLY_7DAYS') place.cycle = p.cycle;
   const unit = String(p.unit || 'kg').trim() || 'kg';
-  await insertMaterial(db, deps, { id: code, name, unit, price: p.price, place, manual: true });
+  const lu = unit.toLowerCase();
+  const conv = lu === 'kg' ? { recipe: 'gr', rate: 1000 } : (lu === 'lít' || lu === 'lit' || lu === 'l') ? { recipe: 'ml', rate: 1000 } : { recipe: unit, rate: 1 };
+  await insertMaterial(db, deps, { id: code, name, unit, recipeUnit: conv.recipe, conv: conv.rate, price: p.price, place, manual: true });
   await upsertMap(db, branchId, code, name, unit, code, 'MANUAL', 1);
   return { existing: false, material_id: code, material_name: name, unit_purchase: unit, sub_group: place.sub, purchase_cycle: place.cycle };
 }

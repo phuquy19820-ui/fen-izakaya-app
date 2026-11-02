@@ -91,6 +91,11 @@ export default function StockReport() {
       }
     },
     {
+      key: 'mtype', label: 'Kiểu ghép', width: 150, type: 'select',
+      get: (r) => (!r.material_id ? '(chưa ghép)' : r.match_type === 'MANUAL' ? 'Ghép tay' : r.match_type === 'NEW' ? 'Tạo mới từ tồn kho' : (r.match_type === 'EXACT' || r.match_type === 'NAME') ? 'Tự động (trùng tên)' : (Number(r.match_score) >= 0.95 ? 'Tự động (gần giống tên)' : 'Tự động - CẦN KIỂM TRA')),
+      render: (r, v) => <span className={v === 'Tự động - CẦN KIỂM TRA' ? 'text-orange-600 font-bold' : v === '(chưa ghép)' ? 'text-red-600 font-bold' : 'text-gray-600'} title={r.match_score ? `Độ giống tên ${Math.round(Number(r.match_score) * 100)}%` : ''}>{v}</span>
+    },
+    {
       key: 'match', label: 'NVL trong app (để tính kế hoạch)', minWidth: 280, type: 'text', get: (r) => r.material_name || '(chưa ghép)', noTitle: true,
       render: (r) => (
         <div className="flex items-center gap-1">

@@ -143,7 +143,7 @@ export default function KitchenOrders() {
   const groupStats = useMemo(() => { const st = { food: { n: 0 }, drink: { n: 0 }, ccdc: { n: 0 }, all: { n: rowsAll.length } }; rowsAll.forEach((r) => { (st[r.itemGroup] || st.food).n += 1; }); return st; }, [rowsAll]);
   const cols = [
     { key: 'code', label: 'Mã NVL', width: 100, type: 'text' },
-    { key: 'name', label: 'Nguyên vật liệu', width: 230, type: 'text', render: (r) => <span className="font-medium">{r.name}{r.unitMismatch ? <span className="ml-1 text-orange-600" title="ĐVT trong file đặt khác ĐVT mua của app, số liệu có thể lệch">⚠ ĐVT</span> : null}</span> },
+    { key: 'name', label: 'Nguyên vật liệu', width: 230, type: 'text', render: (r) => <span className="font-medium">{r.name}{r.unknownCode ? <span className="ml-1 text-red-600" title="Mã này trong file đặt hàng không có trong danh mục NVL của app, nên chưa so được với bán/mua">⚠ mã lạ</span> : null}{r.unitMismatch ? <span className="ml-1 text-orange-600" title="ĐVT trong file đặt khác ĐVT mua của app, số liệu có thể lệch">⚠ ĐVT</span> : null}</span> },
     { key: 'group', label: 'Nhóm', width: 110, type: 'select' },
     { key: 'unit', label: 'ĐVT', width: 60, type: 'select' },
     { key: 'ordered', label: 'ĐẶT (Bếp)', width: 90, type: 'number', align: 'right', render: (r) => <b>{num(r.ordered)}</b> },
@@ -241,7 +241,7 @@ export default function KitchenOrders() {
                 ))}
               </div>
               <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-yellow-900 space-y-1">
-                <div><b>Cách tính:</b> <b>ĐẶT</b> = tổng số lượng trong các file đơn của Bếp đã tải. <b>DÙNG theo bán</b> = số món bán trên CUKCUK × định lượng của món (đã ghép món), quy về đơn vị mua của NVL. <b>THỰC MUA</b> = số lượng nhập thực tế từ CUKCUK đã ghép NVL. Bấm vào một dòng để xem chi tiết từng ngày.</div>
+                <div><b>Cách tính:</b> <b>ĐẶT</b> = tổng số lượng trong các file đơn của Bếp đã tải. <b>DÙNG theo bán</b> = số món bán trên CUKCUK × định lượng của món (đã ghép món), quy về đơn vị mua của NVL; với hàng bán trực tiếp (đồ uống, hàng bán lẻ…) là số lượng bán của chính mặt hàng đó. <b>THỰC MUA</b> = số lượng nhập thực tế từ CUKCUK đã ghép NVL. Bấm vào một dòng để xem chi tiết từng ngày.</div>
                 {cov !== null && <div>Độ phủ định lượng: <b>{(cov * 100).toFixed(0)}%</b> số lượng món ăn bán ra đã có định lượng{cov < 0.95 ? ' — phần còn lại chưa quy ra NVL nên cột "Dùng theo bán" có thể thấp hơn thực tế.' : '.'}{data.unmappedDishes.length > 0 && cov < 0.95 && <> Món bán nhiều nhưng chưa có định lượng: {data.unmappedDishes.slice(0, 6).map((d) => `${d.name} (${num(d.qty)})`).join('; ')}.</>}</div>}
                 {data.unmatchedPurchases.n > 0 && <div>Có {data.unmatchedPurchases.n} dòng mua hàng ({money(data.unmatchedPurchases.amount)} đ) chưa ghép với NVL của app nên chưa tính vào cột "Thực mua" (ghép ở tab Tồn kho).</div>}
               </div>

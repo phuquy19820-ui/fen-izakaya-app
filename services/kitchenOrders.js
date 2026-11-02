@@ -1,7 +1,7 @@
 // Theo dõi đơn đặt hàng của Bếp: tải file "Đơn đặt mua nguyên vật liệu" (xuất từ app) mỗi ngày,
 // so sánh số lượng ĐẶT với số lượng dự kiến DÙNG theo bán hàng (định lượng món) và số lượng THỰC MUA.
 
-const { materialGroupOf } = require('./itemGroup');
+const { materialGroupOf, warmGroupContext } = require('./itemGroup');
 const dateOnly = (s, fallback) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : fallback);
 const SMALL_UNITS_SQL = "lower(p.unit_name) IN ('gram', 'gr', 'g', 'ml')";
 
@@ -91,6 +91,13 @@ function register(app, pool) {
       JOIN bill_of_materials b ON b.dish_id = m.bom_dish_id AND b.branch_id = i.branch_id
       JOIN raw_materials rm ON rm.material_id = b.material_id
       WHERE i.branch_id = $1 AND i.inv_date BETWEEN $2 AND $3 GROUP BY b.material_id, d`, [branchId, from, to])).rows;
+    // hàng bán trực tiếp (đồ uống, hàng bán lẻ…) cùng mã với hàng tồn kho: số bán = số tiêu thụ theo đơn vị CUKCUK; bỏ qua món đã có định lượng để không tính hai lần
+    const soldDirect = (await pool.query(`SELECT m.material_id AS code, to_char(i.inv_date, 'YYYY-MM-DD') AS d, SUM(i.qty) AS qty
+      FROM cukcuk_invoice_items i
+      JOIN stock_code_map m ON m.branch_id = i.branch_id AND m.cukcuk_code = i.item_code AND m.material_id IS NOT NULL
+      WHERE i.branch_id = $1 AND i.inv_date BETWEEN $2 AND $3
+        AND NOT EXISTS (SELECT 1 FROM dish_code_map dm WHERE dm.branch_id = i.branch_id AND dm.cukcuk_code = i.item_code AND dm.bom_dish_id IS NOT NULL)
+      GROUP BY m.material_id, d`, [branchId, from, to])).rows;
     // thực mua (đã ghép NVL của app), quy về đơn vị mua
     const bought = (await pool.query(`SELECT m.material_id AS code, to_char(p.purchase_date, 'YYYY-MM-DD') AS d,
         SUM(p.qty * CASE WHEN ${SMALL_UNITS_SQL} AND rm.conversion_rate > 1 THEN 1.0 / rm.conversion_rate ELSE 1.0 END) AS qty, SUM(p.amount) AS amount
@@ -110,7 +117,8 @@ function register(app, pool) {
       WHERE i.branch_id = $1 AND i.inv_date BETWEEN $2 AND $3 AND m.bom_dish_id IS NULL AND (i.kind IS NULL OR i.kind NOT ILIKE 'đồ uống%')
       GROUP BY i.item_code ORDER BY qty DESC LIMIT 10`, [branchId, from, to])).rows;
 
-    const codes = Array.from(new Set([...ordered.map((r) => r.code), ...sold.map((r) => r.code), ...bought.map((r) => r.code)]));
+    await warmGroupContext(pool, branchId);
+    const codes = Array.from(new Set([...ordered.map((r) => r.code), ...sold.map((r) => r.code), ...soldDirect.map((r) => r.code), ...bought.map((r) => r.code)]));
     const metaRows = codes.length ? (await pool.query('SELECT material_id, material_name, unit_purchase, category, unit_cost, sub_group FROM raw_materials WHERE material_id = ANY($1)', [codes])).rows : [];
     const meta = new Map(metaRows.map((r) => [r.material_id, r]));
     const rows = new Map();
@@ -124,10 +132,11 @@ function register(app, pool) {
     const day = (r, d) => (r.daily[d] = r.daily[d] || { d, ordered: 0, sold: 0, bought: 0 });
     ordered.forEach((o) => { const r = get(o.code); r.ordered += Number(o.qty) || 0; r.orderedUnit = o.unit || r.orderedUnit; if (!r.name) r.name = o.name; if (!r.unit) r.unit = o.unit; if (o.grp) r.group = o.grp; day(r, o.d).ordered += Number(o.qty) || 0; });
     sold.forEach((o) => { const r = get(o.code); r.sold += Number(o.qty) || 0; day(r, o.d).sold += Number(o.qty) || 0; });
+    soldDirect.forEach((o) => { const r = get(o.code); r.sold += Number(o.qty) || 0; day(r, o.d).sold += Number(o.qty) || 0; });
     bought.forEach((o) => { const r = get(o.code); r.bought += Number(o.qty) || 0; r.boughtAmount += Number(o.amount) || 0; day(r, o.d).bought += Number(o.qty) || 0; });
     const round = (v) => Math.round(v * 1000) / 1000;
     const out = Array.from(rows.values()).map((r) => ({
-      code: r.code, name: r.name || r.code, unit: r.unit, group: r.group, itemGroup: materialGroupOf(r.code, r.name, r.subGroup || r.group), ordered: round(r.ordered), sold: round(r.sold), bought: round(r.bought), boughtAmount: Math.round(r.boughtAmount),
+      code: r.code, name: r.name || r.code, unit: r.unit, group: r.group, itemGroup: materialGroupOf(r.code, r.name, r.subGroup, branchId), unknownCode: !meta.has(r.code), ordered: round(r.ordered), sold: round(r.sold), bought: round(r.bought), boughtAmount: Math.round(r.boughtAmount),
       unitMismatch: !!(r.orderedUnit && r.unit && r.orderedUnit.trim().toLowerCase() !== r.unit.trim().toLowerCase()),
       daily: Object.values(r.daily).sort((a, b) => a.d.localeCompare(b.d)).map((x) => ({ d: x.d, ordered: round(x.ordered), sold: round(x.sold), bought: round(x.bought) }))
     })).filter((r) => r.ordered > 0 || r.sold > 0 || r.bought > 0).sort((a, b) => (a.group || '').localeCompare(b.group || '', 'vi') || a.name.localeCompare(b.name, 'vi'));

@@ -22,7 +22,8 @@ const auth = require('./services/authService');
 const crmService = require('./services/crmService');
 const crmRoutes = require('./services/crmRoutes');
 const kitchenOrders = require('./services/kitchenOrders');
-const { itemGroupOf, materialGroupOf } = require('./services/itemGroup');
+const { itemGroupOf, materialGroupOf, warmGroupContext } = require('./services/itemGroup');
+const { defaultConversion: defaultConv } = require('./services/unitService');
 const stockMaterials = require('./services/stockMaterials');
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -428,6 +429,57 @@ app.post('/api/menu/add-missing', async (req, res) => {
   }
 });
 
+// Một lần: NVL tạo từ tồn kho CUKCUK trước đây lấy đơn vị nhỏ (gram, ml) làm đơn vị mua với tỷ lệ 1 -> đổi sang đơn vị mua chuẩn (kg, lít, chai, gói...) theo bảng quy đổi
+async function migrateStockMaterialUnits(pool) {
+  await pool.query('CREATE TABLE IF NOT EXISTS app_flags (name VARCHAR(80) PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())');
+  if ((await pool.query("SELECT 1 FROM app_flags WHERE name = 'stock_material_units_v1'")).rowCount) return;
+  const rows = (await pool.query(`
+    SELECT rm.material_id, rm.material_name, rm.unit_cost, rm.conversion_rate, m.branch_id, m.cukcuk_code, m.unit_name,
+           u.small_unit, u.large_unit, u.ratio
+    FROM raw_materials rm JOIN stock_code_map m ON m.material_id = rm.material_id AND m.match_type = 'NEW' AND m.cukcuk_code = rm.material_id
+    LEFT JOIN unit_conversions u ON u.branch_id = m.branch_id AND u.item_code = m.cukcuk_code
+    WHERE rm.is_manual IS NOT TRUE AND lower(COALESCE(rm.unit_purchase, '')) IN ('gram', 'gr', 'g', 'ml') AND COALESCE(rm.conversion_rate, 1) <= 1`)).rows;
+  let fixed = 0; const branches = new Set();
+  for (const r of rows) {
+    const c = (r.ratio && Number(r.ratio) > 0 && r.large_unit) ? { small: r.small_unit, large: r.large_unit, ratio: Number(r.ratio) } : defaultConv(r.material_name, r.unit_name);
+    await pool.query('UPDATE raw_materials SET unit_recipe = $2, unit_purchase = $3, conversion_rate = $4, unit_cost = unit_cost * $4 WHERE material_id = $1', [r.material_id, String(c.small || r.unit_name).substring(0, 20), String(c.large).substring(0, 20), c.ratio]);
+    fixed += 1; branches.add(r.branch_id);
+  }
+  for (const b of branches) { const cl = await pool.connect(); try { await rebuildInventory(cl, b); } finally { cl.release(); } }
+  await pool.query("INSERT INTO app_flags (name) VALUES ('stock_material_units_v1') ON CONFLICT DO NOTHING");
+  console.log(`Đổi đơn vị mua chuẩn cho NVL tạo từ tồn kho: ${fixed} NVL`);
+}
+
+// Một lần: NVL trùng tên trong cùng chi nhánh (vd. hai mã "Nghêu cồ trắng") -> gộp về một mã để kế hoạch mua không tách đôi nhu cầu
+async function migrateMergeDuplicateMaterials(pool) {
+  await pool.query('CREATE TABLE IF NOT EXISTS app_flags (name VARCHAR(80) PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())');
+  if ((await pool.query("SELECT 1 FROM app_flags WHERE name = 'merge_dup_materials_v1'")).rowCount) return;
+  let merged = 0;
+  const branches = (await pool.query('SELECT branch_id FROM branches')).rows.map((r) => r.branch_id);
+  for (const b of branches) {
+    const dups = (await pool.query(`
+      SELECT rm.normalized_name, array_agg(rm.material_id) AS ids FROM raw_materials rm
+      WHERE rm.is_active IS NOT FALSE AND rm.is_merged IS NOT TRUE AND rm.is_manual IS NOT TRUE
+        AND (EXISTS (SELECT 1 FROM bill_of_materials x WHERE x.material_id = rm.material_id AND x.branch_id = $1) OR EXISTS (SELECT 1 FROM stock_code_map sm WHERE sm.material_id = rm.material_id AND sm.branch_id = $1))
+      GROUP BY rm.normalized_name HAVING COUNT(*) > 1`, [b])).rows;
+    for (const d of dups) {
+      const score = (await pool.query(`SELECT rm.material_id, (SELECT COUNT(*) FROM stock_code_map m WHERE m.material_id = rm.material_id AND m.branch_id = $1) * 1000 + (SELECT COUNT(*) FROM bill_of_materials x WHERE x.material_id = rm.material_id AND x.branch_id = $1) AS s
+        FROM raw_materials rm WHERE rm.material_id = ANY($2) ORDER BY s DESC, rm.material_id`, [b, d.ids])).rows;
+      const keep = score[0].material_id;
+      for (const o of score.slice(1)) {
+        const other = Number((await pool.query('SELECT (SELECT COUNT(*) FROM bill_of_materials WHERE material_id = $1 AND branch_id <> $2) + (SELECT COUNT(*) FROM stock_code_map WHERE material_id = $1 AND branch_id <> $2) AS n', [o.material_id, b])).rows[0].n);
+        if (other > 0) continue; // đang dùng ở chi nhánh khác: không gộp
+        await pool.query('UPDATE bill_of_materials SET material_id = $3 WHERE branch_id = $1 AND material_id = $2', [b, o.material_id, keep]);
+        await pool.query('UPDATE stock_code_map SET material_id = $3 WHERE branch_id = $1 AND material_id = $2', [b, o.material_id, keep]);
+        await pool.query('UPDATE raw_materials SET is_merged = TRUE WHERE material_id = $1', [o.material_id]);
+        merged += 1;
+      }
+    }
+  }
+  await pool.query("INSERT INTO app_flags (name) VALUES ('merge_dup_materials_v1') ON CONFLICT DO NOTHING");
+  console.log(`Gộp NVL trùng tên: ${merged} NVL`);
+}
+
 // Một lần: đổi ngày các hóa đơn đã lưu từ "giờ thanh toán" sang "giờ mở bill"
 async function migrateInvoiceOpenDates(pool) {
   await pool.query('CREATE TABLE IF NOT EXISTS app_flags (name VARCHAR(80) PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())');
@@ -669,7 +721,8 @@ app.get('/api/materials/manual/:branchId', async (req, res) => {
       FROM raw_materials rm
       WHERE rm.is_manual IS TRUE AND EXISTS (SELECT 1 FROM stock_code_map m WHERE m.branch_id = $1 AND m.material_id = rm.material_id)
       ORDER BY rm.material_name`, [req.params.branchId])).rows;
-    rows.forEach((r) => { r.item_group = materialGroupOf(r.material_id, r.material_name, r.sub_group); });
+    await warmGroupContext(pool, req.params.branchId);
+    rows.forEach((r) => { r.item_group = materialGroupOf(r.material_id, r.material_name, r.sub_group, req.params.branchId); });
     return res.json({ success: true, data: rows });
   } catch (error) { return res.status(500).json({ success: false, message: error.message }); }
 });
@@ -1530,8 +1583,10 @@ async function rebuildInventory(db, branchId) {
 async function branchMaterials(db, branchId) {
   return (await db.query(`
     SELECT DISTINCT rm.material_id AS dish_id, rm.material_name AS dish_name
-    FROM raw_materials rm JOIN bill_of_materials b ON b.material_id = rm.material_id AND b.branch_id = $1
-    WHERE rm.is_active IS NOT FALSE`, [branchId])).rows;
+    FROM raw_materials rm
+    WHERE rm.is_active IS NOT FALSE AND rm.is_merged IS NOT TRUE
+      AND (EXISTS (SELECT 1 FROM bill_of_materials b WHERE b.material_id = rm.material_id AND b.branch_id = $1)
+           OR EXISTS (SELECT 1 FROM stock_code_map sm WHERE sm.material_id = rm.material_id AND sm.branch_id = $1))`, [branchId])).rows;
 }
 
 app.post('/api/inventory/import', async (req, res) => {
@@ -1652,7 +1707,7 @@ app.get('/api/stock/report/:branchId', async (req, res) => {
              f.opening, f.opening_amount, s.qty_in, s.qty_out, s.in_amount, l.closing, l.closing_amount AS amount,
              f1.first_closing, f1.first_amount, pv.prev_amount, pv.prev_closing IS NOT NULL AS has_prev,
              b.buy_amount, b.buy_qty_same, b.buy_amount_same, h.hist_price,
-             m.material_id, m.match_type, rm.material_name
+             m.material_id, m.match_type, m.match_score, rm.material_name
       FROM lasts l JOIN firsts f USING (item_code) JOIN sums s USING (item_code) JOIN f1 USING (item_code)
       LEFT JOIN prev pv ON pv.item_code = l.item_code
       LEFT JOIN buys b ON b.item_code = l.item_code
@@ -1752,6 +1807,8 @@ app.post('/api/suppliers/import', async (req, res) => {
         if (oldCode && oldCode !== code.substring(0, 60) && !have.has(code.substring(0, 60))) {
           await client.query('UPDATE suppliers SET code = $3, is_manual = FALSE WHERE branch_id = $1 AND code = $2', [branchId, oldCode, code.substring(0, 60)]);
           await client.query('UPDATE purchase_orders SET supplier_code = $3 WHERE branch_id = $1 AND supplier_code = $2', [branchId, oldCode, code.substring(0, 60)]);
+          await client.query('UPDATE supplier_opening_debt SET supplier_code = $3 WHERE branch_id = $1 AND supplier_code = $2', [branchId, oldCode, code.substring(0, 60)]);
+          await client.query('UPDATE supplier_payments SET manual_supplier_code = $3 WHERE branch_id = $1 AND manual_supplier_code = $2', [branchId, oldCode, code.substring(0, 60)]);
           manual.delete(normalizeString(s.name)); have.add(code.substring(0, 60)); adopted++;
         }
         await client.query(`
@@ -2459,7 +2516,8 @@ app.get('/api/purchase-books/compare/:branchId', async (req, res) => {
       status: r.ordered_month === 0 ? 'Nhập ngoài đơn' : r.received_cum === 0 ? 'Chưa nhập' : r.received_cum + 1e-9 >= r.ordered_month * 0.95 ? 'Đã đủ' : 'Nhập một phần'
     })).sort((a, b) => a.material_name.localeCompare(b.material_name, 'vi'));
     const subs = new Map((await pool.query('SELECT material_id, sub_group FROM raw_materials WHERE material_id = ANY($1)', [out.map((r) => String(r.material_id).replace(/^CK:/, ''))])).rows.map((r) => [r.material_id, r.sub_group]));
-    out.forEach((r) => { r.item_group = materialGroupOf(r.material_id, r.material_name, subs.get(String(r.material_id).replace(/^CK:/, ''))); });
+    await warmGroupContext(pool, branchId);
+    out.forEach((r) => { r.item_group = materialGroupOf(r.material_id, r.material_name, subs.get(String(r.material_id).replace(/^CK:/, '')), branchId); });
     return res.json({ success: true, data: { from, to, monthStart, monthEnd, rows: out } });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -2469,6 +2527,7 @@ app.get('/api/purchase-books/compare/:branchId', async (req, res) => {
 // Sổ theo dõi đơn đặt hàng đã xuất, kèm tỷ lệ đã nhận (tính các lần nhập từ ngày lập đơn đến 10 ngày sau)
 const RECEIVE_WINDOW_DAYS = 10;
 async function orderFulfilment(db, branchId, order) {
+  await warmGroupContext(db, branchId);
   const p = order.payload || {};
   const lines = Array.isArray(p.lines) ? p.lines : [];
   const created = new Date(new Date(order.created_at).getTime() + 7 * 3600 * 1000);
@@ -2483,7 +2542,7 @@ async function orderFulfilment(db, branchId, order) {
     const r = recMap[l.code] || 0;
     ordered += q;
     got += Math.min(q, r);
-    return { index, item_group: materialGroupOf(l.code, l.name, l.group), code: l.code, name: l.name, group: l.group, unit: l.unit, ordered: q, price: Number(l.price) || 0, received: Math.round(r * 1000) / 1000, missing: Math.max(0, Math.round((q - r) * 1000) / 1000) };
+    return { index, item_group: materialGroupOf(l.code, l.name, l.group, branchId), code: l.code, name: l.name, group: l.group, unit: l.unit, ordered: q, price: Number(l.price) || 0, received: Math.round(r * 1000) / 1000, missing: Math.max(0, Math.round((q - r) * 1000) / 1000) };
   });
   const pct = ordered > 0 ? Math.round((got / ordered) * 1000) / 10 : 0;
   return { pct, status: pct === 0 ? 'Chưa nhận' : pct >= 95 ? 'Đã nhận đủ' : 'Nhận một phần', detail, from, to };
@@ -2506,7 +2565,7 @@ app.get('/api/purchase-books/orders/:branchId', async (req, res) => {
         id: o.id, order_no: o.order_no, created_at: o.created_at, buyer_company: o.buyer_company, supplier_name: o.supplier_name,
         total_amount: o.total_amount, line_count: o.line_count, cycle_label: (o.payload || {}).cycleLabel || '',
         fulfil_pct: f.pct, status: f.status,
-        line_groups: ((o.payload || {}).lines || []).reduce((a, l) => { const g = materialGroupOf(l.code, l.name, l.group); a[g] = (a[g] || 0) + 1; return a; }, { food: 0, drink: 0, ccdc: 0 })
+        line_groups: ((o.payload || {}).lines || []).reduce((a, l) => { const g = materialGroupOf(l.code, l.name, l.group, branchId); a[g] = (a[g] || 0) + 1; return a; }, { food: 0, drink: 0, ccdc: 0 })
       });
     }
     return res.json({ success: true, data: { windowDays: RECEIVE_WINDOW_DAYS, orders: out } });
@@ -2613,6 +2672,17 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
     const salesDays = Math.max(1, Number(daysRes.rows[0].days) || 1);
     const salesDemandMap = {};
     salesRes.rows.forEach(r => { salesDemandMap[r.material_id] = r.total_demand || 0; });
+    // Hàng bán trực tiếp (đồ uống, hàng bán lẻ...) có cùng mã với mặt hàng trong tồn kho: số bán = số tiêu thụ, tính theo đơn vị của CUKCUK
+    // (không có định lượng nên không đi qua BOM; bỏ qua món đã có định lượng để không tính hai lần)
+    const directRes = await client.query(`
+      SELECT m.material_id, SUM(s.quantity_sold) AS qty
+      FROM cukcuk_daily_sales s
+      JOIN stock_code_map m ON m.branch_id = s.branch_id AND m.cukcuk_code = s.dish_id AND m.material_id IS NOT NULL
+      WHERE s.branch_id = $1 AND s.sale_date >= CURRENT_DATE - INTERVAL '${SALES_WINDOW_DAYS} days'
+        AND NOT EXISTS (SELECT 1 FROM dish_code_map d WHERE d.branch_id = s.branch_id AND d.cukcuk_code = s.dish_id AND d.bom_dish_id IS NOT NULL)
+      GROUP BY m.material_id`, [branchId]);
+    const directMap = {};
+    directRes.rows.forEach(r => { directMap[r.material_id] = Number(r.qty) || 0; });
 
     const inventoryRes = await client.query(`
       SELECT DISTINCT ON (material_id) material_id, closing_stock
@@ -2632,7 +2702,7 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
 
       const currentStock = inventoryMap[material.material_id] || 0;
       // Nhu cầu quy đổi từ đơn vị định lượng (gr/ml) sang đơn vị mua (kg/lít), bình quân theo ngày
-      const avgDailySales = (salesDemandMap[material.material_id] || 0) / conv / salesDays;
+      const avgDailySales = ((salesDemandMap[material.material_id] || 0) / conv + (directMap[material.material_id] || 0)) / salesDays;
       const safetyStock = PurchasePlanService.calculateSafetyStock(avgDailySales, leadTime);
       const forecastedDemand = PurchasePlanService.calculateForecastedDemand(avgDailySales, forecastDays, wasteRate);
       const reorderPoint = PurchasePlanService.calculateReorderPoint(avgDailySales, leadTime, safetyStock);
@@ -2701,6 +2771,26 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
 });
 
 // 7b. API Lưu số lượng thực mua đã chỉnh sửa
+// Độ phủ định lượng của doanh số 7 ngày gần nhất: món bán ra chưa có định lượng thì chưa quy ra NVL nên kế hoạch mua theo bán sẽ thiếu
+app.get('/api/purchase-plans/coverage/:branchId', async (req, res) => {
+  try {
+    const b = req.params.branchId;
+    const last = (await pool.query('SELECT to_char(MAX(inv_date), \'YYYY-MM-DD\') AS d FROM cukcuk_invoice_items WHERE branch_id = $1', [b])).rows[0].d;
+    if (!last) return res.json({ success: true, data: { empty: true } });
+    const from = new Date(Date.parse(last + 'T00:00:00Z') - 6 * 86400000).toISOString().slice(0, 10);
+    const base = `FROM cukcuk_invoice_items i
+      LEFT JOIN dish_code_map m ON m.branch_id = i.branch_id AND m.cukcuk_code = i.item_code
+      LEFT JOIN stock_code_map sm ON sm.branch_id = i.branch_id AND sm.cukcuk_code = i.item_code AND sm.material_id IS NOT NULL
+      WHERE i.branch_id = $1 AND i.inv_date BETWEEN $2 AND $3`;
+    const tot = (await pool.query(`SELECT SUM(i.qty) AS total, SUM(i.qty) FILTER (WHERE m.bom_dish_id IS NOT NULL OR sm.material_id IS NOT NULL) AS covered ${base}`, [b, from, last])).rows[0];
+    const un = (await pool.query(`SELECT MAX(i.item_name) AS name, SUM(i.qty) AS qty ${base} AND m.bom_dish_id IS NULL AND sm.material_id IS NULL GROUP BY i.item_code ORDER BY qty DESC LIMIT 8`, [b, from, last])).rows;
+    const total = Number(tot.total) || 0; const covered = Number(tot.covered) || 0;
+    return res.json({ success: true, data: { from, to: last, total, covered, pct: total ? covered / total : null, unmapped: un.map((x) => ({ name: x.name, qty: Number(x.qty) || 0 })) } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 app.post('/api/purchase-plans/:planId/adjust', async (req, res) => {
   const { planId } = req.params;
   const adjustments = req.body.adjustments || {};
@@ -2899,6 +2989,8 @@ app.all('*', (req, res) => {
     await auth.init(pool);
     await crmService.init(pool);
     await migrateInvoiceOpenDates(pool).catch((e) => console.error('Migrate invoice open dates error:', e.message));
+    await migrateMergeDuplicateMaterials(pool).catch((e) => console.error('Merge duplicate materials error:', e.message));
+    await migrateStockMaterialUnits(pool).catch((e) => console.error('Migrate stock material units error:', e.message));
     console.log('✅ Database schema initialized');
 
     // Prepare Next.js

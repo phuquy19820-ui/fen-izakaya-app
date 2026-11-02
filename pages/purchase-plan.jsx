@@ -37,6 +37,7 @@ export default function PurchasePlanMisaUI() {
   const [newSupOpen, setNewSupOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
+  const [coverage, setCoverage] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
   const [matSup, setMatSup] = useState(null);
@@ -51,6 +52,7 @@ export default function PurchasePlanMisaUI() {
     if (!branch) return;
     fetchBranch();
     fetchPurchasePlan();
+    fetch(`/api/purchase-plans/coverage/${branch}`).then((r) => r.json()).then((d) => d.success && setCoverage(d.data)).catch(() => {});
     fetch(`/api/suppliers/${branch}`).then((r) => r.json()).then((d) => d.success && setSuppliers(d.data)).catch(() => {});
     fetch(`/api/suppliers/material-map/${branch}`).then((r) => r.json()).then((d) => d.success && setMatSup(d.data)).catch(() => {});
   }, [branch]);
@@ -300,6 +302,12 @@ export default function PurchasePlanMisaUI() {
             <span className="ml-auto text-gray-500">{visibleRows.length}/{cycleData.length} NVL · Bấm tiêu đề cột để sắp xếp, ô dưới tiêu đề để lọc</span></>}
           </div>
 
+          {cycleType !== 'DRINKS' && coverage && !coverage.empty && coverage.pct !== null && coverage.pct < 0.95 && (
+            <div className="bg-yellow-50 border border-yellow-300 rounded p-2 text-yellow-900">
+              ⚠ Kế hoạch mua theo bán chỉ tính được <b>{(coverage.pct * 100).toFixed(0)}%</b> số lượng món bán ra {coverage.from.split('-').reverse().join('/')} – {coverage.to.split('-').reverse().join('/')} (phần còn lại chưa có định lượng nên chưa quy ra NVL).
+              {coverage.unmapped.length > 0 && <> Bán nhiều nhưng chưa có định lượng: {coverage.unmapped.slice(0, 6).map((d) => `${d.name} (${fix2(d.qty)})`).join('; ')}. Vào "Đồng bộ & ghép món" để ghép/bổ sung định lượng.</>}
+            </div>
+          )}
           {cycleType === 'DRINKS' ? (
             <DrinkPlanPanel branch={branch} branchInfo={currentBranch} suppliers={suppliers} onCompanySaved={(name) => setCurrentBranch((b) => (b ? { ...b, buyer_company: name } : b))} />
           ) : (<>
