@@ -211,6 +211,11 @@ export default function Dashboard() {
                           💳 Công Nợ NCC
                         </a>
                       </Link>)}
+                      {can('kitchen') && (<Link href={`/kitchen-orders?branch=${branch.branch_id}`}>
+                        <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px', background: '#c2410c' }} className="text-white px-3 py-2 rounded font-bold text-sm">
+                          🍳 Đặt Hàng Bếp
+                        </a>
+                      </Link>)}
                       {can('sync') && (<Link href={`/sync-cukcuk?branch=${branch.branch_id}`}>
                         <a style={{ display: 'block', textAlign: 'center', lineHeight: '20px', gridColumn: '1 / -1' }} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded font-bold text-sm">
                           🔄 Đồng Bộ

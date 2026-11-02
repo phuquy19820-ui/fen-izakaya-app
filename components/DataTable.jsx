@@ -59,7 +59,7 @@ export function sortRows(rows, columns, sort) {
 }
 
 // Bảng gọn: tiêu đề dính trên cùng, hàng lọc theo cột, bấm tiêu đề để sắp xếp.
-export default function DataTable({ columns, allRows, rows, rowKey, filters, onFiltersChange, sort, onSortChange, footer, maxHeight = '68vh', emptyText = 'Không có dòng nào phù hợp bộ lọc.' }) {
+export default function DataTable({ columns, allRows, rows, rowKey, filters, onFiltersChange, sort, onSortChange, footer, onRowClick, maxHeight = '68vh', emptyText = 'Không có dòng nào phù hợp bộ lọc.' }) {
   const setFilter = (key, patch) => onFiltersChange({ ...filters, [key]: { ...(filters[key] || {}), ...patch } });
 
   const optionsFor = (c) => {
@@ -141,7 +141,7 @@ export default function DataTable({ columns, allRows, rows, rowKey, filters, onF
             <tr><td colSpan={columns.length} className="p-6 text-center text-gray-500">{emptyText}</td></tr>
           )}
           {rows.map((row, i) => (
-            <tr key={rowKey(row, i)} className="border-b hover:bg-blue-50" style={{ height: 28 }}>
+            <tr key={rowKey(row, i)} className="border-b hover:bg-blue-50" style={{ height: 28, cursor: onRowClick ? 'pointer' : undefined }} onClick={onRowClick ? () => onRowClick(row) : undefined}>
               {columns.map((c) => {
                 const v = valueOf(c, row);
                 return (

@@ -7,6 +7,7 @@ export const MODULES = [
   { key: 'books', label: 'Sổ mua hàng', icon: '📒', paths: ['/purchase-books'] },
   { key: 'suppliers', label: 'Nhà cung cấp', icon: '🚚', paths: ['/suppliers'] },
   { key: 'payables', label: 'Công nợ NCC', icon: '💳', paths: ['/payables'] },
+  { key: 'kitchen', label: 'Đặt hàng Bếp', icon: '🍳', paths: ['/kitchen-orders'] },
   { key: 'sync', label: 'Đồng bộ & ghép món', icon: '🔄', paths: ['/sync-cukcuk'] },
   { key: 'crm', label: 'CRM Khách hàng', icon: '👥', paths: ['/crm'] }
 ];

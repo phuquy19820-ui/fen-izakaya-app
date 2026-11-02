@@ -12,7 +12,7 @@ const ROLES = ['admin', 'manager', 'staff'];
 const MODULES = [
   { key: 'plan', label: 'Kế hoạch mua' }, { key: 'sales', label: 'Doanh thu theo món' }, { key: 'revenue', label: 'Báo cáo doanh thu' },
   { key: 'stock', label: 'Tồn kho' }, { key: 'books', label: 'Sổ mua hàng' }, { key: 'suppliers', label: 'Nhà cung cấp' },
-  { key: 'payables', label: 'Công nợ NCC' }, { key: 'sync', label: 'Đồng bộ & ghép món' }, { key: 'crm', label: 'CRM Khách hàng' }
+  { key: 'payables', label: 'Công nợ NCC' }, { key: 'kitchen', label: 'Đặt hàng Bếp' }, { key: 'sync', label: 'Đồng bộ & ghép món' }, { key: 'crm', label: 'CRM Khách hàng' }
 ];
 const MODULE_KEYS = MODULES.map((m) => m.key);
 
@@ -28,6 +28,7 @@ const RULES = [
   [/^\/api\/purchase-orders/, ['plan', 'books']],
   [/^\/api\/purchase-books/, ['books']],
   [/^\/api\/units/, ['books']],
+  [/^\/api\/kitchen-orders/, ['kitchen']],
   [/^\/api\/sales\/report/, ['sales']],
   [/^\/api\/sales\//, ['sync']],
   [/^\/api\/menu\/add-missing/, ['revenue']],

@@ -21,6 +21,7 @@ const { buildReport, legacyToOpenDate } = require('./services/revenueService');
 const auth = require('./services/authService');
 const crmService = require('./services/crmService');
 const crmRoutes = require('./services/crmRoutes');
+const kitchenOrders = require('./services/kitchenOrders');
 
 const dev = process.env.NODE_ENV !== 'production';
 const nextApp = next({ dev });
@@ -47,6 +48,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 
 app.use(auth.middleware(pool));
 auth.registerRoutes(app, pool);
 crmRoutes.register(app, pool);
+kitchenOrders.register(app, pool);
 
 // Initialize database schema
 async function initializeDatabase() {

@@ -10,6 +10,7 @@ const ITEMS = [
   { key: 'suppliers', href: '/suppliers', label: '🚚 Nhà cung cấp' },
   { key: 'books', href: '/purchase-books', label: '📒 Sổ mua hàng' },
   { key: 'payables', href: '/payables', label: '💳 Công nợ NCC' },
+  { key: 'kitchen', href: '/kitchen-orders', label: '🍳 Đặt hàng Bếp' },
   { key: 'sync', href: '/sync-cukcuk', label: '🔄 Đồng bộ & ghép món' }
 ];
 
