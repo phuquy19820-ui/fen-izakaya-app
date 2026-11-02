@@ -59,7 +59,11 @@ export function sortRows(rows, columns, sort) {
 }
 
 // Bảng gọn: tiêu đề dính trên cùng, hàng lọc theo cột, bấm tiêu đề để sắp xếp.
-export default function DataTable({ columns, allRows, rows, rowKey, filters, onFiltersChange, sort, onSortChange, footer, onRowClick, maxHeight = '68vh', emptyText = 'Không có dòng nào phù hợp bộ lọc.' }) {
+export default function DataTable({ columns: baseColumns, allRows, rows, rowKey, filters, onFiltersChange, sort, onSortChange, footer, onRowClick, showIndex = true, maxHeight = '68vh', emptyText = 'Không có dòng nào phù hợp bộ lọc.' }) {
+  // Cột STT (số thứ tự) tự thêm vào đầu bảng, đánh số theo thứ tự đang hiển thị (sau lọc/sắp xếp)
+  const sttOf = new Map();
+  rows.forEach((r, i) => sttOf.set(r, i + 1));
+  const columns = showIndex ? [{ key: '__stt', label: 'STT', width: 46, align: 'center', filterable: false, noSort: true, noTitle: true, get: (r) => sttOf.get(r), render: (r) => <span className="text-gray-500">{sttOf.get(r)}</span> }, ...baseColumns] : baseColumns;
   const setFilter = (key, patch) => onFiltersChange({ ...filters, [key]: { ...(filters[key] || {}), ...patch } });
 
   const optionsFor = (c) => {
@@ -78,7 +82,7 @@ export default function DataTable({ columns, allRows, rows, rowKey, filters, onF
   const widthOf = (c) => c.width || c.minWidth || 240;
   const frozen = nameIdx >= 0 ? columns.slice(0, nameIdx + 1) : [];
   const frozenWidth = frozen.reduce((a, c) => a + widthOf(c), 0);
-  const startIdx = frozenWidth > 520 && nameIdx > 0 ? nameIdx : 0; // cột đầu tiên được cố định
+  const startIdx = frozenWidth > 520 + (showIndex ? 46 : 0) && nameIdx > 0 ? nameIdx : 0; // cột đầu tiên được cố định
   const leftOf = {};
   let accLeft = 0;
   columns.forEach((c, i) => {
@@ -101,7 +105,7 @@ export default function DataTable({ columns, allRows, rows, rowKey, filters, onF
               return (
                 <th
                   key={c.key}
-                  onClick={() => onSortChange && onSortChange(isSorted ? { key: c.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: c.type === 'number' ? 'desc' : 'asc' })}
+                  onClick={() => !c.noSort && onSortChange && onSortChange(isSorted ? { key: c.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: c.type === 'number' ? 'desc' : 'asc' })}
                   className={`${cellBase} font-bold text-gray-700 uppercase cursor-pointer select-none border-b border-r`}
                   style={{ position: 'sticky', top: 0, zIndex: 3, background: headerBg, height: 30, textAlign: c.align || 'left', ...(isFrozen(c) ? { left: leftOf[c.key], zIndex: 6, boxShadow: isLastFrozen(c) ? '2px 0 3px -1px rgba(0,0,0,0.25)' : undefined } : {}) }}
                   title="Bấm để sắp xếp"

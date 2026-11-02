@@ -23,6 +23,7 @@ const crmService = require('./services/crmService');
 const crmRoutes = require('./services/crmRoutes');
 const kitchenOrders = require('./services/kitchenOrders');
 const { itemGroupOf } = require('./services/itemGroup');
+const stockMaterials = require('./services/stockMaterials');
 
 const dev = process.env.NODE_ENV !== 'production';
 const nextApp = next({ dev });
@@ -630,6 +631,31 @@ app.post('/api/bom/upload', upload.single('file'), async (req, res) => {
   }
 });
 
+const STOCK_DEPS = { normalizeString, categorize, subGroupOf, matchDish };
+// Đồng bộ NVL/hàng hóa từ tồn kho CUKCUK vào danh mục NVL của app (ghép theo tên nếu khác mã)
+app.post('/api/materials/sync-stock/:branchId', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const r = await stockMaterials.syncStockMaterials(client, req.params.branchId, STOCK_DEPS);
+    if (r.created || r.mapped) await rebuildInventory(client, req.params.branchId);
+    return res.json({ success: true, data: r });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  } finally { client.release(); }
+});
+
+// Tạo mã hàng mới để mua hàng (không cần có sẵn trong CUKCUK; khi CUKCUK có hàng cùng tên sẽ tự ghép theo tên)
+app.post('/api/materials/create-purchase-item', async (req, res) => {
+  const b = req.body || {};
+  if (!b.branchId) return res.status(400).json({ success: false, message: 'Thiếu chi nhánh' });
+  try {
+    const m = await stockMaterials.createPurchaseItem(pool, STOCK_DEPS, b);
+    return res.json({ success: true, message: m.existing ? 'Hàng đã có trong hệ thống, đã thêm vào danh mục của chi nhánh' : 'Đã tạo mã hàng mới', data: m });
+  } catch (error) {
+    return res.status(error.status || 500).json({ success: false, message: error.message, data: error.data });
+  }
+});
+
 // 5. API Lấy danh sách NVL theo chi nhánh
 app.get('/api/materials/:branchId', async (req, res) => {
   const { branchId } = req.params;
@@ -637,7 +663,8 @@ app.get('/api/materials/:branchId', async (req, res) => {
     const result = await pool.query(`
       SELECT * FROM raw_materials rm
       WHERE rm.is_active IS NOT FALSE
-        AND EXISTS (SELECT 1 FROM bill_of_materials b WHERE b.material_id = rm.material_id AND b.branch_id = $1)
+        AND (EXISTS (SELECT 1 FROM bill_of_materials b WHERE b.material_id = rm.material_id AND b.branch_id = $1)
+             OR EXISTS (SELECT 1 FROM stock_code_map sm WHERE sm.material_id = rm.material_id AND sm.branch_id = $1))
       ORDER BY rm.category, rm.material_name
     `, [branchId]);
     return res.json({ success: true, data: result.rows });
@@ -2403,10 +2430,16 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
 
   const client = await pool.connect();
   try {
+    // đưa toàn bộ NVL/hàng hóa trong tồn kho CUKCUK vào danh mục (kể cả hàng không có bán), ghép theo tên nếu khác mã
+    try {
+      const sync = await stockMaterials.syncStockMaterials(client, branchId, STOCK_DEPS);
+      if (sync.created || sync.mapped) await rebuildInventory(client, branchId);
+    } catch (e) { console.error('Sync stock materials error:', e.message); }
     const materialsRes = await client.query(`
       SELECT * FROM raw_materials rm
       WHERE rm.is_active IS NOT FALSE AND rm.is_merged IS NOT TRUE
-        AND EXISTS (SELECT 1 FROM bill_of_materials b WHERE b.material_id = rm.material_id AND b.branch_id = $1)
+        AND (EXISTS (SELECT 1 FROM bill_of_materials b WHERE b.material_id = rm.material_id AND b.branch_id = $1)
+             OR EXISTS (SELECT 1 FROM stock_code_map sm WHERE sm.material_id = rm.material_id AND sm.branch_id = $1))
     `, [branchId]);
     const materials = materialsRes.rows;
     if (materials.length === 0) {

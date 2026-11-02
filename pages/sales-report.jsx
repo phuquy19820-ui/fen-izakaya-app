@@ -152,6 +152,7 @@ export default function SalesReport() {
             <DataTable
               columns={dishColumns.map((c) => (c.key === 'idx' ? { ...c, render: (r) => dishVisible.indexOf(r) + 1 } : c))}
               allRows={dishRows}
+              showIndex={false}
               rows={dishVisible}
               rowKey={(r) => r.code}
               filters={dishFilters}

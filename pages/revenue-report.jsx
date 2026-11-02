@@ -496,7 +496,7 @@ export default function RevenueReport() {
                     ))}
                   </div>
                   {speedRows.length === 0 ? <p className="bg-white border rounded p-4 text-gray-600">Không có món nào.</p> : (
-                    <DataTable columns={speedCols} allRows={speedRows} rows={speedVisible} rowKey={(r) => r.code} filters={speedFilters} onFiltersChange={setSpeedFilters} sort={speedSort} onSortChange={setSpeedSort} maxHeight="calc(100vh - 380px)" />
+                    <DataTable showIndex={false} columns={speedCols} allRows={speedRows} rows={speedVisible} rowKey={(r) => r.code} filters={speedFilters} onFiltersChange={setSpeedFilters} sort={speedSort} onSortChange={setSpeedSort} maxHeight="calc(100vh - 380px)" />
                   )}
                 </div>
               )}

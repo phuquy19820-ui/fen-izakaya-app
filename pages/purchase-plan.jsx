@@ -5,6 +5,7 @@ import BranchNav from '../components/BranchNav';
 import DataTable, { filterRows, sortRows } from '../components/DataTable';
 import PurchaseOrderModal from '../components/PurchaseOrderModal';
 import DrinkPlanPanel from '../components/DrinkPlanPanel';
+import NewPurchaseItemModal from '../components/NewPurchaseItemModal';
 
 const CATEGORY_LABELS = {
   FRESH_MEAT: 'Thịt tươi', SEAFOOD: 'Hải sản', VEGETABLE: 'Rau củ quả', HERB_SEASONING: 'Thảo mộc',
@@ -30,6 +31,8 @@ export default function PurchasePlanMisaUI() {
   const [planId, setPlanId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
+  const [newItemOpen, setNewItemOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
   const [matSup, setMatSup] = useState(null);
 
@@ -99,6 +102,24 @@ export default function PurchasePlanMisaUI() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  // Sau khi thêm mã mới / đồng bộ NVL từ tồn kho: tạo lại kế hoạch để các mã mới xuất hiện
+  const refreshAfterChange = async (text) => {
+    const dirty = Object.keys(adjustments).length > 0 || Object.keys(priceEdits).length > 0;
+    if (dirty && !window.confirm(text + ' Tạo lại kế hoạch sẽ làm mất các số lượng/đơn giá bạn đã sửa mà chưa lưu. Tiếp tục tạo lại?')) return;
+    await generatePurchasePlan();
+  };
+
+  const syncStock = async () => {
+    if (!branch) return;
+    try {
+      setSyncing(true);
+      const j = await (await fetch(`/api/materials/sync-stock/${branch}`, { method: 'POST' })).json();
+      if (!j.success) { alert('❌ ' + j.message); return; }
+      const d = j.data;
+      await refreshAfterChange(`✅ Đã đồng bộ NVL từ tồn kho CUKCUK: ${d.total} mặt hàng — đã có ${d.kept}, ghép theo tên ${d.mapped}, tạo mã mới ${d.created}.`);
+    } catch (e) { alert('❌ ' + e.message); } finally { setSyncing(false); }
   };
 
   const savePlan = async () => {
@@ -222,6 +243,8 @@ export default function PurchasePlanMisaUI() {
             <p className="text-blue-200">Chi nhánh: {currentBranch?.branch_name || 'Đang tải...'}</p>
           </div>
           {cycleType !== 'DRINKS' && <div className="absolute flex gap-2 flex-wrap justify-end" style={{ right: 24, top: 8 }}>
+            <button onClick={() => setNewItemOpen(true)} className="bg-white text-green-800 hover:bg-green-50 px-3 py-1.5 rounded font-bold">➕ Tạo mã mới</button>
+            <button onClick={syncStock} disabled={syncing} title="Đưa toàn bộ NVL/hàng hóa có trong tồn kho CUKCUK vào kế hoạch (kể cả hàng không có bán), ghép theo tên nếu khác mã" className="bg-white text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded font-bold disabled:opacity-50">{syncing ? '⏳ Đang đồng bộ…' : '🔄 Đồng bộ NVL từ tồn kho'}</button>
             <button onClick={generatePurchasePlan} disabled={generating} className="bg-yellow-600 hover:bg-yellow-700 px-3 py-1.5 rounded font-bold disabled:opacity-50">
               {generating ? '⏳ Đang tính...' : '🔄 Tạo Kế Hoạch'}
             </button>
@@ -306,6 +329,8 @@ export default function PurchasePlanMisaUI() {
         materialSuppliers={matSup}
         onCompanySaved={(name) => setCurrentBranch((b) => (b ? { ...b, buyer_company: name } : b))}
       />
+      <NewPurchaseItemModal open={newItemOpen} branchId={branch} onClose={() => setNewItemOpen(false)}
+        onCreated={(m, msg) => { setNewItemOpen(false); refreshAfterChange(`✅ ${msg}: ${m.material_name} (mã ${m.material_id}).`); }} />
     </>
   );
 }
