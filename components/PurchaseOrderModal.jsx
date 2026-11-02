@@ -2,77 +2,66 @@ import React, { useState, useEffect, useMemo } from 'react';
 import SearchSelect from './SearchSelect';
 
 const money = (n) => Math.round(Number(n) || 0).toLocaleString('vi-VN');
+const num = (n) => (Number(n) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
 const esc = (s) => String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-// lines: [{ materialId?, code, name, group, unit, qty, price }]
+// Cửa sổ kiểm tra và xuất đơn đặt hàng gửi NCC.
+// lines: [{ materialId?, code, name, group, unit, qty, price }] — các NVL đã chọn đặt mua, hiện thành bảng để kiểm tra / sửa / bỏ bớt.
 // suppliers: danh sách nhà cung cấp; materialSuppliers: { [material_id]: [{ supplier_code, price, last_date }] }
-export default function PurchaseOrderModal({ open, onClose, branch, lines, cycleLabel, onCompanySaved, suppliers = [], materialSuppliers = null, onOrderCreated, onNewSupplier }) {
+// onSavePlan(edits): lưu kế hoạch mua hàng (kèm các số lượng/đơn giá đã sửa trong cửa sổ này); trả về true nếu lưu được.
+export default function PurchaseOrderModal({ open, onClose, branch, lines, cycleLabel, onCompanySaved, suppliers = [], materialSuppliers = null, onOrderCreated, onNewSupplier, onSavePlan }) {
   const [buyer, setBuyer] = useState('');
   const [supplierCode, setSupplierCode] = useState('');
   const [supplierText, setSupplierText] = useState('');
-  const [onlySupplier, setOnlySupplier] = useState(true);
-  const [useSupplierPrice, setUseSupplierPrice] = useState(false);
   const [delivery, setDelivery] = useState('');
   const [note, setNote] = useState('');
   const [showPrice, setShowPrice] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [order, setOrder] = useState(null);
+  const [rows, setRows] = useState([]);
 
   useEffect(() => {
     if (!open) return;
     let remembered = '';
     try { remembered = localStorage.getItem('fen_buyer_company') || ''; } catch (e) { /* bỏ qua */ }
     setBuyer((branch && branch.buyer_company) || remembered);
-    setError('');
+    setError(''); setInfo('');
     setOrder(null);
-  }, [open, branch]);
+    setRows((lines || []).map((l) => ({ ...l, rowKey: l.materialId || l.code, origQty: l.qty, origPrice: l.price })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const supplier = suppliers.find((s) => s.code === supplierCode) || null;
-
   const supplierOptions = useMemo(
-    () => suppliers
-      .filter((s) => !s.inactive)
-      .map((s) => ({ value: s.code, label: s.name, hint: [s.category, Number(s.item_count) ? `${s.item_count} NVL đã mua` : ''].filter(Boolean).join(' · ') })),
+    () => suppliers.filter((s) => !s.inactive).map((s) => ({ value: s.code, label: s.name, hint: [s.is_manual ? 'mới tạo' : '', s.category, Number(s.item_count) ? `${s.item_count} NVL đã mua` : ''].filter(Boolean).join(' · ') })),
     [suppliers]
   );
+  const hitOf = (l) => (supplier && materialSuppliers && l.materialId ? (materialSuppliers[l.materialId] || []).find((s) => s.supplier_code === supplier.code) : null);
 
-  const effLines = useMemo(() => {
-    let out = lines;
-    if (supplier && materialSuppliers && onlySupplier) {
-      out = out.filter((l) => l.materialId && (materialSuppliers[l.materialId] || []).some((s) => s.supplier_code === supplier.code));
-    }
-    if (supplier && materialSuppliers && useSupplierPrice) {
-      out = out.map((l) => {
-        const hit = l.materialId && (materialSuppliers[l.materialId] || []).find((s) => s.supplier_code === supplier.code);
-        return hit && hit.price > 0 ? { ...l, price: hit.price } : l;
-      });
-    }
-    return out;
-  }, [lines, supplier, materialSuppliers, onlySupplier, useSupplierPrice]);
+  const effLines = useMemo(() => rows.filter((l) => (Number(l.qty) || 0) > 0).map((l) => ({ ...l, qty: Number(l.qty) || 0, price: Number(l.price) || 0 })), [rows]);
+  const notBought = supplier && materialSuppliers ? rows.filter((l) => !hitOf(l)).length : 0;
 
   if (!open) return null;
 
-  const excluded = lines.length - effLines.length;
   const total = effLines.reduce((s, l) => s + l.qty * l.price, 0);
   const supplierName = supplier ? supplier.name : supplierText.trim();
+  const setRow = (key, patch) => setRows((rs) => rs.map((r) => (r.rowKey === key ? { ...r, ...patch } : r)));
 
   const rememberCompany = async () => {
     const name = buyer.trim();
     try { localStorage.setItem('fen_buyer_company', name); } catch (e) { /* bỏ qua */ }
     if (branch && name !== (branch.buyer_company || '')) {
-      await fetch(`/api/branches/${branch.branch_id}/buyer`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ buyerCompany: name })
-      });
+      await fetch(`/api/branches/${branch.branch_id}/buyer`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ buyerCompany: name }) });
       if (onCompanySaved) onCompanySaved(name);
     }
   };
 
   const validate = () => {
     if (!buyer.trim()) { setError('Nhập tên công ty mua (chỉ cần nhập một lần, app sẽ nhớ).'); return false; }
-    if (effLines.length === 0) { setError('Không có NVL nào có số lượng mua > 0 trong danh sách (đang lọc).'); return false; }
+    if (!supplierName) { setError('Chọn nhà cung cấp (hoặc nhập tên) để gửi đơn.'); return false; }
+    if (effLines.length === 0) { setError('Chưa có NVL nào có số lượng đặt > 0 trong bảng.'); return false; }
     setError('');
     return true;
   };
@@ -84,13 +73,24 @@ export default function PurchaseOrderModal({ open, onClose, branch, lines, cycle
     lines: effLines.map((l) => ({ code: l.code, name: l.name, group: l.group, unit: l.unit, qty: l.qty, price: l.price }))
   });
 
+  // Lưu kế hoạch mua hàng (gồm cả số lượng / đơn giá sửa trong cửa sổ này)
+  const saveToPlan = async () => {
+    if (!onSavePlan) return true;
+    const edits = rows.filter((l) => l.materialId).map((l) => ({ materialId: l.materialId, qty: Number(l.qty) || 0, price: Number(l.price) || 0, qtyChanged: (Number(l.qty) || 0) !== (Number(l.origQty) || 0), priceChanged: (Number(l.price) || 0) !== (Number(l.origPrice) || 0) }));
+    const ok = await onSavePlan(edits);
+    if (ok) setRows((rs) => rs.map((r) => ({ ...r, origQty: r.qty, origPrice: r.price })));
+    return ok;
+  };
+  const savePlanClick = async () => {
+    try { setBusy(true); setError(''); const ok = await saveToPlan(); setInfo(ok ? '✅ Đã lưu kế hoạch mua hàng.' : ''); if (!ok) setError('Không lưu được kế hoạch. Hãy bấm "Tạo Kế Hoạch" trước.'); } finally { setBusy(false); }
+  };
+
   // Cùng nội dung xuất lần nữa (Excel rồi In) thì dùng lại số đơn, nội dung đổi thì cấp số mới
   const signature = JSON.stringify([effLines.map((l) => [l.name, l.qty, l.price]), supplierCode, supplierName, buyer.trim(), delivery, note, showPrice]);
   const ensureOrder = async () => {
     if (order && order.signature === signature) return order.orderNo;
     const res = await fetch('/api/purchase-orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ branchId: branch.branch_id, supplierCode, supplierName, ...payload(null) })
     });
     const json = await res.json();
@@ -103,29 +103,20 @@ export default function PurchaseOrderModal({ open, onClose, branch, lines, cycle
   const downloadExcel = async () => {
     if (!validate()) return;
     try {
-      setBusy(true);
+      setBusy(true); setInfo('');
       await rememberCompany();
+      if (onSavePlan) await saveToPlan(); // lưu kế hoạch cùng lúc để đơn và kế hoạch luôn khớp nhau
       const orderNo = await ensureOrder();
-      const res = await fetch('/api/purchase-plans/export-xlsx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload(orderNo))
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.message || 'Xuất file thất bại');
-      }
+      const res = await fetch('/api/purchase-plans/export-xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload(orderNo)) });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.message || 'Xuất file thất bại'); }
       const blob = await res.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `don-mua-hang-${orderNo.replace(/\//g, '-')}.xlsx`;
       a.click();
       URL.revokeObjectURL(a.href);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
+      setInfo(`✅ Đã xuất file Excel đơn ${orderNo}${onSavePlan ? ' và lưu kế hoạch mua hàng' : ''}.`);
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
   };
 
   const printOrder = async () => {
@@ -176,70 +167,103 @@ ${showPrice ? `<tfoot><tr><td colspan="6" class="r"><b>TỔNG CỘNG:</b></td><t
     w.document.close();
   };
 
-  const hasMap = !!materialSuppliers;
 
+  const th = 'border px-2 py-1 bg-gray-100 text-left font-bold';
+  const td = 'border px-2 py-1';
   return (
-    <div className="fixed inset-0 z-50 bg-black bg-opacity-40 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 space-y-3 text-sm max-h-screen overflow-auto">
-        <h3 className="text-lg font-bold text-gray-800">📤 Xuất đơn mua hàng</h3>
-        <p className="text-gray-600">
-          {effLines.length} mặt hàng{showPrice ? ` · tổng ${money(total)} đ` : ''}
-          {excluded > 0 && <span className="text-orange-600"> · {excluded} NVL không thuộc nhà cung cấp này bị loại</span>}
-        </p>
-        {order && <p className="bg-green-50 border border-green-300 text-green-800 rounded px-2 py-1 font-bold">Số đơn: {order.orderNo}</p>}
-        <div>
-          <label className="block font-semibold mb-1">Tên công ty mua *</label>
-          <input value={buyer} onChange={(e) => setBuyer(e.target.value)} className="w-full border p-2 rounded" placeholder="VD: Công ty TNHH ... " />
-          <p className="text-xs text-gray-500 mt-1">Nhập một lần, app nhớ cho chi nhánh {branch ? branch.branch_name : ''} (và gợi ý sẵn cho chi nhánh khác).</p>
+    <div className="fixed inset-0 z-50 bg-black bg-opacity-40 flex items-center justify-center p-3" style={{ zIndex: 85 }}>
+      <div className="bg-white rounded-lg shadow-xl w-full p-5 space-y-3 text-xs max-h-screen overflow-auto" style={{ maxWidth: 1180 }}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-gray-800">📤 Kiểm tra đơn đặt hàng gửi nhà cung cấp</h3>
+            <p className="text-gray-600">Bước 1: chọn nhà cung cấp · Bước 2: kiểm tra bảng NVL (sửa số lượng, đơn giá hoặc bỏ bớt) · Bước 3: <b>Lưu kế hoạch mua hàng</b> · Bước 4: <b>Xuất Excel</b> gửi NCC.</p>
+          </div>
+          {order && <span className="bg-green-50 border border-green-300 text-green-800 rounded px-2 py-1 font-bold whitespace-nowrap">Số đơn: {order.orderNo}</span>}
         </div>
-        <div>
-          <label className="block font-semibold mb-1">Nhà cung cấp</label>
-          {suppliers.length > 0 ? (
-            <div className="flex gap-2">
-              <SearchSelect className="flex-1" options={supplierOptions} value={supplierCode} onChange={setSupplierCode} placeholder="🔍 Chọn nhà cung cấp…" />
-              {supplierCode && <button type="button" onClick={() => setSupplierCode('')} className="px-2 border rounded text-red-600 font-bold" title="Bỏ chọn">✕</button>}
-              {onNewSupplier && <button type="button" onClick={onNewSupplier} className="px-2 border rounded text-green-700 font-bold whitespace-nowrap" title="Tạo nhà cung cấp mới">➕ NCC mới</button>}
-            </div>
-          ) : (
-            <p className="text-xs text-gray-500">Chưa có danh sách nhà cung cấp. Bấm "Đồng bộ doanh số từ CUKCUK" để lấy từ CUKCUK, hoặc nhập tên bên dưới.</p>
-          )}
-          {!supplier && (
-            <input value={supplierText} onChange={(e) => setSupplierText(e.target.value)} className="w-full border p-2 rounded mt-2" placeholder="Hoặc nhập tên nhà cung cấp…" />
-          )}
-          {supplier && (
-            <div className="mt-2 text-xs text-gray-600 bg-gray-50 rounded p-2 space-y-0.5">
-              {supplier.category && <p>Nhóm: {supplier.category}</p>}
-              {supplier.phone && <p>Điện thoại: {supplier.phone}</p>}
-              {supplier.address && <p>Địa chỉ: {supplier.address}</p>}
-              {!supplier.phone && !supplier.address && <p>CUKCUK chưa có điện thoại/địa chỉ cho nhà cung cấp này.</p>}
-            </div>
-          )}
-          {supplier && hasMap && (
-            <div className="mt-2 space-y-1">
-              <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={onlySupplier} onChange={(e) => setOnlySupplier(e.target.checked)} /> Chỉ lấy NVL từng mua của nhà cung cấp này</label>
-              <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={useSupplierPrice} onChange={(e) => setUseSupplierPrice(e.target.checked)} /> Dùng đơn giá mua gần nhất của nhà cung cấp này</label>
-            </div>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-3">
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="md:col-span-2">
+            <label className="block font-semibold mb-1">Nhà cung cấp *</label>
+            {suppliers.length > 0 ? (
+              <div className="flex gap-2">
+                <SearchSelect className="flex-1" options={supplierOptions} value={supplierCode} onChange={setSupplierCode} placeholder="🔍 Chọn nhà cung cấp…" />
+                {supplierCode && <button type="button" onClick={() => setSupplierCode('')} className="px-2 border rounded text-red-600 font-bold" title="Bỏ chọn">✕</button>}
+                {onNewSupplier && <button type="button" onClick={onNewSupplier} className="px-2 border rounded text-green-700 font-bold whitespace-nowrap">➕ NCC mới</button>}
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <p className="text-gray-500 flex-1">Chưa có danh sách nhà cung cấp.</p>
+                {onNewSupplier && <button type="button" onClick={onNewSupplier} className="px-2 border rounded text-green-700 font-bold whitespace-nowrap">➕ NCC mới</button>}
+              </div>
+            )}
+            {!supplier && <input value={supplierText} onChange={(e) => setSupplierText(e.target.value)} className="w-full border p-2 rounded mt-2" placeholder="Hoặc nhập tên nhà cung cấp…" />}
+            {supplier && <div className="mt-1 text-gray-600">{[supplier.category, supplier.phone, supplier.address].filter(Boolean).join(' · ') || 'Chưa có điện thoại/địa chỉ cho NCC này.'}</div>}
+          </div>
+          <div>
+            <label className="block font-semibold mb-1">Tên công ty mua *</label>
+            <input value={buyer} onChange={(e) => setBuyer(e.target.value)} className="w-full border p-2 rounded" placeholder="VD: Công ty TNHH ..." />
+          </div>
           <div>
             <label className="block font-semibold mb-1">Ngày giao yêu cầu</label>
             <input type="date" value={delivery} onChange={(e) => setDelivery(e.target.value)} className="w-full border p-2 rounded" />
           </div>
-          <div>
+          <div className="md:col-span-3">
             <label className="block font-semibold mb-1">Ghi chú</label>
             <input value={note} onChange={(e) => setNote(e.target.value)} className="w-full border p-2 rounded" placeholder="VD: Giao trước 8h sáng" />
           </div>
+          <label className="flex items-end gap-2 cursor-pointer pb-2"><input type="checkbox" checked={showPrice} onChange={(e) => setShowPrice(e.target.checked)} /> Hiện đơn giá, thành tiền trong đơn</label>
         </div>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={showPrice} onChange={(e) => setShowPrice(e.target.checked)} /> Hiện đơn giá và thành tiền trong đơn
-        </label>
-        <p className="text-xs text-gray-500">Mỗi lần xuất với nội dung mới sẽ được cấp số đơn kế tiếp dạng 001/{String(new Date().getMonth() + 1).padStart(2, '0')}/{new Date().getFullYear()} (về 001 khi sang tháng mới).</p>
-        {error && <p className="text-red-700">❌ {error}</p>}
-        <div className="flex justify-end gap-2 pt-2">
+
+        <div className="flex flex-wrap items-center gap-2">
+          <b className="text-sm">Danh sách NVL đặt mua ({rows.length} dòng · {effLines.length} dòng có số lượng{showPrice ? ` · tổng ${money(total)} đ` : ''})</b>
+          {supplier && materialSuppliers && notBought > 0 && (
+            <button onClick={() => setRows((rs) => rs.filter((l) => hitOf(l)))} className="px-2 py-1 rounded border font-bold text-orange-700">Bỏ {notBought} NVL NCC này chưa từng mua</button>
+          )}
+          {supplier && materialSuppliers && (
+            <button onClick={() => setRows((rs) => rs.map((l) => { const h = hitOf(l); return h && h.price > 0 ? { ...l, price: h.price } : l; }))} className="px-2 py-1 rounded border font-bold text-blue-700">Dùng đơn giá mua gần nhất của NCC này</button>
+          )}
+          <button onClick={() => setRows((rs) => rs.filter((l) => (Number(l.qty) || 0) > 0))} className="px-2 py-1 rounded border font-bold">Bỏ các dòng chưa có số lượng</button>
+        </div>
+
+        <div className="border rounded overflow-auto" style={{ maxHeight: '42vh' }}>
+          <table className="w-full border-collapse">
+            <thead style={{ position: 'sticky', top: 0 }}>
+              <tr><th className={th} style={{ width: 40 }}>STT</th><th className={th} style={{ width: 110 }}>Mã NVL</th><th className={th}>Tên nguyên vật liệu</th><th className={th} style={{ width: 120 }}>Nhóm</th><th className={th} style={{ width: 56 }}>ĐVT</th>
+                <th className={th} style={{ width: 96 }}>SL đặt</th><th className={th} style={{ width: 110 }}>Đơn giá (đ)</th><th className={th} style={{ width: 110 }}>Thành tiền (đ)</th><th className={th} style={{ width: 170 }}>NCC này đã từng mua?</th><th className={th} style={{ width: 34 }}></th></tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && <tr><td colSpan={10} className="p-6 text-center text-gray-500">Chưa có NVL nào. Đóng cửa sổ, tick chọn các NVL cần đặt trong bảng Kế hoạch mua rồi mở lại.</td></tr>}
+              {rows.map((l, i) => {
+                const h = hitOf(l);
+                const q = Number(l.qty) || 0;
+                return (
+                  <tr key={l.rowKey} style={q <= 0 ? { background: '#fff7ed' } : undefined}>
+                    <td className={td + ' text-center text-gray-500'}>{i + 1}</td>
+                    <td className={td + ' font-mono text-blue-700'}>{l.code}</td>
+                    <td className={td + ' font-medium'}>{l.name}</td>
+                    <td className={td}>{l.group}</td>
+                    <td className={td + ' text-center'}>{l.unit}</td>
+                    <td className={td}><input type="number" step="any" min="0" value={l.qty} onChange={(e) => setRow(l.rowKey, { qty: e.target.value })} className="w-full text-right font-bold border rounded bg-green-50" style={{ height: 24 }} /></td>
+                    <td className={td}><input type="number" step="any" min="0" value={l.price} onChange={(e) => setRow(l.rowKey, { price: e.target.value })} className="w-full text-right border rounded" style={{ height: 24 }} /></td>
+                    <td className={td + ' text-right font-bold'}>{money(q * (Number(l.price) || 0))}</td>
+                    <td className={td} style={{ color: h ? '#16a34a' : '#c2410c' }}>{!supplier ? '—' : !materialSuppliers ? '—' : h ? `✓ Từng mua${h.price ? ' · giá ' + money(h.price) : ''}` : '⚠ Chưa từng mua NCC này'}</td>
+                    <td className={td + ' text-center'}><button onClick={() => setRows((rs) => rs.filter((r) => r.rowKey !== l.rowKey))} className="text-red-600 font-bold" title="Bỏ NVL này khỏi đơn">✕</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            {showPrice && <tfoot><tr className="bg-gray-100 font-bold"><td className={td + ' text-right'} colSpan={7}>TỔNG CỘNG ({effLines.length} mặt hàng):</td><td className={td + ' text-right'}>{money(total)}</td><td className={td} colSpan={2}></td></tr></tfoot>}
+          </table>
+        </div>
+
+        <p className="text-gray-500">Số đơn dạng 001/{String(new Date().getMonth() + 1).padStart(2, '0')}/{new Date().getFullYear()} (về 001 khi sang tháng mới), chỉ cấp khi bạn xuất Excel hoặc in. Bấm "Xuất Excel" cũng tự lưu kế hoạch để đơn và kế hoạch khớp nhau. Dòng chưa có số lượng sẽ không đưa vào đơn.</p>
+        {error && <p className="text-red-700 font-bold">❌ {error}</p>}
+        {info && <p className="text-green-700 font-bold">{info}</p>}
+        <div className="flex flex-wrap justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300 font-bold">Đóng</button>
           <button onClick={printOrder} disabled={busy} className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-800 text-white font-bold disabled:opacity-50">🖨 In / Lưu PDF</button>
-          <button onClick={downloadExcel} disabled={busy} className="px-4 py-2 rounded bg-green-600 hover:bg-green-700 text-white font-bold disabled:opacity-50">{busy ? 'Đang xuất…' : '⬇ Tải Excel'}</button>
+          {onSavePlan && <button onClick={savePlanClick} disabled={busy} className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold disabled:opacity-50">💾 Lưu kế hoạch mua hàng</button>}
+          <button onClick={downloadExcel} disabled={busy} className="px-4 py-2 rounded bg-green-600 hover:bg-green-700 text-white font-bold disabled:opacity-50">{busy ? 'Đang xử lý…' : '⬇ Xuất Excel đơn hàng gửi NCC'}</button>
         </div>
       </div>
     </div>

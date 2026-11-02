@@ -190,6 +190,8 @@ async function initializeDatabase() {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, code)
       )`);
       migrations.push('ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS is_manual BOOLEAN DEFAULT FALSE');
+      migrations.push('ALTER TABLE raw_materials ADD COLUMN IF NOT EXISTS is_manual BOOLEAN DEFAULT FALSE');
+      migrations.push("UPDATE raw_materials SET is_manual = TRUE WHERE is_manual IS NOT TRUE AND material_id IN (SELECT material_id FROM stock_code_map WHERE cukcuk_code = material_id AND match_type = 'MANUAL' AND material_id IS NOT NULL)");
       migrations.push(`CREATE TABLE IF NOT EXISTS supplier_purchases (
         branch_id VARCHAR(50) NOT NULL, detail_id VARCHAR(80) NOT NULL, ref_no VARCHAR(60), purchase_date DATE NOT NULL,
         supplier_code VARCHAR(60), supplier_name VARCHAR(255), item_code VARCHAR(100) NOT NULL, item_name VARCHAR(255),
@@ -656,6 +658,60 @@ app.post('/api/materials/sync-stock/:branchId', async (req, res) => {
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   } finally { client.release(); }
+});
+
+// Danh sách / sửa / xóa NVL do người dùng tạo trong app
+app.get('/api/materials/manual/:branchId', async (req, res) => {
+  try {
+    const rows = (await pool.query(`
+      SELECT rm.material_id, rm.material_name, rm.unit_purchase, rm.unit_cost, rm.sub_group, rm.purchase_cycle,
+             (SELECT string_agg(m2.cukcuk_code, ', ') FROM stock_code_map m2 WHERE m2.branch_id = $1 AND m2.material_id = rm.material_id AND m2.cukcuk_code <> rm.material_id) AS cukcuk_codes
+      FROM raw_materials rm
+      WHERE rm.is_manual IS TRUE AND EXISTS (SELECT 1 FROM stock_code_map m WHERE m.branch_id = $1 AND m.material_id = rm.material_id)
+      ORDER BY rm.material_name`, [req.params.branchId])).rows;
+    rows.forEach((r) => { r.item_group = materialGroupOf(r.material_id, r.material_name, r.sub_group); });
+    return res.json({ success: true, data: rows });
+  } catch (error) { return res.status(500).json({ success: false, message: error.message }); }
+});
+
+app.put('/api/materials/manual/:branchId/:id', async (req, res) => {
+  const { id } = req.params;
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ success: false, message: 'Thiếu tên hàng' });
+  try {
+    const cur = (await pool.query('SELECT is_manual, material_name FROM raw_materials WHERE material_id = $1', [id])).rows[0];
+    if (!cur) return res.status(404).json({ success: false, message: 'Không tìm thấy mã hàng' });
+    if (!cur.is_manual) return res.status(403).json({ success: false, message: 'Chỉ sửa được mã hàng do bạn tạo trong app' });
+    const norm = normalizeString(name);
+    const dup = (await pool.query('SELECT material_id, material_name FROM raw_materials WHERE normalized_name = $1 AND material_id <> $2 AND is_active IS NOT FALSE AND is_merged IS NOT TRUE LIMIT 1', [norm, id])).rows[0];
+    if (dup) return res.status(409).json({ success: false, message: `Đã có hàng trùng tên: ${dup.material_name} (mã ${dup.material_id})` });
+    const group = ['food', 'drink', 'ccdc'].includes(b.group) ? b.group : null;
+    const sub = group === 'drink' ? 'Đồ uống' : group === 'ccdc' ? 'CCDC' : null;
+    const cycle = ['FRESH_3DAYS', 'WEEKLY_7DAYS'].includes(b.cycle) ? b.cycle : null;
+    const unit = String(b.unit || '').trim().substring(0, 20) || null;
+    await pool.query(`UPDATE raw_materials SET material_name = $2, normalized_name = $3, unit_purchase = COALESCE($4, unit_purchase), unit_recipe = COALESCE($4, unit_recipe),
+        unit_cost = $5, price_source = CASE WHEN $5 > 0 THEN 'FILE' ELSE price_source END, sub_group = COALESCE($6, sub_group), purchase_cycle = COALESCE($7, purchase_cycle), updated_at = NOW()
+      WHERE material_id = $1`, [id, name.substring(0, 255), norm.substring(0, 255), unit, Math.max(0, Number(b.price) || 0), sub, cycle]);
+    await pool.query('UPDATE stock_code_map SET cukcuk_name = $2 WHERE cukcuk_code = $1', [id, name.substring(0, 255)]);
+    return res.json({ success: true, message: 'Đã lưu mã hàng' });
+  } catch (error) { return res.status(500).json({ success: false, message: error.message }); }
+});
+
+app.delete('/api/materials/manual/:branchId/:id', async (req, res) => {
+  const { branchId, id } = req.params;
+  try {
+    const cur = (await pool.query('SELECT is_manual FROM raw_materials WHERE material_id = $1', [id])).rows[0];
+    if (!cur) return res.status(404).json({ success: false, message: 'Không tìm thấy mã hàng' });
+    if (!cur.is_manual) return res.status(403).json({ success: false, message: 'Chỉ xóa được mã hàng do bạn tạo trong app' });
+    const linked = (await pool.query('SELECT cukcuk_code FROM stock_code_map WHERE material_id = $1 AND cukcuk_code <> $1', [id])).rows;
+    if (linked.length) return res.status(409).json({ success: false, message: `Mã này đã ghép với hàng CUKCUK (${linked.map((r) => r.cukcuk_code).slice(0, 3).join(', ')}) nên không xóa được. Hãy sửa tên/đơn vị thay vì xóa.` });
+    const inBom = Number((await pool.query('SELECT COUNT(*) AS n FROM bill_of_materials WHERE material_id = $1', [id])).rows[0].n);
+    if (inBom > 0) return res.status(409).json({ success: false, message: `Mã này đang dùng trong định lượng của ${inBom} món nên không xóa được` });
+    await pool.query('DELETE FROM stock_code_map WHERE cukcuk_code = $1 AND material_id = $1', [id]);
+    await pool.query('DELETE FROM raw_materials WHERE material_id = $1', [id]);
+    return res.json({ success: true, message: 'Đã xóa mã hàng' });
+  } catch (error) { return res.status(500).json({ success: false, message: error.message }); }
 });
 
 // Tạo mã hàng mới để mua hàng (không cần có sẵn trong CUKCUK; khi CUKCUK có hàng cùng tên sẽ tự ghép theo tên)
@@ -2058,6 +2114,37 @@ app.post('/api/suppliers/create', async (req, res) => {
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
+});
+
+// Sửa / xóa nhà cung cấp do người dùng tạo trong app (NCC lấy từ CUKCUK không sửa/xóa ở đây vì sẽ bị đồng bộ ghi đè)
+app.put('/api/suppliers/manual/:branchId/:code', async (req, res) => {
+  const { branchId, code } = req.params;
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ success: false, message: 'Thiếu tên nhà cung cấp' });
+  try {
+    const cur = (await pool.query('SELECT is_manual FROM suppliers WHERE branch_id = $1 AND code = $2', [branchId, code])).rows[0];
+    if (!cur) return res.status(404).json({ success: false, message: 'Không tìm thấy nhà cung cấp' });
+    if (!cur.is_manual) return res.status(403).json({ success: false, message: 'Chỉ sửa được NCC do bạn tạo trong app; NCC lấy từ CUKCUK được đồng bộ tự động' });
+    const dup = (await pool.query('SELECT code, name FROM suppliers WHERE branch_id = $1 AND code <> $2', [branchId, code])).rows.find((r) => normalizeString(r.name) === normalizeString(name));
+    if (dup) return res.status(409).json({ success: false, message: `Đã có nhà cung cấp trùng tên: ${dup.name} (mã ${dup.code})` });
+    await pool.query(`UPDATE suppliers SET name = $3, phone = $4, address = $5, tax_code = $6, contact = $7, category = $8, updated_at = NOW() WHERE branch_id = $1 AND code = $2`,
+      [branchId, code, name.substring(0, 255), String(b.phone || '').substring(0, 60), String(b.address || '').substring(0, 500), String(b.tax || '').substring(0, 60), String(b.contact || '').substring(0, 255), String(b.category || '').substring(0, 120)]);
+    return res.json({ success: true, message: 'Đã lưu nhà cung cấp' });
+  } catch (error) { return res.status(500).json({ success: false, message: error.message }); }
+});
+
+app.delete('/api/suppliers/manual/:branchId/:code', async (req, res) => {
+  const { branchId, code } = req.params;
+  try {
+    const cur = (await pool.query('SELECT is_manual FROM suppliers WHERE branch_id = $1 AND code = $2', [branchId, code])).rows[0];
+    if (!cur) return res.status(404).json({ success: false, message: 'Không tìm thấy nhà cung cấp' });
+    if (!cur.is_manual) return res.status(403).json({ success: false, message: 'Chỉ xóa được NCC do bạn tạo trong app' });
+    const used = Number((await pool.query('SELECT COUNT(*) AS n FROM supplier_purchases WHERE branch_id = $1 AND supplier_code = $2', [branchId, code])).rows[0].n);
+    if (used > 0) return res.status(409).json({ success: false, message: `NCC này đã có ${used} dòng mua hàng nên không xóa được` });
+    await pool.query('DELETE FROM suppliers WHERE branch_id = $1 AND code = $2', [branchId, code]);
+    return res.json({ success: true, message: 'Đã xóa nhà cung cấp' });
+  } catch (error) { return res.status(500).json({ success: false, message: error.message }); }
 });
 
 app.get('/api/suppliers/:branchId', async (req, res) => {

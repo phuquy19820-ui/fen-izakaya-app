@@ -7,6 +7,7 @@ import PurchaseOrderModal from '../components/PurchaseOrderModal';
 import DrinkPlanPanel from '../components/DrinkPlanPanel';
 import NewPurchaseItemModal from '../components/NewPurchaseItemModal';
 import NewSupplierModal from '../components/NewSupplierModal';
+import ManualItemsModal from '../components/ManualItemsModal';
 
 const CATEGORY_LABELS = {
   FRESH_MEAT: 'Thịt tươi', SEAFOOD: 'Hải sản', VEGETABLE: 'Rau củ quả', HERB_SEASONING: 'Thảo mộc',
@@ -34,6 +35,8 @@ export default function PurchasePlanMisaUI() {
   const [orderOpen, setOrderOpen] = useState(false);
   const [newItemOpen, setNewItemOpen] = useState(false);
   const [newSupOpen, setNewSupOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
   const [syncing, setSyncing] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
   const [matSup, setMatSup] = useState(null);
@@ -95,6 +98,7 @@ export default function PurchasePlanMisaUI() {
         setPlanId(data.data.plan_id);
         setAdjustments({});
         setPriceEdits({});
+        setSelected(new Set());
         alert('✅ Đã tạo kế hoạch mua hàng!');
       } else {
         alert('❌ Lỗi: ' + data.message);
@@ -124,27 +128,41 @@ export default function PurchasePlanMisaUI() {
     } catch (e) { alert('❌ ' + e.message); } finally { setSyncing(false); }
   };
 
-  const savePlan = async () => {
-    if (!planId) { alert('Chưa có kế hoạch để lưu. Hãy tạo kế hoạch trước.'); return; }
+  // Lưu kế hoạch mua hàng. adj/prices: số lượng và đơn giá đã sửa; silent: không hiện hộp thoại (dùng khi lưu từ cửa sổ đơn hàng). Trả về true nếu lưu được.
+  const savePlanWith = async (adj, prices, silent) => {
+    if (!planId) { if (!silent) alert('Chưa có kế hoạch để lưu. Hãy tạo kế hoạch trước.'); return false; }
     try {
       setSaving(true);
       const res = await fetch('/api/purchase-plans/' + planId + '/adjust', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adjustments, prices: priceEdits })
+        body: JSON.stringify({ adjustments: adj, prices })
       });
       const data = await res.json();
       if (data.success) {
         // Giá đã lưu: ghi vào dữ liệu hiển thị để không còn là "chưa lưu"
-        setPlanData((rows) => rows.map((r) => (priceEdits[r.material_id] !== undefined ? { ...r, unit_cost: priceEdits[r.material_id], price_origin: 'MANUAL' } : r)));
+        setPlanData((rows) => rows.map((r) => (prices[r.material_id] !== undefined ? { ...r, unit_cost: prices[r.material_id], price_origin: 'MANUAL' } : r)));
         setPriceEdits({});
       }
-      alert(data.success ? '✅ ' + data.message : '❌ Lỗi: ' + data.message);
+      if (!silent) alert(data.success ? '✅ ' + data.message : '❌ Lỗi: ' + data.message);
+      return !!data.success;
     } catch (error) {
-      alert('❌ Lỗi: ' + error.message);
+      if (!silent) alert('❌ Lỗi: ' + error.message);
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+  const savePlan = () => savePlanWith(adjustments, priceEdits, false);
+
+  // Lưu từ cửa sổ kiểm tra đơn hàng: gộp số lượng / đơn giá đã sửa trong cửa sổ rồi lưu kế hoạch
+  const savePlanFromOrder = async (edits) => {
+    const adj = { ...adjustments };
+    const pri = { ...priceEdits };
+    edits.forEach((e) => { if (e.qtyChanged) adj[e.materialId] = e.qty; if (e.priceChanged) pri[e.materialId] = e.price; });
+    setAdjustments(adj);
+    setPriceEdits(pri);
+    return savePlanWith(adj, pri, true);
   };
 
   const qtyOf = (r) => (adjustments[r.material_id] !== undefined ? adjustments[r.material_id] : (r.suggested_qty || 0));
@@ -164,7 +182,10 @@ export default function PurchasePlanMisaUI() {
     return Array.from(map.values()).sort((a, b) => b.need - a.need || b.count - a.count);
   }, [cycleData]);
 
+  const toggleSel = (id) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const columns = [
+    { key: 'sel', label: 'Chọn', width: 52, align: 'center', filterable: false, noSort: true, noTitle: true, get: (r) => (selected.has(r.material_id) ? 1 : 0),
+      render: (r) => <input type="checkbox" checked={selected.has(r.material_id)} onChange={() => toggleSel(r.material_id)} title="Chọn NVL này để đặt mua" /> },
     { key: 'code', label: 'Mã NVL', width: 118, type: 'text', get: (r) => r.material_id, render: (r) => <span className="font-mono text-blue-700">{r.material_id}</span> },
     { key: 'name', label: 'Tên nguyên vật liệu', width: 300, type: 'text', get: (r) => r.material_name, render: (r) => <span className="font-medium">{r.material_name}</span> },
     { key: 'group', label: 'Nhóm hàng', width: 132, type: 'select', get: groupOf },
@@ -214,9 +235,11 @@ export default function PurchasePlanMisaUI() {
   const toggleOnlyNeed = (checked) => setFilters((f) => ({ ...f, suggested: checked ? { op: '>', val: '0' } : { op: '>=', val: '' } }));
   const hasFilter = Object.keys(filters).some((k) => { const f = filters[k]; return f && (f.text || f.value || (f.val !== undefined && f.val !== '')); }) || !!sort;
 
-  const orderLines = visibleRows
-    .filter((r) => qtyOf(r) > 0)
-    .map((r) => ({ materialId: r.material_id, code: r.material_id, name: r.material_name, group: groupOf(r), unit: r.unit_purchase, qty: qtyOf(r), price: priceOf(r) }));
+  const mapLine = (r) => ({ materialId: r.material_id, code: r.material_id, name: r.material_name, group: groupOf(r), unit: r.unit_purchase, qty: qtyOf(r), price: priceOf(r) });
+  // Có tick chọn NVL: đơn gồm đúng các NVL đã chọn (kể cả chưa có số lượng để nhập tại cửa sổ đơn). Không tick: lấy các dòng đang hiển thị có số lượng > 0.
+  const orderLines = selected.size > 0
+    ? planData.filter((r) => selected.has(r.material_id)).map(mapLine)
+    : visibleRows.filter((r) => qtyOf(r) > 0).map(mapLine);
   const cycleLabel = (cycleType === 'FRESH_3DAYS' ? 'Hàng tươi - chu kỳ mua 3 ngày' : 'Hàng khô - chu kỳ mua 7 ngày') + (selectedGroup ? ' - nhóm ' + selectedGroup : '');
   const unsavedPrices = Object.keys(priceEdits).length;
 
@@ -254,7 +277,8 @@ export default function PurchasePlanMisaUI() {
             <button onClick={savePlan} disabled={saving} className="bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded font-bold disabled:opacity-50">
               {saving ? '⏳ Đang lưu...' : `💾 Lưu Kế Hoạch${unsavedPrices ? ` (${unsavedPrices} giá sửa)` : ''}`}
             </button>
-            <button onClick={() => setOrderOpen(true)} className="bg-white text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded font-bold">📤 Xuất đơn mua hàng</button>
+            <button onClick={() => setManualOpen(true)} className="bg-white text-gray-800 hover:bg-gray-100 px-3 py-1.5 rounded font-bold" title="Sửa / xóa mã hàng và NCC bạn đã tạo">🗂 Mã & NCC đã tạo</button>
+            <button onClick={() => setOrderOpen(true)} className="bg-white text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded font-bold">📤 Tạo đơn đặt hàng NCC{selected.size ? ` (${selected.size} NVL đã chọn)` : ''}</button>
           </div>}
         </header>
         <BranchNav branch={branch} active="plan" branchName={currentBranch?.branch_name} />
@@ -268,6 +292,11 @@ export default function PurchasePlanMisaUI() {
               <input type="checkbox" checked={!!onlyNeed} onChange={(e) => toggleOnlyNeed(e.target.checked)} /> Chỉ NVL cần mua (Đề xuất &gt; 0)
             </label>
             {hasFilter && <button onClick={() => { setFilters({}); setSort(null); }} className="px-2 py-1 rounded border bg-white text-red-600 font-bold">✕ Xóa bộ lọc</button>}
+            {cycleType !== 'DRINKS' && <>
+              <button onClick={() => setSelected((prev) => { const n = new Set(prev); visibleRows.forEach((r) => n.add(r.material_id)); return n; })} className="px-2 py-1 rounded border bg-white font-bold">☑ Chọn tất cả đang hiển thị</button>
+              <button onClick={() => setSelected((prev) => { const n = new Set(prev); visibleRows.filter((r) => qtyOf(r) > 0).forEach((r) => n.add(r.material_id)); return n; })} className="px-2 py-1 rounded border bg-white font-bold">☑ Chọn các NVL có số lượng mua</button>
+              {selected.size > 0 && <button onClick={() => setSelected(new Set())} className="px-2 py-1 rounded border bg-white text-red-600 font-bold">☐ Bỏ chọn ({selected.size})</button>}
+            </>}
             <span className="ml-auto text-gray-500">{visibleRows.length}/{cycleData.length} NVL · Bấm tiêu đề cột để sắp xếp, ô dưới tiêu đề để lọc</span></>}
           </div>
 
@@ -330,9 +359,12 @@ export default function PurchasePlanMisaUI() {
         cycleLabel={cycleLabel}
         suppliers={suppliers}
         onNewSupplier={() => setNewSupOpen(true)}
+        onSavePlan={savePlanFromOrder}
         materialSuppliers={matSup}
         onCompanySaved={(name) => setCurrentBranch((b) => (b ? { ...b, buyer_company: name } : b))}
       />
+      <ManualItemsModal open={manualOpen} branchId={branch} onClose={() => setManualOpen(false)}
+        onChanged={(kind) => { if (kind === 'supplier') fetch(`/api/suppliers/${branch}`).then((r) => r.json()).then((d) => d.success && setSuppliers(d.data)).catch(() => {}); }} />
       <NewSupplierModal open={newSupOpen} branchId={branch} onClose={() => setNewSupOpen(false)}
         onCreated={(s, msg) => { setNewSupOpen(false); setSuppliers((list) => [s, ...list]); alert(`✅ ${msg}: ${s.name} (mã ${s.code}). Chọn NCC này khi xuất đơn mua hàng.`); }} />
       <NewPurchaseItemModal open={newItemOpen} branchId={branch} onClose={() => setNewItemOpen(false)}

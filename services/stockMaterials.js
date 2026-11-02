@@ -17,10 +17,10 @@ async function insertMaterial(db, deps, m) {
   const norm = deps.normalizeString(m.name);
   await db.query(`
     INSERT INTO raw_materials (material_id, material_name, normalized_name, category, category_group, purchase_cycle, unit_recipe, unit_purchase,
-      conversion_rate, unit_cost, lead_time_days, waste_rate, shelf_life_days, is_auto_created, is_active, sub_group, price_source)
-    VALUES ($1,$2,$3,$4,$4,$5,$6,$6,1,$7,$8,$9,$10,FALSE,TRUE,$11,$12)`,
+      conversion_rate, unit_cost, lead_time_days, waste_rate, shelf_life_days, is_auto_created, is_active, sub_group, price_source, is_manual)
+    VALUES ($1,$2,$3,$4,$4,$5,$6,$6,1,$7,$8,$9,$10,FALSE,TRUE,$11,$12,$13)`,
   [m.id, m.name.substring(0, 255), norm.substring(0, 255), p.category, p.cycle, (m.unit || 'cái').substring(0, 20), Math.max(0, Number(m.price) || 0),
-    p.cycle === 'FRESH_3DAYS' ? 1 : 3, p.waste, p.shelf, p.sub, Number(m.price) > 0 ? 'FILE' : 'MISSING']);
+    p.cycle === 'FRESH_3DAYS' ? 1 : 3, p.waste, p.shelf, p.sub, Number(m.price) > 0 ? 'FILE' : 'MISSING', !!m.manual]);
 }
 
 async function upsertMap(db, branchId, code, name, unit, materialId, type, score) {
@@ -130,7 +130,7 @@ async function createPurchaseItem(db, deps, p) {
   const place = g === base.group ? base : (g === 'food' ? placement(deps, 'NVL', name, '') : { group: g, category: 'DRY_GOODS', cycle: 'WEEKLY_7DAYS', sub: g === 'drink' ? 'Đồ uống' : 'CCDC', waste: 0, shelf: 30 });
   if (p.cycle === 'FRESH_3DAYS' || p.cycle === 'WEEKLY_7DAYS') place.cycle = p.cycle;
   const unit = String(p.unit || 'kg').trim() || 'kg';
-  await insertMaterial(db, deps, { id: code, name, unit, price: p.price, place });
+  await insertMaterial(db, deps, { id: code, name, unit, price: p.price, place, manual: true });
   await upsertMap(db, branchId, code, name, unit, code, 'MANUAL', 1);
   return { existing: false, material_id: code, material_name: name, unit_purchase: unit, sub_group: place.sub, purchase_cycle: place.cycle };
 }
