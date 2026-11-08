@@ -7,7 +7,7 @@ services:
     startCommand: npm start
     envVars:
       - key: DATABASE_URL
-        value: postgresql://neondb_owner:npg_hx4GMlNFS2cO@ep-gentle-sun-b3nuwdkl-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+        sync: false # nhập chuỗi kết nối Neon trong Render > Environment, KHÔNG ghi vào file này
       - key: PORT
         value: "5000"
       - key: NODE_ENV

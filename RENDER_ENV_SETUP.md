@@ -22,7 +22,7 @@ Nếu ứng dụng báo lỗi **"DATABASE_URL not set"**, bạn cần set nó tr
 ```
 Tạo biến mới:
 - Key: DATABASE_URL
-- Value: postgresql://neondb_owner:npg_hx4GMlNFS2cO@ep-gentle-sun-b3nuwdkl-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+- Value: <chuỗi kết nối Neon của bạn: postgresql://neondb_owner:MẬT_KHẨU@...-pooler....neon.tech/neondb?sslmode=require>
 
 (Hoặc sử dụng connection string từ Neon.tech của bạn)
 ```
