@@ -2976,7 +2976,7 @@ app.all('*', (req, res) => {
 
     // Test database connection
     console.log('🔄 Testing database connection...');
-    console.log(`📍 DATABASE_URL: configured (${process.env.DATABASE_URL.substring(0, 50)}...)`);
+    console.log(`📍 DATABASE_URL: configured (máy chủ ${(process.env.DATABASE_URL.match(/@([^/:?]+)/) || [])[1] || '?'})`);
 
     client = await pool.connect();
     const result = await client.query('SELECT 1');
