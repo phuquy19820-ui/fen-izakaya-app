@@ -22,7 +22,7 @@ const auth = require('./services/authService');
 const crmService = require('./services/crmService');
 const crmRoutes = require('./services/crmRoutes');
 const kitchenOrders = require('./services/kitchenOrders');
-const { itemGroupOf, materialGroupOf, warmGroupContext } = require('./services/itemGroup');
+const { itemGroupOf, materialGroupOf, warmGroupContext, cukcukGroupMap } = require('./services/itemGroup');
 const { defaultConversion: defaultConv } = require('./services/unitService');
 const stockMaterials = require('./services/stockMaterials');
 
@@ -2750,6 +2750,8 @@ app.post('/api/purchase-plans/generate', async (req, res) => {
         d.safety_stock, d.reorder_point, d.suggested_qty, d.unit_cost, d.estimated_cost, d.note]);
     }
     await client.query('COMMIT');
+    const cukGroupNew = await cukcukGroupMap(pool, branchId);
+    planDetails.forEach((d) => { d.cukcuk_group = cukGroupNew(d.material_id); });
 
     return res.json({
       success: true,
@@ -2870,6 +2872,7 @@ app.get('/api/purchase-plans/:branchId', async (req, res) => {
     `, [branchId]);
 
     const plans = [];
+    const cukGroup = await cukcukGroupMap(pool, branchId);
     for (const plan of plansRes.rows) {
       const detailsRes = await pool.query(`
         SELECT * FROM purchase_plan_details
@@ -2881,10 +2884,10 @@ app.get('/api/purchase-plans/:branchId', async (req, res) => {
       const lastPrices = await latestPurchasePrices(pool, branchId);
       const details = detailsRes.rows.map((d) => {
         const lp = lastPrices.get(d.material_id);
-        if (!lp) return { ...d, price_origin: 'BOM' };
+        if (!lp) return { ...d, cukcuk_group: cukGroup(d.material_id), price_origin: 'BOM' };
         const editedDay = lp.editedAt ? new Date(new Date(lp.editedAt).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10) : '';
         const manualWins = lp.manual && editedDay && editedDay >= lp.date;
-        const base = { ...d, last_price: lp.price, last_price_date: lp.date, last_price_supplier: lp.supplier };
+        const base = { ...d, cukcuk_group: cukGroup(d.material_id), last_price: lp.price, last_price_date: lp.date, last_price_supplier: lp.supplier };
         if (manualWins) return { ...base, price_origin: 'MANUAL' };
         const qty = d.adjusted_qty !== null && d.adjusted_qty !== undefined ? Number(d.adjusted_qty) : Number(d.suggested_qty) || 0;
         return { ...base, unit_cost: lp.price, estimated_cost: Math.round(qty * lp.price), price_origin: 'LAST_PURCHASE' };

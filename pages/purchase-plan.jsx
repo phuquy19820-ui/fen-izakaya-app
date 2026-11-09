@@ -13,7 +13,8 @@ const CATEGORY_LABELS = {
   FRESH_MEAT: 'Thịt tươi', SEAFOOD: 'Hải sản', VEGETABLE: 'Rau củ quả', HERB_SEASONING: 'Thảo mộc',
   SPICE_DRY: 'Gia vị khô', DRY_GOODS: 'Hàng khô', FROZEN: 'Đông lạnh', SAUCE_CONDIMENT: 'Sốt & condiment'
 };
-const groupOf = (item) => item.sub_group || CATEGORY_LABELS[item.category] || item.category || 'Khác';
+// Nhóm hàng đúng theo CUKCUK; chưa có thì "Chưa có nhóm"
+const groupOf = (item) => item.cukcuk_group || 'Chưa có nhóm';
 const money = (n) => Math.round(Number(n) || 0).toLocaleString('vi-VN');
 const fix2 = (n) => (Number(n) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 

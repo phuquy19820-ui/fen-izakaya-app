@@ -44,5 +44,24 @@ function materialGroupOf(code, name, subGroup, branchId) {
   return itemGroupOf(info ? info.code : id, name, info ? info.cat : '');
 }
 
-const GROUP_LABEL = { food: 'Đồ ăn', drink: 'Đồ uống', ccdc: 'CCDC' };
-module.exports = { itemGroupOf, materialGroupOf, warmGroupContext, GROUP_LABEL };
+// Nhóm hàng đúng như trong CUKCUK (cột "Nhóm hàng" của báo cáo tồn kho; nếu không có thì nhóm của thực đơn). Chưa có -> 'Chưa có nhóm'.
+const NO_GROUP = 'Chưa có nhóm';
+async function cukcukGroupMap(db, branchId) {
+  const stock = new Map(); // item_code -> nhóm
+  (await db.query(`SELECT DISTINCT ON (item_code) item_code, category_name FROM cukcuk_stock_daily
+                   WHERE branch_id = $1 AND COALESCE(TRIM(category_name), '') <> '' ORDER BY item_code, stock_date DESC`, [branchId]))
+    .rows.forEach((r) => stock.set(r.item_code, String(r.category_name).trim()));
+  const menu = new Map();
+  (await db.query(`SELECT item_code, category_name FROM cukcuk_menu WHERE branch_id = $1 AND COALESCE(TRIM(category_name), '') <> ''`, [branchId]))
+    .rows.forEach((r) => { if (!menu.has(r.item_code)) menu.set(r.item_code, String(r.category_name).trim()); });
+  const byMat = new Map(); // material_id -> nhóm
+  (await db.query('SELECT material_id, cukcuk_code FROM stock_code_map WHERE branch_id = $1 AND material_id IS NOT NULL', [branchId]))
+    .rows.forEach((r) => { const g = stock.get(r.cukcuk_code) || menu.get(r.cukcuk_code); if (g && !byMat.has(r.material_id)) byMat.set(r.material_id, g); });
+  return (materialId) => {
+    const id = String(materialId || '').replace(/^CK:/, '');
+    return byMat.get(id) || stock.get(id) || menu.get(id) || NO_GROUP;
+  };
+}
+
+const GROUP_LABEL ={ food: 'Đồ ăn', drink: 'Đồ uống', ccdc: 'CCDC' };
+module.exports = { itemGroupOf, materialGroupOf, warmGroupContext, cukcukGroupMap, NO_GROUP, GROUP_LABEL };
