@@ -239,9 +239,17 @@ function buildReport(rawInvoices, rawItems, menu, params) {
       invGoods: invAgg.goods, invPromo: invAgg.promo, fee: invAgg.fee, taxRed: cur.reduce((a, x) => a + (x.taxRed || 0), 0), net: invAgg.rev
     };
     // doanh thu thuần theo nhóm: phân bổ phí dịch vụ / thuế giảm / chênh lệch hóa đơn theo tỷ lệ doanh thu sau khuyến mại, để tổng đúng bằng tổng doanh thu tháng
-    const base = out.kindRecon.itemNet;
-    out.byKind = out.byKind.map((x) => ({ ...x, net: base ? out.kindRecon.net * x.rev / base : 0 }));
-    out.byKind.forEach((x) => { x.share = out.kindRecon.net ? x.net / out.kindRecon.net : 0; });
+    const k = out.kindRecon;
+    const base = k.itemNet;
+    const feeNet = k.fee - k.taxRed; // phí dịch vụ trừ thuế được giảm: phân bổ theo tỷ lệ doanh thu sau khuyến mại
+    out.byKind = out.byKind.map((x) => ({ ...x, net: x.rev + (base ? feeNet * x.rev / base : 0) }));
+    // phần chênh giữa hóa đơn và chi tiết món (làm tròn, món không có dòng chi tiết): hiện thành một dòng riêng để tổng khớp đúng với hóa đơn
+    const dGross = k.invGoods - k.itemGross; const dPromo = k.invPromo - k.itemPromo; const dRev = (k.invGoods - k.invPromo) - k.itemNet;
+    if (!itemMode && (Math.abs(dGross) >= 1 || Math.abs(dPromo) >= 1 || Math.abs(dRev) >= 1)) {
+      out.byKind.push({ label: 'Chênh lệch hóa đơn ↔ chi tiết món (chưa phân bổ)', unalloc: true, gross: dGross, promo: dPromo, rev: dRev, net: dRev, qty: 0, share: 0 });
+    }
+    const totNet = out.byKind.reduce((a, x) => a + x.net, 0);
+    out.byKind.forEach((x) => { x.share = totNet ? x.net / totNet : 0; });
   })();
   out.byCategory = share(curItems, (x) => x.category);
   out.byKindCategory = (() => {

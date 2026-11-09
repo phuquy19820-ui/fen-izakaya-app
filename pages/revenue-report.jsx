@@ -198,7 +198,7 @@ export default function RevenueReport() {
     options={{ scales: { y: { ticks: { callback: (v) => (v / 1e6) + 'tr' } }, y1: { position: 'right', grid: { drawOnChartArea: false } } } }} />
   );
   const kindChart = data && !empty && data.byKind.length > 0 && (
-    <ChartBox type="doughnut" height={250} data={{ labels: data.byKind.map((x) => `${x.label} (${(x.share * 100).toFixed(0)}%)`), datasets: [{ data: data.byKind.map((x) => x.net), backgroundColor: [NAVY, GOLD, TEAL, '#999'] }] }} options={{ plugins: { legend: { position: 'bottom' } } }} />
+    <ChartBox type="doughnut" height={250} data={{ labels: data.byKind.filter((x) => !x.unalloc).map((x) => `${x.label} (${(x.share * 100).toFixed(0)}%)`), datasets: [{ data: data.byKind.filter((x) => !x.unalloc).map((x) => x.net), backgroundColor: [NAVY, GOLD, TEAL, '#999'] }] }} options={{ plugins: { legend: { position: 'bottom' } } }} />
   );
   const topCols = (label) => [
     { label: 'Hạng', w: 44, align: 'center', render: (_, i) => i + 1 },
@@ -390,17 +390,17 @@ export default function RevenueReport() {
                   )}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                     <Card title="2. CƠ CẤU DOANH THU (ĐỒ ĂN / ĐỒ UỐNG) — tổng bằng tổng doanh thu tháng">
-                      <Tbl cols={[{ label: 'Nhóm', render: (r) => <b>{r.label}</b> }, { label: 'Tiền hàng (trước KM)', get: (r) => money(r.gross) }, { label: 'Khuyến mại', get: (r) => money(r.promo) }, { label: 'Sau KM', get: (r) => money(r.rev) }, { label: 'DOANH THU THUẦN (gồm phí DV phân bổ)', render: (r) => <b>{money(r.net)}</b> }, { label: 'Tỷ trọng', get: (r) => pc(r.share) }, { label: 'SL bán', get: (r) => num(r.qty) }]} rows={data.byKind}
+                      <Tbl cols={[{ label: 'Nhóm', render: (r) => (r.unalloc ? <i className="text-gray-600">{r.label}</i> : <b>{r.label}</b>) }, { label: 'Tiền hàng (trước KM)', get: (r) => money(r.gross) }, { label: 'Khuyến mại', get: (r) => money(r.promo) }, { label: 'Sau KM', get: (r) => money(r.rev) }, { label: 'DOANH THU THUẦN (gồm phí DV phân bổ)', render: (r) => <b>{money(r.net)}</b> }, { label: 'Tỷ trọng', get: (r) => pc(r.share) }, { label: 'SL bán', get: (r) => num(r.qty) }]} rows={data.byKind}
                         foot={['TỔNG CỘNG', money(data.byKind.reduce((a, x) => a + x.gross, 0)), money(data.byKind.reduce((a, x) => a + x.promo, 0)), money(data.byKind.reduce((a, x) => a + x.rev, 0)), money(data.byKind.reduce((a, x) => a + x.net, 0)), '100%', num(data.byKind.reduce((a, x) => a + x.qty, 0))]} />
                       {data.kindRecon && !data.itemMode && (
                         <div className="p-2 text-xs border-t bg-gray-50 space-y-0.5">
-                          <div className="font-bold">Cách ra tổng doanh thu tháng: cột "Doanh thu thuần" = doanh thu sau KM + phí dịch vụ & thuế được giảm, phân bổ cho từng nhóm theo tỷ lệ doanh thu.</div>
-                          <div className="flex justify-between"><span>Tiền hàng theo hóa đơn (trước khuyến mại)</span><b>{money(data.kindRecon.invGoods)}</b></div>
-                          <div className="flex justify-between"><span>Tiền hàng theo bảng cơ cấu ở trên</span><span>{money(data.kindRecon.itemGross)} <span className="text-gray-500">(chênh {money(data.kindRecon.invGoods - data.kindRecon.itemGross)}: làm tròn / món không có dòng chi tiết)</span></span></div>
-                          <div className="flex justify-between"><span>− Khuyến mại</span><span>{money(data.kindRecon.invPromo)}</span></div>
+                          <div className="font-bold">Cách ra tổng doanh thu tháng</div>
+                          <div className="flex justify-between"><span>Tiền hàng (trước khuyến mại)</span><span>{money(data.kindRecon.invGoods)}</span></div>
+                          <div className="flex justify-between"><span>− Khuyến mại (khớp thẻ "Tổng khuyến mại" ở Dashboard)</span><span>{money(data.kindRecon.invPromo)}</span></div>
                           <div className="flex justify-between"><span>+ Phí dịch vụ</span><span>{money(data.kindRecon.fee)}</span></div>
                           <div className="flex justify-between"><span>− Thuế được giảm</span><span>{money(data.kindRecon.taxRed)}</span></div>
                           <div className="flex justify-between border-t pt-0.5"><b>= Doanh thu thuần (tổng doanh thu quản trị)</b><b>{money(data.kindRecon.net)}</b></div>
+                          <div className="text-gray-500">Cột "Doanh thu thuần" chia phí dịch vụ và thuế được giảm cho từng nhóm theo tỷ lệ doanh thu sau khuyến mại. Dòng "chênh lệch" là phần hóa đơn có nhưng chi tiết món không có (làm tròn, món không có dòng chi tiết).</div>
                         </div>
                       )}
                     </Card>
