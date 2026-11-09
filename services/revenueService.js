@@ -238,6 +238,10 @@ function buildReport(rawInvoices, rawItems, menu, params) {
       itemGross: sum((x) => (x.gross === undefined ? x.rev + (x.promo || 0) : x.gross)), itemPromo: sum((x) => x.promo || 0), itemNet: sum((x) => x.rev),
       invGoods: invAgg.goods, invPromo: invAgg.promo, fee: invAgg.fee, taxRed: cur.reduce((a, x) => a + (x.taxRed || 0), 0), net: invAgg.rev
     };
+    // doanh thu thuần theo nhóm: phân bổ phí dịch vụ / thuế giảm / chênh lệch hóa đơn theo tỷ lệ doanh thu sau khuyến mại, để tổng đúng bằng tổng doanh thu tháng
+    const base = out.kindRecon.itemNet;
+    out.byKind = out.byKind.map((x) => ({ ...x, net: base ? out.kindRecon.net * x.rev / base : 0 }));
+    out.byKind.forEach((x) => { x.share = out.kindRecon.net ? x.net / out.kindRecon.net : 0; });
   })();
   out.byCategory = share(curItems, (x) => x.category);
   out.byKindCategory = (() => {
