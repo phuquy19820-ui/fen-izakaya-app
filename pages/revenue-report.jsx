@@ -198,7 +198,7 @@ export default function RevenueReport() {
     options={{ scales: { y: { ticks: { callback: (v) => (v / 1e6) + 'tr' } }, y1: { position: 'right', grid: { drawOnChartArea: false } } } }} />
   );
   const kindChart = data && !empty && data.byKind.length > 0 && (
-    <ChartBox type="doughnut" height={250} data={{ labels: data.byKind.map((x) => `${x.label} (${(x.share * 100).toFixed(0)}%)`), datasets: [{ data: data.byKind.map((x) => x.rev), backgroundColor: [NAVY, GOLD, TEAL, '#999'] }] }} options={{ plugins: { legend: { position: 'bottom' } } }} />
+    <ChartBox type="doughnut" height={250} data={{ labels: data.byKind.map((x) => `${x.label} (${(x.share * 100).toFixed(0)}%)`), datasets: [{ data: data.byKind.map((x) => x.gross), backgroundColor: [NAVY, GOLD, TEAL, '#999'] }] }} options={{ plugins: { legend: { position: 'bottom' } } }} />
   );
   const topCols = (label) => [
     { label: 'Hạng', w: 44, align: 'center', render: (_, i) => i + 1 },
@@ -389,8 +389,22 @@ export default function RevenueReport() {
                     </div>
                   )}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                    <Card title="2. CƠ CẤU DOANH THU (ĐỒ ĂN / ĐỒ UỐNG)"><Tbl cols={[{ label: 'Nhóm', render: (r) => <b>{r.label}</b> }, { label: 'Doanh thu', get: (r) => money(r.rev) }, { label: 'Tỷ trọng', get: (r) => pc(r.share) }, { label: 'SL bán', get: (r) => num(r.qty) }]} rows={data.byKind} /></Card>
-                    <Card title="3. DOANH THU THEO NHÓM THỰC ĐƠN"><Tbl cols={[{ label: 'Nhóm thực đơn', render: (r) => <b>{r.label}</b> }, { label: 'Doanh thu', get: (r) => money(r.rev) }, { label: 'Tỷ trọng', get: (r) => pc(r.share) }, { label: 'SL bán', get: (r) => num(r.qty) }, ...(hasCmp ? [{ label: `% so ${cmpTxt}`, render: (r) => { const c = data.categoryCmp.find((x) => x.label === r.label); return delta(c && c.rev ? ratio(r.rev, c.rev) : null); } }] : [])]} rows={data.byCategory} /></Card>
+                    <Card title="2. CƠ CẤU DOANH THU (ĐỒ ĂN / ĐỒ UỐNG) — tiền hàng trước khuyến mại">
+                      <Tbl cols={[{ label: 'Nhóm', render: (r) => <b>{r.label}</b> }, { label: 'Tiền hàng (trước KM)', get: (r) => money(r.gross) }, { label: 'Khuyến mại', get: (r) => money(r.promo) }, { label: 'Sau KM', get: (r) => money(r.rev) }, { label: 'Tỷ trọng', get: (r) => pc(r.share) }, { label: 'SL bán', get: (r) => num(r.qty) }]} rows={data.byKind}
+                        foot={['TỔNG CỘNG', money(data.byKind.reduce((a, x) => a + x.gross, 0)), money(data.byKind.reduce((a, x) => a + x.promo, 0)), money(data.byKind.reduce((a, x) => a + x.rev, 0)), '100%', num(data.byKind.reduce((a, x) => a + x.qty, 0))]} />
+                      {data.kindRecon && !data.itemMode && (
+                        <div className="p-2 text-xs border-t bg-gray-50 space-y-0.5">
+                          <div className="font-bold">Đối chiếu với tổng doanh thu tháng:</div>
+                          <div className="flex justify-between"><span>Tiền hàng theo hóa đơn (trước khuyến mại)</span><b>{money(data.kindRecon.invGoods)}</b></div>
+                          <div className="flex justify-between"><span>Tiền hàng theo bảng cơ cấu ở trên</span><span>{money(data.kindRecon.itemGross)} <span className="text-gray-500">(chênh {money(data.kindRecon.invGoods - data.kindRecon.itemGross)}: làm tròn / món không có dòng chi tiết)</span></span></div>
+                          <div className="flex justify-between"><span>− Khuyến mại</span><span>{money(data.kindRecon.invPromo)}</span></div>
+                          <div className="flex justify-between"><span>+ Phí dịch vụ</span><span>{money(data.kindRecon.fee)}</span></div>
+                          <div className="flex justify-between"><span>− Thuế được giảm</span><span>{money(data.kindRecon.taxRed)}</span></div>
+                          <div className="flex justify-between border-t pt-0.5"><b>= Doanh thu thuần (tổng doanh thu quản trị)</b><b>{money(data.kindRecon.net)}</b></div>
+                        </div>
+                      )}
+                    </Card>
+                    <Card title="3. DOANH THU THEO NHÓM THỰC ĐƠN (sau khuyến mại món)"><Tbl cols={[{ label: 'Nhóm thực đơn', render: (r) => <b>{r.label}</b> }, { label: 'Doanh thu', get: (r) => money(r.rev) }, { label: 'Tỷ trọng', get: (r) => pc(r.share) }, { label: 'SL bán', get: (r) => num(r.qty) }, ...(hasCmp ? [{ label: `% so ${cmpTxt}`, render: (r) => { const c = data.categoryCmp.find((x) => x.label === r.label); return delta(c && c.rev ? ratio(r.rev, c.rev) : null); } }] : [])]} rows={data.byCategory} /></Card>
                   </div>
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
                     <Card title="4. DOANH THU THEO KHU VỰC"><Tbl cols={[{ label: 'Khu vực', render: (r) => <b>{r.label}</b> }, { label: 'Doanh thu', get: (r) => money(r.rev) }, { label: 'Số HĐ', get: (r) => num(r.inv) }, { label: 'AOV', get: (r) => money(r.aov) }]} rows={data.byArea} /></Card>

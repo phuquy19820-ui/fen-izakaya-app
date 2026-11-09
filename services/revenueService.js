@@ -128,7 +128,7 @@ function buildReport(rawInvoices, rawItems, menu, params) {
     const category = r.category || '(Không có nhóm)';
     if (fKind && kind !== fKind) return;
     if (fCat && category !== fCat) return;
-    items.push({ ref_no: r.d + '|' + r.ref_no, d: iv.d, ym: iv.ym, code: r.item_code, name: r.item_name, kind, category, qty: n0(r.qty), rev: n0(r.amount) - n0(r.discount), promo: n0(r.discount) });
+    items.push({ ref_no: r.d + '|' + r.ref_no, d: iv.d, ym: iv.ym, code: r.item_code, name: r.item_name, kind, category, qty: n0(r.qty), rev: n0(r.amount), gross: n0(r.amount) + n0(r.discount), promo: n0(r.discount) });
   });
 
   // danh sách hóa đơn sau lọc
@@ -225,11 +225,20 @@ function buildReport(rawInvoices, rawItems, menu, params) {
   // cơ cấu theo loại món, nhóm thực đơn
   const share = (list, keyFn) => {
     const m = new Map();
-    list.forEach((x) => { const k = keyFn(x); const a = m.get(k) || { label: k, rev: 0, qty: 0 }; a.rev += x.rev; a.qty += x.qty; m.set(k, a); });
-    const total = Array.from(m.values()).reduce((a, x) => a + x.rev, 0);
-    return Array.from(m.values()).map((x) => ({ ...x, share: total ? x.rev / total : 0 })).sort((a, b) => b.rev - a.rev);
+    list.forEach((x) => { const k = keyFn(x); const a = m.get(k) || { label: k, rev: 0, gross: 0, promo: 0, qty: 0 }; a.rev += x.rev; a.gross += (x.gross === undefined ? x.rev + (x.promo || 0) : x.gross); a.promo += x.promo || 0; a.qty += x.qty; m.set(k, a); });
+    const total = Array.from(m.values()).reduce((a, x) => a + x.gross, 0);
+    return Array.from(m.values()).map((x) => ({ ...x, share: total ? x.gross / total : 0 })).sort((a, b) => b.gross - a.gross);
   };
   out.byKind = share(curItems, (x) => x.kind);
+  // đối chiếu cơ cấu theo món với tổng doanh thu trên hóa đơn: tiền hàng - khuyến mại + phí dịch vụ - thuế được giảm = doanh thu thuần
+  (() => {
+    const sum = (f) => curItems.reduce((a, x) => a + f(x), 0);
+    const invAgg = agg(cur);
+    out.kindRecon = {
+      itemGross: sum((x) => (x.gross === undefined ? x.rev + (x.promo || 0) : x.gross)), itemPromo: sum((x) => x.promo || 0), itemNet: sum((x) => x.rev),
+      invGoods: invAgg.goods, invPromo: invAgg.promo, fee: invAgg.fee, taxRed: cur.reduce((a, x) => a + (x.taxRed || 0), 0), net: invAgg.rev
+    };
+  })();
   out.byCategory = share(curItems, (x) => x.category);
   out.byKindCategory = (() => {
     const m = new Map();
