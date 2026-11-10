@@ -871,6 +871,9 @@ app.get('/api/materials/:branchId', async (req, res) => {
 
 // Ghép lại tự động các món CUKCUK chưa có món định lượng (giữ nguyên ghép tay)
 async function rematchBranch(db, branchId) {
+  // món đang ghép vào món định lượng không còn tồn tại (file định lượng đã được thay) -> bỏ ghép để ghép lại theo file hiện tại
+  await db.query(`UPDATE dish_code_map SET bom_dish_id = NULL, match_type = 'NONE', match_score = 0, updated_at = NOW()
+    WHERE branch_id = $1 AND bom_dish_id IS NOT NULL AND bom_dish_id NOT IN (SELECT dish_id FROM bill_of_materials WHERE branch_id = $1)`, [branchId]);
   const bom = (await db.query('SELECT DISTINCT dish_id, dish_name FROM bill_of_materials WHERE branch_id = $1', [branchId])).rows;
   const pending = (await db.query(
     "SELECT cukcuk_code, cukcuk_name FROM dish_code_map WHERE branch_id = $1 AND bom_dish_id IS NULL AND match_type <> 'MANUAL'", [branchId])).rows;
