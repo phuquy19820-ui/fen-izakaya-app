@@ -1,6 +1,6 @@
 // Các chức năng (tab) có thể cấp quyền riêng cho từng tài khoản. key phải trùng với MODULES ở services/authService.js
 export const MODULES = [
-  { key: 'plan', label: 'Kế hoạch mua', icon: '📊', paths: ['/purchase-plan', '/beverage-config'] },
+  { key: 'plan', label: 'Kế hoạch mua', icon: '📊', paths: ['/purchase-plan', '/beverage-config', '/material-usage', '/material-stock'] },
   { key: 'sales', label: 'Doanh thu theo món', icon: '💰', paths: ['/sales-report'] },
   { key: 'revenue', label: 'Báo cáo doanh thu', icon: '📈', paths: ['/revenue-report'] },
   { key: 'stock', label: 'Tồn kho', icon: '📦', paths: ['/stock-report'] },

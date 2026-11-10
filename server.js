@@ -23,6 +23,7 @@ const crmService = require('./services/crmService');
 const crmRoutes = require('./services/crmRoutes');
 const kitchenOrders = require('./services/kitchenOrders');
 const { itemGroupOf, materialGroupOf, warmGroupContext, cukcukGroupMap } = require('./services/itemGroup');
+const materialReports = require('./services/materialReports');
 const { defaultConversion: defaultConv } = require('./services/unitService');
 const stockMaterials = require('./services/stockMaterials');
 
@@ -209,6 +210,11 @@ async function initializeDatabase() {
         branch_id VARCHAR(50) NOT NULL, item_code VARCHAR(100) NOT NULL, item_name VARCHAR(255), base_unit VARCHAR(30),
         small_unit VARCHAR(30), large_unit VARCHAR(30), ratio NUMERIC(18,4) DEFAULT 1, source VARCHAR(10) DEFAULT 'DEFAULT',
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, item_code)
+      )`);
+      migrations.push(`CREATE TABLE IF NOT EXISTS material_opening_stock (
+        branch_id VARCHAR(50) NOT NULL, ym VARCHAR(7) NOT NULL, material_id VARCHAR(50) NOT NULL,
+        qty NUMERIC(18,4) DEFAULT 0, unit_price NUMERIC(18,4) DEFAULT 0, amount NUMERIC(18,2) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (branch_id, ym, material_id)
       )`);
       migrations.push('ALTER TABLE supplier_purchases ADD COLUMN IF NOT EXISTS vat_rate NUMERIC(6,2) DEFAULT 0');
       migrations.push('ALTER TABLE supplier_purchases ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,2) DEFAULT 0');
@@ -674,6 +680,10 @@ app.post('/api/bom/upload', upload.single('file'), async (req, res) => {
   try {
     await client.query('BEGIN');
     const summary = await parseAndSaveBOM(req.file.buffer, branchId, client, req.file.originalname);
+    // File định lượng cũ đã bị xóa: món CUKCUK đang ghép vào món không còn trong file mới thì bỏ ghép để ghép lại theo file mới
+    const reset = await client.query(`UPDATE dish_code_map SET bom_dish_id = NULL, match_type = 'NONE', match_score = 0, updated_at = NOW()
+      WHERE branch_id = $1 AND bom_dish_id IS NOT NULL AND bom_dish_id NOT IN (SELECT dish_id FROM bill_of_materials WHERE branch_id = $1)`, [branchId]);
+    summary.unlinked = reset.rowCount;
     summary.rematched = (await rematchBranch(client, branchId)).matched;
     await client.query('COMMIT');
     return res.json({ success: true, message: 'Tải định lượng thành công!', data: summary });
@@ -710,6 +720,69 @@ app.post('/api/materials/sync-stock/:branchId', async (req, res) => {
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   } finally { client.release(); }
+});
+
+// ====== Báo cáo NVL: tiêu hao theo tháng, xuất - nhập - tồn ======
+const periodOf = (q) => {
+  const now = new Date();
+  const y = Number(q.year) || now.getFullYear(); const m = Number(q.month) || now.getMonth() + 1;
+  return [y, Math.min(12, Math.max(1, m))];
+};
+app.get('/api/materials/usage/:branchId', async (req, res) => {
+  try {
+    const [y, m] = periodOf(req.query);
+    const groupOf = await cukcukGroupMap(pool, req.params.branchId);
+    return res.json({ success: true, data: await materialReports.usageReport(pool, req.params.branchId, y, m, groupOf) });
+  } catch (error) { console.error('Usage report error:', error); return res.status(500).json({ success: false, message: error.message }); }
+});
+app.get('/api/materials/stock-movement/:branchId', async (req, res) => {
+  try {
+    const [y, m] = periodOf(req.query);
+    const groupOf = await cukcukGroupMap(pool, req.params.branchId);
+    return res.json({ success: true, data: await materialReports.stockMovement(pool, req.params.branchId, y, m, groupOf) });
+  } catch (error) { console.error('Stock movement error:', error); return res.status(500).json({ success: false, message: error.message }); }
+});
+// Tải file số tồn đầu kỳ của tháng: thay thế số tồn đã tải / đã tính trước đó cho các NVL có trong file
+app.post('/api/materials/opening-stock/upload', upload.single('file'), async (req, res) => {
+  const { branchId } = req.body;
+  if (!req.file || !branchId) return res.status(400).json({ success: false, message: 'Thiếu file hoặc chi nhánh' });
+  const [y, m] = periodOf(req.body);
+  const client = await pool.connect();
+  try {
+    const rows = materialReports.parseOpeningFile(req.file.buffer, req.file.originalname);
+    if (!rows.length) return res.status(400).json({ success: false, message: 'File không có dòng số liệu nào' });
+    await client.query('BEGIN');
+    const r = await materialReports.saveOpeningStock(client, branchId, y, m, rows);
+    await client.query('COMMIT');
+    return res.json({ success: true, message: `Đã lưu số tồn đầu kỳ ${m}/${y}: ${r.saved} NVL`, data: r });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ success: false, message: error.message });
+  } finally { client.release(); }
+});
+// Bỏ số tồn đã tải của tháng (quay về số tính tự động từ kỳ trước)
+app.delete('/api/materials/opening-stock/:branchId/:year/:month', async (req, res) => {
+  try {
+    const ym = `${Number(req.params.year)}-${String(Number(req.params.month)).padStart(2, '0')}`;
+    const r = await pool.query('DELETE FROM material_opening_stock WHERE branch_id = $1 AND ym = $2', [req.params.branchId, ym]);
+    return res.json({ success: true, message: `Đã bỏ số tồn đã tải (${r.rowCount} dòng)` });
+  } catch (error) { return res.status(500).json({ success: false, message: error.message }); }
+});
+// File mẫu: số tồn đầu kỳ hiện tại của tháng (sửa rồi tải lại)
+app.get('/api/materials/opening-stock/template/:branchId', async (req, res) => {
+  try {
+    const [y, m] = periodOf(req.query);
+    const groupOf = await cukcukGroupMap(pool, req.params.branchId);
+    const d = await materialReports.stockMovement(pool, req.params.branchId, y, m, groupOf);
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Ton dau ky');
+    ws.columns = [{ header: 'Mã NVL', key: 'c', width: 18 }, { header: 'Tên NVL', key: 'n', width: 44 }, { header: 'ĐVT', key: 'u', width: 10 }, { header: 'Số lượng', key: 'q', width: 14 }, { header: 'Đơn giá', key: 'p', width: 14 }, { header: 'Thành tiền', key: 'a', width: 16 }];
+    ws.getRow(1).font = { bold: true };
+    d.rows.forEach((r) => ws.addRow({ c: r.material_id, n: r.name, u: r.unit, q: Math.round(r.open_qty * 10000) / 10000, p: Math.round(r.open_price), a: Math.round(r.open_amount) }));
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="ton_dau_ky_${y}_${String(m).padStart(2, '0')}.xlsx"`);
+    await wb.xlsx.write(res); return res.end();
+  } catch (error) { return res.status(500).json({ success: false, message: error.message }); }
 });
 
 // Danh sách / sửa / xóa NVL do người dùng tạo trong app

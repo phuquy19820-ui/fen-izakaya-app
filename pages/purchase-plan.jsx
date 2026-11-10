@@ -291,6 +291,8 @@ export default function PurchasePlanMisaUI() {
             <button onClick={() => { setCycleType('FRESH_3DAYS'); setGroup(''); }} className={`px-3 py-1.5 rounded font-bold border ${cycleType === 'FRESH_3DAYS' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🔴 ĐỒ TƯƠI (3 ngày)</button>
             <button onClick={() => { setCycleType('WEEKLY_7DAYS'); setGroup(''); }} className={`px-3 py-1.5 rounded font-bold border ${cycleType === 'WEEKLY_7DAYS' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🔵 ĐỒ KHÔ (7 ngày)</button>
             <button onClick={() => { setCycleType('DRINKS'); setGroup(''); }} className={`px-3 py-1.5 rounded font-bold border ${cycleType === 'DRINKS' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}`}>🍺 ĐỒ UỐNG (theo số lượng bán)</button>
+            <a href={`/material-usage?branch=${branch || ''}`} className="px-3 py-1.5 rounded font-bold border bg-white text-green-800 border-green-600" title="Báo cáo chi tiết NVL tiêu hao theo số lượng bán × định lượng, chọn theo tháng">📉 Tiêu hao NVL</a>
+            <a href={`/material-stock?branch=${branch || ''}`} className="px-3 py-1.5 rounded font-bold border bg-white text-green-800 border-green-600" title="Báo cáo xuất - nhập - tồn kho NVL, tải số tồn đầu kỳ theo tháng">📑 Xuất nhập tồn NVL</a>
             {cycleType !== 'DRINKS' && <><label className="flex items-center gap-1 ml-3 text-gray-700 cursor-pointer font-bold">
               <input type="checkbox" checked={!!onlyNeed} onChange={(e) => toggleOnlyNeed(e.target.checked)} /> Chỉ NVL cần mua (Đề xuất &gt; 0)
             </label>
