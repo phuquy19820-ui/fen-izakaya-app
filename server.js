@@ -24,6 +24,7 @@ const crmRoutes = require('./services/crmRoutes');
 const kitchenOrders = require('./services/kitchenOrders');
 const { itemGroupOf, materialGroupOf, warmGroupContext, cukcukGroupMap } = require('./services/itemGroup');
 const materialReports = require('./services/materialReports');
+const { buildCashflow } = require('./services/cashflowService');
 const { defaultConversion: defaultConv } = require('./services/unitService');
 const stockMaterials = require('./services/stockMaterials');
 
@@ -2103,13 +2104,9 @@ app.post('/api/payables/opening/reset', async (req, res) => {
   }
 });
 
-app.get('/api/payables/:branchId', async (req, res) => {
-  const { branchId } = req.params;
-  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-  const from = dateRe.test(String(req.query.from || '')) ? req.query.from : '1900-01-01';
-  const to = dateRe.test(String(req.query.to || '')) ? req.query.to : '2999-12-31';
-  try {
-    const sups = (await pool.query('SELECT code, name FROM suppliers WHERE branch_id = $1', [branchId])).rows;
+async function computePayables(branchId, from, to) {
+  {
+    const sups =(await pool.query('SELECT code, name FROM suppliers WHERE branch_id = $1', [branchId])).rows;
     const opens = (await pool.query("SELECT name_key, name, amount, to_char(as_of, 'YYYY-MM-DD') AS as_of, supplier_code, COALESCE(source, 'IMPORT') AS source FROM supplier_opening_debt WHERE branch_id = $1", [branchId])).rows;
     const pur = (await pool.query(`SELECT supplier_code, to_char(purchase_date, 'YYYY-MM-DD') AS d, SUM(amount) AS goods, SUM(vat_amount) AS vat,
         SUM(CASE WHEN total_amount > 0 THEN total_amount ELSE amount END) AS total, COUNT(DISTINCT ref_no) AS times
@@ -2212,12 +2209,34 @@ app.get('/api/payables/:branchId', async (req, res) => {
     const list = all.filter((r) => r.opening || r.purchases || r.paid || r.balance).sort((a, b) => b.balance - a.balance);
     const openingRows = all.map((r) => ({ code: r.code, name: r.name, amount: r.opening_base, as_of: r.opening_as_of, source: r.opening_source }))
       .sort((a, b) => (b.amount ? 1 : 0) - (a.amount ? 1 : 0) || String(a.name).localeCompare(String(b.name), 'vi'));
-    return res.json({ success: true, data: {
+    return {
       suppliers: list, payments, openingRows, ck: ckMode,
       supplierOptions: sups.map((s) => ({ code: s.code, name: s.name })).sort((a, b) => String(a.name).localeCompare(String(b.name), 'vi'))
-    } });
+    };
+  }
+}
+app.get('/api/payables/:branchId', async (req, res) => {
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const from = dateRe.test(String(req.query.from || '')) ? req.query.from : '1900-01-01';
+  const to = dateRe.test(String(req.query.to || '')) ? req.query.to : '2999-12-31';
+  try {
+    return res.json({ success: true, data: await computePayables(req.params.branchId, from, to) });
   } catch (error) {
     console.error('Payables error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Phân tích dòng tiền vào / ra của chi nhánh (doanh thu, chi quỹ, công nợ NCC, tồn kho NVL - hàng hóa - CCDC)
+app.get('/api/cashflow/:branchId', async (req, res) => {
+  try {
+    const now = new Date();
+    const y = Number(req.query.year) || now.getFullYear();
+    const m = Math.min(12, Math.max(1, Number(req.query.month) || now.getMonth() + 1));
+    const n = Math.min(12, Math.max(3, Number(req.query.months) || 6));
+    return res.json({ success: true, data: await buildCashflow(pool, req.params.branchId, y, m, n, { computePayables, itemGroupOf }) });
+  } catch (error) {
+    console.error('Cashflow error:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 });

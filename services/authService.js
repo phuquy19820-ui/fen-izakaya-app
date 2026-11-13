@@ -40,6 +40,7 @@ const RULES = [
   [/^\/api\/suppliers/, ['suppliers', 'plan', 'books', 'payables']],
   [/^\/api\/payables\/import/, ['sync']],
   [/^\/api\/payables/, ['payables']],
+  [/^\/api\/cashflow\//, ['payables']],
   [/^\/api\/revenue\/import/, ['sync']],
   [/^\/api\/revenue\//, ['revenue']],
   [/^\/api\/auth\/sync-token$/, ['sync']]

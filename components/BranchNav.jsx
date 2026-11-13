@@ -10,6 +10,7 @@ const ITEMS = [
   { key: 'suppliers', href: '/suppliers', label: '🚚 Nhà cung cấp' },
   { key: 'books', href: '/purchase-books', label: '📒 Sổ mua hàng' },
   { key: 'payables', href: '/payables', label: '💳 Công nợ NCC' },
+  { key: 'cashflow', perm: 'payables', href: '/cashflow', label: '💹 Phân tích dòng tiền' },
   { key: 'kitchen', href: '/kitchen-orders', label: '🍳 Đặt hàng Bếp' },
   { key: 'sync', href: '/sync-cukcuk', label: '🔄 Đồng bộ & ghép món' }
 ];
@@ -19,7 +20,7 @@ export default function BranchNav({ branch, active, branchName }) {
   return (
     <nav className="bg-white border-b px-6 py-2 flex flex-wrap items-center gap-2 text-sm">
       <a href="/" className="text-gray-500 hover:text-blue-700 mr-2">← Chi nhánh{branchName ? `: ${branchName}` : ''}</a>
-      {ITEMS.filter((it) => canUse(user, it.key)).map((it) => (
+      {ITEMS.filter((it) => canUse(user, it.perm || it.key)).map((it) => (
         <a
           key={it.key}
           href={`${it.href}?branch=${branch || ''}`}
