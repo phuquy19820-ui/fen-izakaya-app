@@ -10,6 +10,14 @@ const THEMES = {
 };
 const themeOf = (key) => THEMES[key] || THEMES.member;
 
+// Mẫu thẻ thiết kế riêng của FEN GROUP (ảnh trong /public/cards). Hạng Diamond dùng mẫu GOLD, hạng Signature dùng mẫu SIGNATURE.
+// Ảnh đã có sẵn thương hiệu + tên hạng; app chỉ chồng thêm thông tin hội viên lên một mảng mờ ở góc dưới bên trái.
+const ART = {
+  silver: { src: '/cards/silver.webp', fg: '#13161c', sub: '#434a55', plate: 'rgba(255,255,255,.55)', edge: 'rgba(255,255,255,.7)' },
+  diamond: { src: '/cards/gold.webp', fg: '#2a1c08', sub: '#6a4f24', plate: 'rgba(255,247,222,.55)', edge: 'rgba(255,255,255,.55)' },
+  luxury: { src: '/cards/signature.webp', fg: '#f3dca6', sub: '#c4a769', plate: 'rgba(5,10,26,.62)', edge: 'rgba(230,200,130,.45)' }
+};
+
 let qrPromise = null;
 function loadQr() {
   if (typeof window === 'undefined') return Promise.reject(new Error('no window'));
@@ -47,6 +55,24 @@ export default function MemberCard({ brand = 'FEN IZAKAYA', name, memberCode, ti
   const t = themeOf(tier);
   const diamond = tier === 'diamond';
   const luxury = tier === 'luxury';
+  const art = ART[tier];
+  if (art) {
+    const small = { fontSize: '1.8cqw', letterSpacing: '0.2em', color: art.sub, fontWeight: 600 };
+    return (
+      <div id={id} style={{ position: 'relative', width: '100%', maxWidth: 440, aspectRatio: '1.586 / 1', backgroundImage: `url(${art.src})`, backgroundSize: '100% 100%', backgroundRepeat: 'no-repeat', color: art.fg, filter: 'drop-shadow(0 16px 22px rgba(2,6,23,.4))', fontFamily: "'Segoe UI', Roboto, Helvetica, Arial, sans-serif", containerType: 'inline-size' }}>
+        <div style={{ position: 'absolute', left: '5%', bottom: '6%', width: '56%', padding: '3cqw 3.6cqw', borderRadius: '3cqw', background: art.plate, border: `1px solid ${art.edge}`, backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', boxSizing: 'border-box' }}>
+          <div style={small}>HỘI VIÊN</div>
+          <div style={{ fontSize: '4.8cqw', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '0.4cqw' }}>{name}</div>
+          <div style={{ fontFamily: "'Courier New', monospace", fontWeight: 700, fontSize: '3.9cqw', letterSpacing: '0.14em', marginTop: '1cqw' }}>{memberCode}</div>
+          <div style={{ display: 'flex', gap: '5cqw', marginTop: '1.6cqw' }}>
+            <div><div style={{ ...small, fontSize: '1.6cqw' }}>ĐIỂM</div><div style={{ fontSize: '3.4cqw', fontWeight: 800 }}>{Number(points).toLocaleString('vi-VN')}</div></div>
+            {since ? <div><div style={{ ...small, fontSize: '1.6cqw' }}>THÀNH VIÊN TỪ</div><div style={{ fontSize: '3cqw', fontWeight: 700 }}>{fmtDateVn(since)}</div></div> : null}
+          </div>
+        </div>
+        {link ? <div style={{ position: 'absolute', left: '64%', bottom: '7%', background: '#fff', padding: 4, borderRadius: 8, boxShadow: '0 2px 6px rgba(0,0,0,.35)' }}><Qr text={link} size={56} /></div> : null}
+      </div>
+    );
+  }
   return (
     <div id={id} style={{ position: 'relative', width: '100%', maxWidth: 440, aspectRatio: '1.586 / 1', borderRadius: 22, overflow: 'hidden', background: t.bg, color: t.fg, boxShadow: '0 18px 40px rgba(2,6,23,.35), inset 0 1px 0 rgba(255,255,255,.35)', fontFamily: "'Segoe UI', Roboto, Helvetica, Arial, sans-serif", containerType: 'inline-size' }}>
       {/* họa tiết nền */}
@@ -162,6 +188,40 @@ export async function renderCardCanvas({ brand = 'FEN IZAKAYA', name = '', membe
   const ctx = canvas.getContext('2d');
   ctx.scale(scale, scale);
   const t = themeOf(tier);
+
+  const art = ART[tier];
+  if (art) {
+    const img = await new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => reject(new Error('Không tải được mẫu thẻ')); im.src = art.src; });
+    ctx.drawImage(img, 0, 0, W, H);
+    const px = W * 0.05; const pw = W * 0.56; const ph = H * 0.43; const py = H - H * 0.06 - ph;
+    rrect(ctx, px, py, pw, ph, 32);
+    ctx.fillStyle = art.plate; ctx.fill();
+    ctx.strokeStyle = art.edge; ctx.lineWidth = 2; ctx.stroke();
+    const ix = px + 40; const iw = pw - 80;
+    ctx.fillStyle = art.sub; ctx.font = `600 19px ${FONT}`; spaced(ctx, 'HỘI VIÊN', ix, py + 52, 5);
+    ctx.fillStyle = art.fg;
+    const nm = String(name || '').toUpperCase();
+    fitText(ctx, nm, iw, 700, 52);
+    ctx.fillText(nm, ix, py + 108);
+    ctx.font = `700 42px "Courier New", Courier, monospace`;
+    spaced(ctx, memberCode, ix, py + 166, 6);
+    ctx.fillStyle = art.sub; ctx.font = `600 17px ${FONT}`; spaced(ctx, 'ĐIỂM', ix, py + 208, 4);
+    ctx.fillStyle = art.fg; ctx.font = `800 36px ${FONT}`; ctx.fillText(Number(points).toLocaleString('vi-VN'), ix, py + 246);
+    if (since) {
+      ctx.fillStyle = art.sub; ctx.font = `600 17px ${FONT}`; spaced(ctx, 'THÀNH VIÊN TỪ', ix + 190, py + 208, 4);
+      ctx.fillStyle = art.fg; ctx.font = `700 32px ${FONT}`; ctx.fillText(fmtDateVn(since), ix + 190, py + 246);
+    }
+    if (link) {
+      try {
+        const qs = 150; const q = await qrCanvas(link, qs);
+        const bx = W * 0.64; const by = H - H * 0.07 - qs - 20;
+        ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = 3;
+        rrect(ctx, bx, by, qs + 20, qs + 20, 18); ctx.fillStyle = '#fff'; ctx.fill(); ctx.restore();
+        ctx.drawImage(q, bx + 10, by + 10, qs, qs);
+      } catch (e) { /* bỏ qua QR */ }
+    }
+    return canvas;
+  }
 
   rrect(ctx, 0, 0, W, H, 56);
   ctx.save();
