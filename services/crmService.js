@@ -287,7 +287,7 @@ async function loadAll(pool, force = false) {
     const expiresInDays = validUntil ? daysBetween(today, validUntil) : null;
     const next = tiers[level + 1] || null;
     const obj = {
-      id: c.id, memberNo: c.member_no, memberCode: 'FEN-' + String(c.member_no).padStart(6, '0'), key: c.cust_key, name: c.name, phone: c.phone || '', email: c.email || '', gender: c.gender || '',
+      id: c.id, memberNo: c.member_no, memberCode: 'FEN-' + (String(c.phone || '').replace(/\D/g, '') || String(c.member_no).padStart(6, '0')), // mã trên thẻ = FEN-<số điện thoại> để nhân viên nhập đúng khách khi thanh toán; chưa có SĐT thì dùng số thứ tự key: c.cust_key, name: c.name, phone: c.phone || '', email: c.email || '', gender: c.gender || '',
       birthday: c.birthday ? new Date(new Date(c.birthday).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10) : '', address: c.address || '', company: c.company || '',
       source: c.source || '', socialLink: c.social_link || '', refBy: c.ref_by || '', notes: c.notes || '', preferences: c.preferences || '', allergies: c.allergies || '', tags: c.tags || [], status: c.status,
       ownerId: c.owner_id, branchId: c.branch_id, isManual: c.is_manual, tierOverride: c.tier_override || '', cardToken: c.card_token, createdAt: c.created_at,

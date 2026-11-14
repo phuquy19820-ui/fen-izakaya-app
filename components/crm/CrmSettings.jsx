@@ -47,7 +47,7 @@ export default function CrmSettings({ meta, reloadMeta }) {
                 <Field label="Quyền lợi (mỗi dòng một quyền lợi)" className="col-span-2"><textarea rows={4} value={t.perks.join('\n')} onChange={(e) => setTier(i, { perks: e.target.value.split('\n') })} className={inputCls} /></Field>
                 <div className="col-span-2 text-right">{i > 0 && s.tiers.length > 2 && <button onClick={() => delTier(i)} className="text-red-600 text-sm font-bold">Xóa hạng này</button>}</div>
               </div>
-              <div className="flex items-start justify-center"><MemberCard id={'preview-' + i} brand={s.brand} name="NGUYỄN VĂN A" memberCode="FEN-000123" tier={t.key} tierName={t.name} points={1250} since="2026-01-15" /></div>
+              <div className="flex items-start justify-center"><MemberCard id={'preview-' + i} brand={s.brand} name="NGUYỄN VĂN A" memberCode="FEN-0901234567" tier={t.key} tierName={t.name} points={1250} since="2026-01-15" /></div>
             </div>
           ))}
         </div>
