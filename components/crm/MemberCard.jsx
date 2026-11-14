@@ -13,9 +13,10 @@ const themeOf = (key) => THEMES[key] || THEMES.member;
 // Mẫu thẻ thiết kế riêng của FEN GROUP (ảnh trong /public/cards). Hạng Diamond dùng mẫu GOLD, hạng Signature dùng mẫu SIGNATURE.
 // Ảnh đã có sẵn thương hiệu + tên hạng; app chỉ chồng thêm thông tin hội viên lên một mảng mờ ở góc dưới bên trái.
 const ART = {
-  silver: { src: '/cards/silver.webp', fg: '#13161c', sub: '#434a55', plate: 'rgba(255,255,255,.55)', edge: 'rgba(255,255,255,.7)' },
-  diamond: { src: '/cards/gold.webp', fg: '#2a1c08', sub: '#6a4f24', plate: 'rgba(255,247,222,.55)', edge: 'rgba(255,255,255,.55)' },
-  luxury: { src: '/cards/signature.webp', fg: '#f3dca6', sub: '#c4a769', plate: 'rgba(5,10,26,.62)', edge: 'rgba(230,200,130,.45)' }
+  // shadow: viền chữ nhẹ để đọc rõ trên họa tiết nổi; sh = màu bóng cho bản vẽ canvas
+  silver: { src: '/cards/silver.webp', fg: '#0d1015', sub: '#2c323b', shadow: '0 0 3px rgba(255,255,255,.85), 0 1px 1px rgba(255,255,255,.9)', sh: 'rgba(255,255,255,.9)' },
+  diamond: { src: '/cards/gold.webp', fg: '#241705', sub: '#4d3813', shadow: '0 0 3px rgba(255,244,214,.85), 0 1px 1px rgba(255,244,214,.9)', sh: 'rgba(255,244,214,.9)' },
+  luxury: { src: '/cards/signature.webp', fg: '#f6e2b0', sub: '#d1b576', shadow: '0 0 4px rgba(0,0,0,.9), 0 1px 2px rgba(0,0,0,.8)', sh: 'rgba(0,0,0,.9)' }
 };
 
 let qrPromise = null;
@@ -57,16 +58,16 @@ export default function MemberCard({ brand = 'FEN IZAKAYA', name, memberCode, ti
   const luxury = tier === 'luxury';
   const art = ART[tier];
   if (art) {
-    const small = { fontSize: '1.8cqw', letterSpacing: '0.2em', color: art.sub, fontWeight: 600 };
+    const small = { fontSize: '2cqw', letterSpacing: '0.18em', color: art.sub, fontWeight: 700 };
     return (
       <div id={id} style={{ position: 'relative', width: '100%', maxWidth: 440, aspectRatio: '1.586 / 1', backgroundImage: `url(${art.src})`, backgroundSize: '100% 100%', backgroundRepeat: 'no-repeat', color: art.fg, filter: 'drop-shadow(0 16px 22px rgba(2,6,23,.4))', fontFamily: "'Segoe UI', Roboto, Helvetica, Arial, sans-serif", containerType: 'inline-size' }}>
-        <div style={{ position: 'absolute', left: '5%', bottom: '6%', width: '56%', padding: '3cqw 3.6cqw', borderRadius: '3cqw', background: art.plate, border: `1px solid ${art.edge}`, backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)', boxSizing: 'border-box' }}>
+        <div style={{ position: 'absolute', left: '8.5%', bottom: '8%', width: '52%', textShadow: art.shadow, boxSizing: 'border-box' }}>
           <div style={small}>HỘI VIÊN</div>
           <div style={{ fontSize: '4.8cqw', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '0.4cqw' }}>{name}</div>
           <div style={{ fontFamily: "'Courier New', monospace", fontWeight: 700, fontSize: '3.9cqw', letterSpacing: '0.14em', marginTop: '1cqw' }}>{memberCode}</div>
           <div style={{ display: 'flex', gap: '5cqw', marginTop: '1.6cqw' }}>
-            <div><div style={{ ...small, fontSize: '1.6cqw' }}>ĐIỂM</div><div style={{ fontSize: '3.4cqw', fontWeight: 800 }}>{Number(points).toLocaleString('vi-VN')}</div></div>
-            {since ? <div><div style={{ ...small, fontSize: '1.6cqw' }}>THÀNH VIÊN TỪ</div><div style={{ fontSize: '3cqw', fontWeight: 700 }}>{fmtDateVn(since)}</div></div> : null}
+            <div><div style={{ ...small, fontSize: '1.8cqw' }}>ĐIỂM</div><div style={{ fontSize: '3.4cqw', fontWeight: 800 }}>{Number(points).toLocaleString('vi-VN')}</div></div>
+            {since ? <div><div style={{ ...small, fontSize: '1.8cqw' }}>THÀNH VIÊN TỪ</div><div style={{ fontSize: '3cqw', fontWeight: 700 }}>{fmtDateVn(since)}</div></div> : null}
           </div>
         </div>
         {link ? <div style={{ position: 'absolute', left: '64%', bottom: '7%', background: '#fff', padding: 4, borderRadius: 8, boxShadow: '0 2px 6px rgba(0,0,0,.35)' }}><Qr text={link} size={56} /></div> : null}
@@ -193,11 +194,9 @@ export async function renderCardCanvas({ brand = 'FEN IZAKAYA', name = '', membe
   if (art) {
     const img = await new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => reject(new Error('Không tải được mẫu thẻ')); im.src = art.src; });
     ctx.drawImage(img, 0, 0, W, H);
-    const px = W * 0.05; const pw = W * 0.56; const ph = H * 0.43; const py = H - H * 0.06 - ph;
-    rrect(ctx, px, py, pw, ph, 32);
-    ctx.fillStyle = art.plate; ctx.fill();
-    ctx.strokeStyle = art.edge; ctx.lineWidth = 2; ctx.stroke();
-    const ix = px + 40; const iw = pw - 80;
+    const pw = W * 0.52; const ph = H * 0.43; const py = H - H * 0.08 - ph;
+    const ix = W * 0.085; const iw = pw;
+    ctx.shadowColor = art.sh; ctx.shadowBlur = 6; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 1;
     ctx.fillStyle = art.sub; ctx.font = `600 19px ${FONT}`; spaced(ctx, 'HỘI VIÊN', ix, py + 52, 5);
     ctx.fillStyle = art.fg;
     const nm = String(name || '').toUpperCase();
@@ -211,6 +210,7 @@ export async function renderCardCanvas({ brand = 'FEN IZAKAYA', name = '', membe
       ctx.fillStyle = art.sub; ctx.font = `600 17px ${FONT}`; spaced(ctx, 'THÀNH VIÊN TỪ', ix + 190, py + 208, 4);
       ctx.fillStyle = art.fg; ctx.font = `700 32px ${FONT}`; ctx.fillText(fmtDateVn(since), ix + 190, py + 246);
     }
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
     if (link) {
       try {
         const qs = 150; const q = await qrCanvas(link, qs);
