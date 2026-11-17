@@ -8,6 +8,12 @@ const PERIODS = [
   ['lifetime', 'Tổng chi tiêu từ trước đến nay']
 ];
 
+// Ô nhập tiền có dấu chấm phân cách hàng nghìn (20.000.000); onChange nhận số nguyên
+function MoneyInput({ value, onChange, disabled }) {
+  const shown = Number(value) ? Math.round(Number(value)).toLocaleString('vi-VN') : (value === 0 || value === '0' ? '0' : '');
+  return <input type="text" inputMode="numeric" disabled={disabled} value={shown} onChange={(e) => onChange(Number(String(e.target.value).replace(/\D/g, '')) || 0)} className={inputCls} />;
+}
+
 // Cài đặt hạng thẻ thành viên (Admin): tự nhập mức chi tiêu để đạt từng hạng
 export default function CrmSettings({ meta, reloadMeta }) {
   const [s, setS] = useState(null);
@@ -38,12 +44,12 @@ export default function CrmSettings({ meta, reloadMeta }) {
               <div className="grid grid-cols-2 gap-3 content-start">
                 <Field label="Tên hạng"><input value={t.name} onChange={(e) => setTier(i, { name: e.target.value })} className={inputCls} /></Field>
                 <Field label={i === 0 ? 'Mức chi tiêu (mặc định, không đổi)' : 'Chi tiêu từ (đ)'}>
-                  <input type="number" disabled={i === 0} value={t.min} onChange={(e) => setTier(i, { min: Number(e.target.value) })} className={inputCls} />
+                  <MoneyInput disabled={i === 0} value={t.min} onChange={(v) => setTier(i, { min: v })} />
                   <div className="text-xs text-gray-500 mt-0.5">{money(t.min)} đ</div>
                 </Field>
-                {i > 0 && <Field label="Hóa đơn đầu tiên (khách mới) trên (đ)"><input type="number" value={t.newBillMin || 0} onChange={(e) => setTier(i, { newBillMin: Number(e.target.value) })} className={inputCls} /><div className="text-xs text-gray-500 mt-0.5">{money(t.newBillMin || 0)} đ</div></Field>}
+                {i > 0 && <Field label="Hóa đơn đầu tiên (khách mới) trên (đ)"><MoneyInput value={t.newBillMin || 0} onChange={(v) => setTier(i, { newBillMin: v })} /><div className="text-xs text-gray-500 mt-0.5">{money(t.newBillMin || 0)} đ</div></Field>}
                 {i > 0 && <Field label="Giảm giá trên tổng hóa đơn (%)"><input type="number" value={t.discountPct || 0} onChange={(e) => setTier(i, { discountPct: Number(e.target.value) })} className={inputCls} /></Field>}
-                {i > 0 && <Field label="Voucher sinh nhật (đ, hiệu lực 30 ngày)"><input type="number" value={t.birthdayVoucher || 0} onChange={(e) => setTier(i, { birthdayVoucher: Number(e.target.value) })} className={inputCls} /><div className="text-xs text-gray-500 mt-0.5">{money(t.birthdayVoucher || 0)} đ</div></Field>}
+                {i > 0 && <Field label="Voucher sinh nhật (đ, hiệu lực 30 ngày)"><MoneyInput value={t.birthdayVoucher || 0} onChange={(v) => setTier(i, { birthdayVoucher: v })} /><div className="text-xs text-gray-500 mt-0.5">{money(t.birthdayVoucher || 0)} đ</div></Field>}
                 <Field label="Quyền lợi (mỗi dòng một quyền lợi)" className="col-span-2"><textarea rows={4} value={t.perks.join('\n')} onChange={(e) => setTier(i, { perks: e.target.value.split('\n') })} className={inputCls} /></Field>
                 <div className="col-span-2 text-right">{i > 0 && s.tiers.length > 2 && <button onClick={() => delTier(i)} className="text-red-600 text-sm font-bold">Xóa hạng này</button>}</div>
               </div>
@@ -57,7 +63,7 @@ export default function CrmSettings({ meta, reloadMeta }) {
       <Card title="Điểm thưởng & phân khúc khách">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Field label="Tên thương hiệu trên thẻ"><input value={s.brand} onChange={(e) => setS({ ...s, brand: e.target.value })} className={inputCls} /></Field>
-          <Field label="Chi bao nhiêu đ = 1 điểm"><input type="number" value={s.pointsRate} onChange={(e) => setS({ ...s, pointsRate: Number(e.target.value) })} className={inputCls} /></Field>
+          <Field label="Chi bao nhiêu đ = 1 điểm"><MoneyInput value={s.pointsRate} onChange={(v) => setS({ ...s, pointsRate: v })} /></Field>
           <Field label="Khách mới: trong (ngày) kể từ lần đầu"><input type="number" value={s.newDays} onChange={(e) => setS({ ...s, newDays: Number(e.target.value) })} className={inputCls} /></Field>
           <Field label="Có nguy cơ rời bỏ: không ghé quá (ngày)"><input type="number" value={s.winbackDays} onChange={(e) => setS({ ...s, winbackDays: Number(e.target.value) })} className={inputCls} /></Field>
           <Field label="Đã mất: không ghé quá (ngày)"><input type="number" value={s.lostDays} onChange={(e) => setS({ ...s, lostDays: Number(e.target.value) })} className={inputCls} /></Field>
