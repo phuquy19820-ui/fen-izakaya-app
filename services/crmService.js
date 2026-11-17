@@ -10,20 +10,21 @@ const PARSE_VERSION = 2;
 
 const DEFAULT_SETTINGS = {
   brand: 'FEN IZAKAYA',
-  // Chính sách hạng thành viên FEN (v4): Silver (cơ bản, khi để lại thông tin) -> Diamond -> Signature.
+  // Chính sách hạng thành viên FEN (v5): Silver (cơ bản, khi để lại thông tin) -> Gold (Vàng) -> Diamond (Kim cương).
+  // Mã hạng (key) giữ nguyên 'diamond' (= Gold) và 'luxury' (= Diamond) để không mất hạng đã gán tay cho khách.
   // Hạng chỉ xét theo TỔNG CHI TIÊU tại quán trong 12 tháng gần nhất (không xét theo điểm tích lũy); khách mới có 1 hóa đơn lớn được xếp hạng ngay.
-  policyVersion: 4,
+  policyVersion: 5,
   tierPeriod: 'rolling12',
   cardMonths: 12, // thẻ có hiệu lực 12 tháng kể từ ngày phát sinh
   expiryWarnDays: 30, // báo trước khi hạng sắp hết hạn
   tiers: [
-    { key: 'silver', name: 'FEN SILVER MEMBER', min: 0, newBillMin: 0, discountPct: 0, birthdayVoucher: 0, perks: ['Hạng thành viên cơ bản: khách để lại thông tin (số điện thoại) là có thẻ', 'Cập nhật chương trình và ưu đãi mới của FEN', 'Chi tiêu tích lũy để nâng lên hạng Diamond và Signature'] },
-    { key: 'diamond', name: 'FEN DIAMOND MEMBER', min: 15000000, newBillMin: 3000000, discountPct: 8, birthdayVoucher: 500000, perks: ['Giảm giá 8% trên tổng hóa đơn (không áp dụng đồng thời với các CTKM, combo khuyến mãi khác)', 'Voucher sinh nhật 500.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày, tặng 1 lần/năm)', 'Ưu tiên đặt bàn', 'Ưu đãi riêng theo từng tháng'] },
-    { key: 'luxury', name: 'FEN SIGNATURE MEMBER', min: 35000000, newBillMin: 9000000, discountPct: 15, birthdayVoucher: 1000000, perks: ['Giảm giá 15% trên tổng hóa đơn (không áp dụng đồng thời với các CTKM, combo khuyến mãi khác)', 'Voucher sinh nhật 1.000.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày, tặng 1 lần/năm)', 'Quà tặng đặc biệt hàng năm', 'Giữ bàn ưu tiên', 'Ưu tiên trải nghiệm món mới', 'Ưu tiên khu vực chỗ ngồi đẹp trong các dịp lễ cao điểm'] }
+    { key: 'silver', name: 'FEN SILVER MEMBER', min: 0, newBillMin: 0, discountPct: 0, birthdayVoucher: 0, perks: ['Hạng thành viên cơ bản: khách để lại thông tin (họ tên, số điện thoại) là có thẻ', 'Cập nhật chương trình và ưu đãi mới của FEN', 'Chi tiêu tích lũy để nâng lên hạng Gold và Diamond'] },
+    { key: 'diamond', name: 'FEN GOLD MEMBER', min: 20000000, newBillMin: 5000000, discountPct: 8, birthdayVoucher: 500000, perks: ['Chiết khấu trực tiếp 8% trên tổng hóa đơn (không áp dụng đồng thời với các CTKM, combo khuyến mãi khác)', 'Sinh nhật tặng voucher 500.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày, tặng 1 lần/năm)', 'Ưu tiên đặt bàn', 'Ưu đãi riêng theo từng tháng'] },
+    { key: 'luxury', name: 'FEN DIAMOND MEMBER', min: 40000000, newBillMin: 10000000, discountPct: 15, birthdayVoucher: 1000000, perks: ['Chiết khấu trực tiếp 15% trên tổng hóa đơn (không áp dụng đồng thời với các CTKM, combo khuyến mãi khác)', 'Sinh nhật tặng voucher 1.000.000đ + tặng bánh sinh nhật (hiệu lực 30 ngày, tặng 1 lần/năm)', 'Quà Tết (áp dụng khi Fen sản xuất được thẻ)', 'Giữ bàn ưu tiên', 'Ưu tiên trải nghiệm món mới', 'Ưu tiên khu vực chỗ ngồi đẹp trong các dịp lễ cao điểm'] }
   ],
   // Điều kiện sử dụng ưu đãi (hiển thị trên thẻ thành viên)
   terms: [
-    'Đã áp dụng giảm giá thành viên (8% / 15%) thì không áp dụng đồng thời với các chương trình khuyến mãi, combo khuyến mãi khác.',
+    'Đã áp dụng chiết khấu thành viên (8% / 15%) thì không áp dụng đồng thời với các chương trình khuyến mãi, combo khuyến mãi khác.',
     'Voucher sinh nhật chỉ tặng 1 lần/năm, hiệu lực 30 ngày, không ràng buộc điều kiện áp dụng khác.',
     'Hạng thành viên chỉ xét theo tổng chi tiêu tại quán (không xét theo điểm tích lũy): đủ mức thì nâng hạng, không duy trì đủ mức thì hạ hạng.'
   ],

@@ -10,7 +10,7 @@ const THEMES = {
 };
 const themeOf = (key) => THEMES[key] || THEMES.member;
 
-// Mẫu thẻ thiết kế riêng của FEN GROUP (ảnh trong /public/cards). Hạng Diamond dùng mẫu GOLD, hạng Signature dùng mẫu SIGNATURE.
+// Mẫu thẻ thiết kế riêng của FEN GROUP (ảnh trong /public/cards). Hạng Gold (mã 'diamond') dùng mẫu GOLD, hạng Diamond (mã 'luxury') dùng mẫu in chữ DIAMOND trên nền xanh navy.
 // Ảnh đã có sẵn thương hiệu + tên hạng; app chỉ chồng thêm thông tin hội viên lên một mảng mờ ở góc dưới bên trái.
 const ART = {
   // shadow: viền chữ nhẹ để đọc rõ trên họa tiết nổi; sh = màu bóng cho bản vẽ canvas

@@ -24,7 +24,7 @@ export async function api(method, url, body) {
   return j;
 }
 
-export const TIER_COLORS = { member: '#64748b', silver: '#94a3b8', gold: '#d97706', diamond: '#2563eb', luxury: '#111827' };
+export const TIER_COLORS = { member: '#64748b', silver: '#94a3b8', gold: '#d97706', diamond: '#b45309', luxury: '#1e3a8a' };
 export const SEGMENT_COLORS = { new: '#0ea5e9', loyal: '#16a34a', regular: '#64748b', at_risk: '#f59e0b', lost: '#dc2626', none: '#cbd5e1' };
 export const STAGE_LABEL = { new: 'Mới', consulting: 'Đang tư vấn', quoted: 'Đã báo giá', deposit: 'Đã đặt cọc', won: 'Thành công', lost: 'Thất bại' };
 export const STAGE_COLOR = { new: '#64748b', consulting: '#0ea5e9', quoted: '#8b5cf6', deposit: '#f59e0b', won: '#16a34a', lost: '#dc2626' };

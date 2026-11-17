@@ -27,7 +27,7 @@ export default function CrmSettings({ meta, reloadMeta }) {
   return (
     <div className="space-y-3">
       <Card title="Hạng thẻ thành viên">
-        <p className="text-sm text-gray-600 mb-3">Chính sách hạng FEN: hạng chỉ xét theo <b>tổng chi tiêu tại quán trong 12 tháng gần nhất</b> (không xét theo điểm tích lũy) để nâng hoặc hạ hạng. Hạng đầu tiên (0 đ) là hạng cơ bản <b>Silver</b>: khách để lại thông tin là có thẻ. Khách có <b>một hóa đơn trên mức "hóa đơn đầu tiên"</b> của hạng nào thì được xếp thẳng hạng đó (hiệu lực 12 tháng). Không duy trì đủ chi tiêu thì hạ xuống hạng thấp hơn (Signature → Diamond → Silver), không xóa thẻ. Khách VIP chiến lược / Celeb được xét chọn thủ công ở hồ sơ khách.</p>
+        <p className="text-sm text-gray-600 mb-3">Chính sách hạng FEN: hạng chỉ xét theo <b>tổng chi tiêu tại quán trong 12 tháng gần nhất</b> (không xét theo điểm tích lũy) để nâng hoặc hạ hạng. Hạng đầu tiên (0 đ) là hạng cơ bản <b>Silver</b>: khách để lại thông tin là có thẻ. Khách có <b>một hóa đơn trên mức "hóa đơn đầu tiên"</b> của hạng nào thì được xếp thẳng hạng đó (hiệu lực 12 tháng). Không duy trì đủ chi tiêu thì hạ xuống hạng thấp hơn (Diamond → Gold → Silver), không xóa thẻ. Khách VIP chiến lược / Celeb được xét chọn thủ công ở hồ sơ khách.</p>
         <div className="grid grid-cols-2 gap-3 mb-3" style={{ maxWidth: 520 }}>
           <Field label="Thẻ có hiệu lực (tháng)"><input type="number" value={s.cardMonths} onChange={(e) => setS({ ...s, cardMonths: Number(e.target.value) })} className={inputCls} /></Field>
           <Field label="Báo trước khi hết hạn (ngày)"><input type="number" value={s.expiryWarnDays} onChange={(e) => setS({ ...s, expiryWarnDays: Number(e.target.value) })} className={inputCls} /></Field>
