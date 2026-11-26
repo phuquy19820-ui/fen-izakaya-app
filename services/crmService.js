@@ -105,6 +105,9 @@ async function init(pool) {
   )`);
   await q('CREATE INDEX IF NOT EXISTS idx_crm_customers_phone ON crm_customers (phone)');
   await q('ALTER TABLE crm_customers ADD COLUMN IF NOT EXISTS social_link VARCHAR(300)');
+  await q('ALTER TABLE crm_customers ADD COLUMN IF NOT EXISTS consent VARCHAR(10)');
+  await q('ALTER TABLE crm_customers ADD COLUMN IF NOT EXISTS consent_at TIMESTAMP');
+  await q('ALTER TABLE crm_customers ADD COLUMN IF NOT EXISTS consent_by VARCHAR(120)');
   await q(`CREATE TABLE IF NOT EXISTS crm_interactions (
     id SERIAL PRIMARY KEY, customer_id INT NOT NULL, type VARCHAR(20) NOT NULL DEFAULT 'note', content TEXT, rating INT, outcome VARCHAR(120),
     user_id INT, user_name VARCHAR(120), follow_up_date DATE, created_at TIMESTAMP DEFAULT NOW()
@@ -225,6 +228,39 @@ function segmentFor(c, settings, today) {
   if (c.visits >= 4) return 'loyal';
   return 'regular';
 }
+// ---- RFM (Recency - Frequency - Monetary): chấm 1-5 điểm mỗi tiêu chí rồi xếp nhóm theo lưới chuẩn
+const RFM_SEGMENTS = {
+  champions: 'Khách VIP (Champions)', loyal: 'Trung thành', potential: 'Tiềm năng trung thành', new: 'Khách mới', need_attention: 'Cần chú ý',
+  cant_lose: 'Không thể mất', at_risk: 'Có nguy cơ rời bỏ', sleepy: 'Sắp ngủ đông', lost: 'Đã mất'
+};
+const rScore = (days) => (days <= 30 ? 5 : days <= 60 ? 4 : days <= 90 ? 3 : days <= 180 ? 2 : 1);
+const fScore = (v12) => (v12 >= 6 ? 5 : v12 >= 4 ? 4 : v12 === 3 ? 3 : v12 === 2 ? 2 : 1);
+function rfmSegment(r, f, m) {
+  const fm = (f + m) / 2;
+  if (f === 1 && r >= 4) return 'new';
+  if (r >= 4 && fm >= 4) return 'champions';
+  if (r >= 3 && fm >= 3) return 'loyal';
+  if (r >= 4) return 'potential';
+  if (r === 3) return 'need_attention';
+  if (r <= 2 && fm >= 4) return 'cant_lose';
+  if (r <= 2 && fm >= 3) return 'at_risk';
+  if (r === 2) return 'sleepy';
+  return 'lost';
+}
+// M chấm theo ngũ phân vị chi tiêu 12 tháng của các khách đang xét
+function applyRfm(list) {
+  const act = list.filter((c) => c.visits > 0 && c.status !== 'inactive');
+  const vals = act.map((c) => c.spend12).sort((a, b) => a - b);
+  const cut = [0.2, 0.4, 0.6, 0.8].map((q) => (vals.length ? vals[Math.min(vals.length - 1, Math.floor(q * vals.length))] : 0));
+  act.forEach((c) => {
+    const r = rScore(c.recencyDays == null ? 9999 : c.recencyDays);
+    const f = fScore(c.visits12 || 0);
+    const m = c.spend12 > 0 ? 1 + cut.filter((x) => c.spend12 > x).length : 1;
+    const seg = rfmSegment(r, f, m);
+    c.rfm = { r, f, m, code: `${r}${f}${m}`, seg, label: RFM_SEGMENTS[seg] };
+  });
+}
+
 const SEGMENTS = { new: 'Khách mới', one_time: 'Ghé 1 lần, chưa quay lại', loyal: 'Thân thiết', regular: 'Thường xuyên', at_risk: 'Có nguy cơ rời bỏ', lost: 'Đã mất', none: 'Chưa phát sinh' };
 
 async function loadAll(pool, force = false) {
@@ -314,11 +350,14 @@ async function loadAll(pool, force = false) {
       tier: tier.key, tierName: tier.name, tierMetric: metric, tierSource: source, validUntil, expiresInDays, expiringSoon: !!validUntil && expiresInDays <= (settings.expiryWarnDays || 30), afterTierName: afterLevel === null ? '' : tiers[afterLevel].name, firstBill: fb, discountPct: tier.discountPct || 0,
       nextTier: next ? { key: next.key, name: next.name, min: next.min, need: Math.max(0, next.min - metric), newBillMin: next.newBillMin || 0 } : null,
       points: Math.max(0, Math.floor(spend / settings.pointsRate) + Number(c.ledger_points || 0)),
-      recencyDays: lastVisit ? daysBetween(lastVisit, today) : null
+      recencyDays: lastVisit ? daysBetween(lastVisit, today) : null,
+      visits12: inv12.filter((r) => r.d >= addDaysStr(today, -365)).length,
+      consent: c.consent || '', consentAt: c.consent_at || null, consentBy: c.consent_by || ''
     };
     obj.segment = segmentFor(obj, settings, today);
     return obj;
   });
+  applyRfm(list);
   cache.data = { settings, list, today };
   cache.at = Date.now();
   return cache.data;
@@ -351,4 +390,4 @@ function maskFor(c, scope, settings, today) {
   return out;
 }
 
-module.exports = { isDummyPhone, phoneIssue, init, getSettings, saveSettings, loadAll, invalidate, syncCustomers, parseCustomerName, scopeFor, visibleTo, maskFor, newToken, DEFAULT_SETTINGS, SEGMENTS, todayVn, daysBetween, REV };
+module.exports = { RFM_SEGMENTS, isDummyPhone, phoneIssue, init, getSettings, saveSettings, loadAll, invalidate, syncCustomers, parseCustomerName, scopeFor, visibleTo, maskFor, newToken, DEFAULT_SETTINGS, SEGMENTS, todayVn, daysBetween, REV };

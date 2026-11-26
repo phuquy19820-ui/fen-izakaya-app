@@ -16,6 +16,7 @@ export default function ContactBar({ customer, settings, onLogged, compact = fal
   const [note, setNote] = useState('');
   const c = customer;
   const msg = edited ? text : fillTpl((tpls[idx] || {}).text, c, settings);
+  const optOut = c.consent === 'no'; // khách từ chối nhận tin: không gửi Zalo/SMS/mạng xã hội
   const hasPhone = !!c.phone;
   const social = c.socialLink ? (/^https?:\/\//i.test(c.socialLink) ? c.socialLink : 'https://' + c.socialLink) : '';
 
@@ -25,6 +26,7 @@ export default function ContactBar({ customer, settings, onLogged, compact = fal
     if (onLogged) onLogged();
   };
   const go = async (kind) => {
+    if (optOut && kind !== 'call' && kind !== 'copy') { setNote('Khách đã TỪ CHỐI nhận tin ưu đãi — không gửi tin nhắn. Chỉ liên hệ khi khách chủ động.'); return; }
     if (kind === 'zalo') { const ok = await copy(); window.open(`https://zalo.me/${phone84(c.phone)}`, '_blank', 'noopener'); setNote(ok ? 'Đã sao chép tin nhắn — dán vào khung chat Zalo rồi gửi.' : 'Đã mở Zalo — hãy tự dán tin nhắn.'); await log('zalo', 'Gửi Zalo'); }
     else if (kind === 'call') { window.location.href = `tel:${c.phone}`; await log('call', 'Gọi điện cho khách'); }
     else if (kind === 'sms') { window.location.href = `sms:${c.phone}?body=${encodeURIComponent(msg)}`; await log('sms', 'Gửi SMS'); }
@@ -42,13 +44,15 @@ export default function ContactBar({ customer, settings, onLogged, compact = fal
       )}
       {!compact && <textarea rows={3} value={msg} onChange={(e) => { setText(e.target.value); setEdited(true); }} className={inputCls} />}
       <div className="flex flex-wrap items-center gap-1.5">
-        {hasPhone && <button onClick={() => go('zalo')} className={btn} style={{ background: '#0068ff', color: '#fff', borderColor: '#0068ff' }}>💬 Zalo</button>}
+        {hasPhone && <button disabled={optOut} onClick={() => go('zalo')} className={btn + (optOut ? ' opacity-40' : '')} style={{ background: '#0068ff', color: '#fff', borderColor: '#0068ff' }}>💬 Zalo</button>}
         {hasPhone && <button onClick={() => go('call')} className={btn + ' bg-white'}>📞 Gọi</button>}
-        {hasPhone && <button onClick={() => go('sms')} className={btn + ' bg-white'}>✉️ SMS</button>}
+        {hasPhone && <button disabled={optOut} onClick={() => go('sms')} className={btn + ' bg-white' + (optOut ? ' opacity-40' : '')}>✉️ SMS</button>}
         {social && <button onClick={() => go('social')} className={btn} style={{ background: '#1877f2', color: '#fff', borderColor: '#1877f2' }}>📘 Facebook</button>}
         <button onClick={() => go('copy')} className={btn + ' bg-white'}>📋 Chép tin</button>
         {!hasPhone && !social && <span className="text-xs text-gray-500">Khách chưa có số điện thoại / link mạng xã hội.</span>}
       </div>
+      {optOut && <div className="text-xs text-red-600 font-semibold">⛔ Khách từ chối nhận tin ưu đãi — đã khóa nút nhắn tin.</div>}
+      {!optOut && !c.consent && !compact && <div className="text-xs text-amber-700">⚠ Chưa ghi nhận khách đồng ý nhận tin ưu đãi — chỉ nên nhắn tin chăm sóc/giao dịch, hãy hỏi và ghi nhận sự đồng ý.</div>}
       {note && <div className="text-xs text-green-700 font-semibold">{note}</div>}
     </div>
   );

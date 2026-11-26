@@ -52,7 +52,7 @@ function register(app, pool) {
     }).filter(Boolean);
   };
   const slim = (c) => ({
-    id: c.id, memberCode: c.memberCode, name: c.name, phone: c.phone, phoneIssue: c.phoneIssue, source: c.source, tier: c.tier, tierName: c.tierName, segment: c.segment, visits: c.visits, lastVisit: c.lastVisit,
+    id: c.id, memberCode: c.memberCode, name: c.name, phone: c.phone, phoneIssue: c.phoneIssue, rfm: c.rfm, consent: c.consent, source: c.source, tier: c.tier, tierName: c.tierName, segment: c.segment, visits: c.visits, lastVisit: c.lastVisit,
     spend: c.spend, spend12: c.spend12, points: c.points, tags: c.tags, status: c.status, branches: c.branches, birthday: c.birthday, ownerId: c.ownerId, recencyDays: c.recencyDays,
     lastContact: c.lastContact, avgBill: c.avgBill, email: c.email, refBy: c.refBy
   });
@@ -62,7 +62,7 @@ function register(app, pool) {
   app.get('/api/crm/meta', wrap(async (req, res) => {
     const ctx = await context(req);
     const users = (await pool.query('SELECT id, full_name, username, role FROM app_users WHERE active ORDER BY full_name')).rows.map((u) => ({ id: u.id, name: u.full_name || u.username, role: u.role }));
-    res.json({ success: true, data: { user: req.user, branches: ctx.branches, settings: ctx.data.settings, segments: crm.SEGMENTS, users, stages: STAGES, interactionTypes: INTERACTION_TYPES } });
+    res.json({ success: true, data: { user: req.user, branches: ctx.branches, settings: ctx.data.settings, segments: crm.SEGMENTS, rfmSegments: crm.RFM_SEGMENTS, users, stages: STAGES, interactionTypes: INTERACTION_TYPES } });
   }));
 
   // ---- danh sách khách
@@ -81,6 +81,8 @@ function register(app, pool) {
     if (q.source) out = out.filter((c) => c.source === q.source);
     if (q.tier) out = out.filter((c) => c.tier === q.tier);
     if (q.segment) out = out.filter((c) => c.segment === q.segment);
+    if (q.rfm) out = out.filter((c) => c.rfm && c.rfm.seg === q.rfm);
+    if (q.consent) out = out.filter((c) => (q.consent === 'unknown' ? !c.consent : c.consent === q.consent));
     if (q.tag) out = out.filter((c) => c.tags.includes(q.tag));
     if (q.owner) out = out.filter((c) => String(c.ownerId || '') === String(q.owner));
     if (q.hasPhone === '1') out = out.filter((c) => c.phone);
@@ -170,6 +172,16 @@ function register(app, pool) {
     const raw = ctx.data.list.find((c) => c.id === id);
     if (!raw || !crm.visibleTo(raw, ctx.scope)) return res.status(404).json({ success: false, message: 'Không tìm thấy khách hàng' });
     const b = req.body || {};
+    if (b.phone !== undefined) {
+      let dg = String(b.phone || '').replace(/\D/g, '');
+      if (dg.startsWith('84') && dg.length >= 11) dg = '0' + dg.slice(2);
+      if (dg) {
+        if (crm.isDummyPhone(dg)) return res.status(400).json({ success: false, message: 'Số điện thoại không hợp lệ (số giả / dãy số lặp). Hãy nhập số điện thoại thật của khách.' });
+        const dup = (await pool.query('SELECT id, name FROM crm_customers WHERE phone = $1 AND id <> $2 LIMIT 1', [dg, id])).rows[0];
+        if (dup) return res.status(409).json({ success: false, message: `Số điện thoại này đã thuộc khách "${dup.name}" — mỗi khách chỉ nên có một hồ sơ.` });
+      }
+      b.phone = dg;
+    }
     const sets = [];
     const vals = [id];
     const set = (col, v) => { vals.push(v); sets.push(`${col} = $${vals.length}`); };
@@ -183,6 +195,9 @@ function register(app, pool) {
     });
     if (Array.isArray(b.tags)) set('tags', b.tags.map((t) => str(t, 30)).filter(Boolean).slice(0, 20));
     if (b.status !== undefined && ['active', 'inactive', 'vip', 'blacklist'].includes(b.status)) set('status', b.status);
+    if (b.consent !== undefined && ['yes', 'no', ''].includes(b.consent) && b.consent !== (raw.consent || '')) {
+      set('consent', b.consent || null); set('consent_at', b.consent ? new Date() : null); set('consent_by', b.consent ? req.user.fullName : null);
+    }
     if (b.ownerId !== undefined) set('owner_id', b.ownerId ? Number(b.ownerId) : null);
     if (b.branchId !== undefined && raw.isManual) set('branch_id', b.branchId || null);
     if (b.tierOverride !== undefined) {
@@ -202,6 +217,7 @@ function register(app, pool) {
     const phone = str(b.phone, 20).replace(/[^\d+]/g, '');
     let digits = phone.replace(/\D/g, '');
     if (digits.startsWith('84') && digits.length >= 11) digits = '0' + digits.slice(2);
+    if (digits && crm.isDummyPhone(digits)) return res.status(400).json({ success: false, message: 'Số điện thoại không hợp lệ (số giả / dãy số lặp). Hãy nhập số điện thoại thật của khách.' });
     const key = digits ? 'p:' + digits : 'm:' + crm.newToken();
     if (digits) {
       const ex = (await pool.query('SELECT id, name FROM crm_customers WHERE cust_key = $1', [key])).rows[0];
@@ -265,6 +281,11 @@ function register(app, pool) {
     if (!needManager(req, res)) return;
     const pts = Math.round(Number(req.body.points));
     if (!Number.isFinite(pts) || pts === 0) return res.status(400).json({ success: false, message: 'Nhập số điểm cộng (+) hoặc trừ (-)' });
+    if (pts < 0) {
+      const cur = (await crm.loadAll(pool)).list.find((c) => c.id === Number(req.params.id));
+      if (!cur) return res.status(404).json({ success: false, message: 'Không tìm thấy khách hàng' });
+      if (-pts > cur.points) return res.status(400).json({ success: false, message: `Khách chỉ có ${cur.points} điểm, không thể trừ ${-pts} điểm.` });
+    }
     await pool.query('INSERT INTO crm_points_ledger (customer_id, points, reason, user_id, user_name) VALUES ($1,$2,$3,$4,$5)', [Number(req.params.id), pts, str(req.body.reason, 200) || (pts > 0 ? 'Cộng điểm' : 'Đổi quà / trừ điểm'), req.user.id, req.user.fullName]);
     crm.invalidate();
     res.json({ success: true });
@@ -519,6 +540,8 @@ function register(app, pool) {
         top10share: totalSpend ? top10pct / totalSpend : 0, atRiskVip: rawAll.filter((c) => c.segment === 'at_risk' && c.tier !== ctx.data.settings.tiers[0].key).length, totalPoints: list.reduce((a, c) => a + c.points, 0)
       },
       tiers: ctx.data.settings.tiers.map((t) => ({ key: t.key, label: t.name, n: list.filter((c) => c.tier === t.key).length })),
+      rfm: (() => { const m = {}; list.forEach((c) => { if (c.rfm) m[c.rfm.seg] = (m[c.rfm.seg] || 0) + 1; }); return Object.entries(crm.RFM_SEGMENTS).map(([key, label]) => ({ key, label, n: m[key] || 0 })); })(),
+      consent: { yes: count((c) => c.consent === 'yes'), no: count((c) => c.consent === 'no'), unknown: count((c) => !c.consent) },
       segments: tally((c) => c.segment, crm.SEGMENTS), sources: tally((c) => c.source || 'Không rõ nguồn').slice(0, 10), monthly, birthdays,
       topCustomers: [...withVisits].sort((a, b) => (ctx.month ? b.spend - a.spend : b.spend12 - a.spend12)).slice(0, 10).map(slim),
       atRisk: rawAll.filter((c) => c.segment === 'at_risk').sort((a, b) => b.spend12 - a.spend12).slice(0, 8).map(slim),

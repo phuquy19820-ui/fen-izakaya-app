@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getCrmMonth, api, Card, Kpi, ChartBox, Table, TierBadge, SegmentBadge, money, num, pc, fmtDate, STAGE_LABEL, STAGE_COLOR, TIER_COLORS, SEGMENT_COLORS } from './ui';
+import { getCrmMonth, api, Card, Kpi, ChartBox, Table, TierBadge, SegmentBadge, money, num, pc, fmtDate, STAGE_LABEL, STAGE_COLOR, TIER_COLORS, SEGMENT_COLORS, RFM_COLORS } from './ui';
 
 export default function CrmDashboard({ meta, go }) {
   const [d, setD] = useState(null);
@@ -34,9 +34,13 @@ export default function CrmDashboard({ meta, go }) {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-3">
         <Card title="Phân khúc vòng đời khách hàng (theo lần ghé gần nhất & tần suất)">
           <ChartBox type="bar" height={220} data={{ labels: d.segments.map((s) => s.label), datasets: [{ label: 'Số khách', data: d.segments.map((s) => s.n), backgroundColor: d.segments.map((s) => SEGMENT_COLORS[s.key] || '#64748b') }] }} options={{ indexAxis: 'y', plugins: { legend: { display: false } } }} />
+        </Card>
+        <Card title="Phân khúc RFM (Recency · Frequency · Monetary — chấm 1-5)">
+          <ChartBox type="bar" height={220} data={{ labels: d.rfm.map((s) => `${s.label} (${s.n})`), datasets: [{ label: 'Số khách', data: d.rfm.map((s) => s.n), backgroundColor: d.rfm.map((s) => RFM_COLORS[s.key] || '#64748b') }] }} options={{ indexAxis: 'y', plugins: { legend: { display: false } } }} />
+          <p className="text-xs text-gray-500 mt-1">R: lần ghé gần nhất (≤30 ngày = 5 … &gt;180 ngày = 1). F: số ngày ghé trong 12 tháng (1,2,3,4-5,≥6). M: chi tiêu 12 tháng theo ngũ phân vị. Đồng ý nhận tin: {d.consent.yes} đồng ý · {d.consent.no} từ chối · {d.consent.unknown} chưa hỏi.</p>
         </Card>
         <Card title="Nguồn khách">
           <ChartBox type="doughnut" height={220} data={{ labels: d.sources.map((s) => `${s.label} (${s.n})`), datasets: [{ data: d.sources.map((s) => s.n), backgroundColor: ['#1d4ed8', '#16a34a', '#f59e0b', '#8b5cf6', '#0ea5e9', '#dc2626', '#14b8a6', '#64748b', '#a855f7', '#ea580c'] }] }} options={{ plugins: { legend: { position: 'right' } } }} />

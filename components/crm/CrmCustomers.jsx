@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { api, Card, Table, TierBadge, SegmentBadge, Modal, Field, inputCls, money, num, fmtDate } from './ui';
+import { api, Card, Table, TierBadge, SegmentBadge, Modal, Field, inputCls, money, num, fmtDate, RfmBadge } from './ui';
 
 const SORTS = [['spend', 'Tổng chi tiêu'], ['spend12', 'Chi tiêu 12 tháng'], ['visits', 'Số lần ghé'], ['lastVisit', 'Lần ghé gần nhất'], ['points', 'Điểm'], ['avgBill', 'Bill trung bình'], ['name', 'Tên'], ['memberNo', 'Mã thành viên']];
 
 export default function CrmCustomers({ meta, go, isManager, branch = '' }) {
-  const [f, setF] = useState({ q: '', branch: '', source: '', tier: '', segment: '', tag: '', owner: '', status: 'active', hasPhone: '', noVisitDays: '', birthdayMonth: '', minSpend: '', maxSpend: '', sort: 'spend', dir: 'desc' });
+  const [f, setF] = useState({ q: '', branch: '', source: '', tier: '', segment: '', rfm: '', consent: '', tag: '', owner: '', status: 'active', hasPhone: '', noVisitDays: '', birthdayMonth: '', minSpend: '', maxSpend: '', sort: 'spend', dir: 'desc' });
   const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -40,6 +40,8 @@ export default function CrmCustomers({ meta, go, isManager, branch = '' }) {
           {!branch && <Field label="Chi nhánh"><select value={f.branch} onChange={(e) => set('branch', e.target.value)} className={inputCls}><option value="">Tất cả</option>{meta.branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}</select></Field>}
           <Field label="Hạng thẻ"><select value={f.tier} onChange={(e) => set('tier', e.target.value)} className={inputCls}><option value="">Tất cả</option>{meta.settings.tiers.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}</select></Field>
           <Field label="Phân khúc"><select value={f.segment} onChange={(e) => set('segment', e.target.value)} className={inputCls}><option value="">Tất cả</option>{Object.entries(meta.segments).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+          <Field label="Phân khúc RFM"><select value={f.rfm} onChange={(e) => set('rfm', e.target.value)} className={inputCls}><option value="">Tất cả</option>{Object.entries(meta.rfmSegments || {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+          <Field label="Đồng ý nhận tin"><select value={f.consent} onChange={(e) => set('consent', e.target.value)} className={inputCls}><option value="">Tất cả</option><option value="yes">Đồng ý</option><option value="no">Từ chối</option><option value="unknown">Chưa hỏi</option></select></Field>
           <Field label="Sắp xếp"><select value={f.sort} onChange={(e) => set('sort', e.target.value)} className={inputCls}>{SORTS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
           <button onClick={() => set('dir', f.dir === 'desc' ? 'asc' : 'desc')} className="border rounded-lg px-3 py-1.5 text-sm font-bold bg-white" title="Đảo chiều sắp xếp">{f.dir === 'desc' ? '↓ Giảm dần' : '↑ Tăng dần'}</button>
           <button onClick={() => setMore((v) => !v)} className="border rounded-lg px-3 py-1.5 text-sm font-bold bg-white">⚙ Lọc nâng cao</button>
@@ -67,6 +69,7 @@ export default function CrmCustomers({ meta, go, isManager, branch = '' }) {
           { label: 'Khách hàng', render: (r) => <div><div className="font-semibold">{r.name}{r.status === 'vip' ? ' ⭐' : ''}</div><div className="text-xs text-gray-500">{r.memberCode}{r.phone ? ' · ' + r.phone : ''}{r.phoneIssue ? <span title="Số điện thoại sai định dạng (di động 10 số) — kiểm tra lại để liên hệ được khách" className="text-orange-600 font-bold"> ⚠ SĐT?</span> : null}{r.source ? ' · ' + r.source : ''}</div></div> },
           { label: 'Hạng', render: (r) => <TierBadge tier={r.tier} name={r.tierName} /> },
           { label: 'Phân khúc', render: (r) => <SegmentBadge segment={r.segment} label={meta.segments[r.segment]} /> },
+          { label: 'RFM', render: (r) => <RfmBadge rfm={r.rfm} /> },
           { label: 'Chi nhánh', render: (r) => <span className="text-xs">{r.branches.map((b) => (meta.branches.find((x) => x.branch_id === b) || {}).branch_name || b).join(', ')}</span> },
           { label: 'Lần ghé', align: 'right', render: (r) => r.visits },
           { label: 'Gần nhất', render: (r) => (r.lastVisit ? <span>{fmtDate(r.lastVisit)} <span className="text-xs text-gray-500">({r.recencyDays}n)</span></span> : '—') },

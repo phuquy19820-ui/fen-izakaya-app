@@ -1,7 +1,7 @@
 import ContactBar from './Contact';
 import React, { useEffect, useState, useCallback } from 'react';
 import MemberCard, { SaveCardButton, CopyLink } from './MemberCard';
-import { api, Card, Kpi, Table, TierBadge, SegmentBadge, Badge, Field, inputCls, ChartBox, money, num, fmtDate, fmtDateTime, TYPE_LABEL, STAGE_LABEL, STAGE_COLOR } from './ui';
+import { api, Card, Kpi, Table, TierBadge, SegmentBadge, RfmBadge, Badge, Field, inputCls, ChartBox, money, num, fmtDate, fmtDateTime, TYPE_LABEL, STAGE_LABEL, STAGE_COLOR } from './ui';
 
 const TABS = [['overview', 'Hồ sơ'], ['visits', 'Lịch sử ghé'], ['favorites', 'Món yêu thích'], ['interactions', 'Tương tác'], ['tasks', 'Công việc'], ['deals', 'Cơ hội'], ['points', 'Điểm & hạng']];
 
@@ -61,6 +61,9 @@ export default function CrmCustomerDetail({ id, meta, go, isManager }) {
               <h2 className="text-xl font-extrabold">{c.name}</h2>
               <TierBadge tier={c.tier} name={c.tierName} />
               <SegmentBadge segment={c.segment} label={meta.segments[c.segment]} />
+              <RfmBadge rfm={c.rfm} />
+              {c.consent === 'no' && <Badge color="#dc2626">Từ chối nhận tin</Badge>}
+              {c.consent === 'yes' && <Badge color="#16a34a">Đồng ý nhận tin</Badge>}
               {c.status !== 'active' && <Badge color={c.status === 'vip' ? '#d97706' : '#dc2626'}>{{ vip: 'VIP', blacklist: 'Danh sách đen', inactive: 'Ngừng chăm sóc' }[c.status]}</Badge>}
               {c.tierOverride && <Badge color="#8b5cf6">Hạng chỉnh tay</Badge>}
             </div>
@@ -102,7 +105,7 @@ export default function CrmCustomerDetail({ id, meta, go, isManager }) {
 
 function Overview({ d, meta, isManager, reload, go }) {
   const c = d.customer;
-  const [v, setV] = useState({ name: c.name, phone: c.phone, email: c.email, gender: c.gender, birthday: c.birthday, address: c.address, company: c.company, source: c.source, socialLink: c.socialLink || '', notes: c.notes, preferences: c.preferences, allergies: c.allergies, tags: c.tags.join(', '), status: c.status, ownerId: c.ownerId || '', tierOverride: c.tierOverride });
+  const [v, setV] = useState({ name: c.name, phone: c.phone, email: c.email, gender: c.gender, birthday: c.birthday, address: c.address, company: c.company, source: c.source, socialLink: c.socialLink || '', notes: c.notes, preferences: c.preferences, allergies: c.allergies, tags: c.tags.join(', '), status: c.status, ownerId: c.ownerId || '', tierOverride: c.tierOverride, consent: c.consent || '' });
   const [msg, setMsg] = useState('');
   const save = async () => {
     const j = await api('PUT', `/api/crm/customers/${c.id}`, { ...v, tags: v.tags.split(',').map((t) => t.trim()).filter(Boolean), ownerId: v.ownerId || null });
@@ -132,6 +135,7 @@ function Overview({ d, meta, isManager, reload, go }) {
         <Field label="Ghi chú chung" className="md:col-span-3"><textarea rows={3} value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} className={inputCls} /></Field>
         <Field label="Thẻ (tags), cách nhau dấu phẩy"><input value={v.tags} onChange={(e) => setV({ ...v, tags: e.target.value })} placeholder="VIP, khách công ty, thích sake" className={inputCls} /></Field>
         <Field label="Trạng thái"><select value={v.status} onChange={(e) => setV({ ...v, status: e.target.value })} className={inputCls}><option value="active">Đang chăm sóc</option><option value="vip">VIP</option><option value="blacklist">Danh sách đen</option><option value="inactive">Ngừng chăm sóc</option></select></Field>
+        <Field label="Đồng ý nhận tin ưu đãi (Zalo/SMS/Email)"><select value={v.consent} onChange={(e) => setV({ ...v, consent: e.target.value })} className={inputCls}><option value="">Chưa hỏi ý kiến</option><option value="yes">Khách đồng ý</option><option value="no">Khách từ chối</option></select>{c.consentAt && <div className="text-xs text-gray-500 mt-0.5">Ghi nhận {fmtDateTime(c.consentAt)}{c.consentBy ? ' bởi ' + c.consentBy : ''}</div>}</Field>
         <Field label="Nhân viên phụ trách"><select value={v.ownerId} onChange={(e) => setV({ ...v, ownerId: e.target.value })} className={inputCls}><option value="">Chưa gán</option>{meta.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></Field>
         {isManager && <Field label="Xét chọn hạng thủ công (VIP chiến lược, Celeb… — bỏ qua chi tiêu)"><select value={v.tierOverride} onChange={(e) => setV({ ...v, tierOverride: e.target.value })} className={inputCls}><option value="">Tự động theo chi tiêu</option>{d.settings.tiers.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}</select></Field>}
       </div>

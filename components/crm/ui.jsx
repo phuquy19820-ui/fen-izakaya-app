@@ -26,6 +26,8 @@ export async function api(method, url, body) {
 
 export const TIER_COLORS = { member: '#64748b', silver: '#94a3b8', gold: '#d97706', diamond: '#b45309', luxury: '#1e3a8a' };
 export const SEGMENT_COLORS = { new: '#0ea5e9', loyal: '#16a34a', regular: '#64748b', at_risk: '#f59e0b', one_time: '#8b5cf6', lost: '#dc2626', none: '#cbd5e1' };
+export const RFM_COLORS = { champions: '#15803d', loyal: '#22c55e', potential: '#0ea5e9', new: '#38bdf8', need_attention: '#eab308', cant_lose: '#7c3aed', at_risk: '#f59e0b', sleepy: '#94a3b8', lost: '#dc2626' };
+export const CONSENT_LABEL = { yes: 'Đồng ý nhận tin', no: 'Từ chối nhận tin', '': 'Chưa hỏi ý kiến' };
 export const STAGE_LABEL = { new: 'Mới', consulting: 'Đang tư vấn', quoted: 'Đã báo giá', deposit: 'Đã đặt cọc', won: 'Thành công', lost: 'Thất bại' };
 export const STAGE_COLOR = { new: '#64748b', consulting: '#0ea5e9', quoted: '#8b5cf6', deposit: '#f59e0b', won: '#16a34a', lost: '#dc2626' };
 export const TYPE_LABEL = { note: '📝 Ghi chú', call: '📞 Gọi điện', zalo: '💬 Zalo', sms: '✉️ SMS', messenger: '📘 Facebook', email: '📧 Email', meeting: '🤝 Gặp trực tiếp', visit: '🍽 Ghé quán', feedback: '⭐ Phản hồi', complaint: '⚠️ Khiếu nại' };
@@ -34,6 +36,7 @@ export function Badge({ color = '#64748b', children, solid = false }) {
   return <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700, color: solid ? '#fff' : color, background: solid ? color : color + '1a', border: `1px solid ${color}55`, whiteSpace: 'nowrap' }}>{children}</span>;
 }
 export const TierBadge = ({ tier, name }) => <Badge color={TIER_COLORS[tier] || '#64748b'} solid={tier === 'luxury' || tier === 'diamond' || tier === 'gold'}>{name || tier}</Badge>;
+export const RfmBadge = ({ rfm, label }) => (rfm ? <span title={`R${rfm.r} · F${rfm.f} · M${rfm.m} (Recency / Frequency / Monetary, thang 1-5)`}><Badge color={RFM_COLORS[rfm.seg] || '#64748b'}>{label || rfm.label} <span style={{ opacity: 0.7 }}>{rfm.code}</span></Badge></span> : <span className="text-gray-300">—</span>);
 export const SegmentBadge = ({ segment, label }) => <Badge color={SEGMENT_COLORS[segment] || '#64748b'}>{label || segment}</Badge>;
 
 export function Card({ title, right, children, className = '', pad = true }) {
