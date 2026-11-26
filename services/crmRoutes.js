@@ -53,7 +53,7 @@ function register(app, pool) {
   };
   const slim = (c) => ({
     id: c.id, memberCode: c.memberCode, name: c.name, phone: c.phone, phoneIssue: c.phoneIssue, rfm: c.rfm, consent: c.consent, source: c.source, tier: c.tier, tierName: c.tierName, segment: c.segment, visits: c.visits, lastVisit: c.lastVisit,
-    spend: c.spend, spend12: c.spend12, points: c.points, tags: c.tags, status: c.status, branches: c.branches, birthday: c.birthday, ownerId: c.ownerId, recencyDays: c.recencyDays,
+    spend: c.spend, spend12: c.spend12, points: c.points, pointsExpireOn: c.pointsExpireOn, pointsExpiring: c.pointsExpiring, tags: c.tags, status: c.status, branches: c.branches, birthday: c.birthday, ownerId: c.ownerId, recencyDays: c.recencyDays,
     lastContact: c.lastContact, avgBill: c.avgBill, email: c.email, refBy: c.refBy
   });
   const branchAllowedSql = (ctx) => (ctx.scope ? Array.from(ctx.scope) : ctx.allIds);
@@ -537,7 +537,9 @@ function register(app, pool) {
         total: list.length, withPhone: count((c) => c.phone), withVisits: withVisits.length, newThisMonth: withVisitsAll.filter((c) => c.firstVisit.startsWith(ym)).length,
         newLastMonth: withVisitsAll.filter((c) => c.firstVisit.startsWith(prevYm)).length, active90: count((c) => c.recencyDays !== null && c.recencyDays <= 90),
         returningRate: withVisits.length ? (ctx.month ? withVisits.filter((c) => { const r = rawByKey.get(c.key); return r && r.firstVisit && r.firstVisit < ym + '-01'; }).length : withVisits.filter((c) => c.visits >= 2).length) / withVisits.length : 0, avgSpend: withVisits.length ? totalSpend / withVisits.length : 0,
-        top10share: totalSpend ? top10pct / totalSpend : 0, atRiskVip: rawAll.filter((c) => c.segment === 'at_risk' && c.tier !== ctx.data.settings.tiers[0].key).length, totalPoints: list.reduce((a, c) => a + c.points, 0)
+        top10share: totalSpend ? top10pct / totalSpend : 0, atRiskVip: rawAll.filter((c) => c.segment === 'at_risk' && c.tier !== ctx.data.settings.tiers[0].key).length, totalPoints: list.reduce((a, c) => a + c.points, 0),
+        pointsExpiring30: list.filter((c) => c.pointsExpiring > 0 && crm.daysBetween(today, c.pointsExpireOn) <= 30).length,
+        pointsExpiring30Sum: list.filter((c) => c.pointsExpiring > 0 && crm.daysBetween(today, c.pointsExpireOn) <= 30).reduce((a, c) => a + c.pointsExpiring, 0)
       },
       tiers: ctx.data.settings.tiers.map((t) => ({ key: t.key, label: t.name, n: list.filter((c) => c.tier === t.key).length })),
       rfm: (() => { const m = {}; list.forEach((c) => { if (c.rfm) m[c.rfm.seg] = (m[c.rfm.seg] || 0) + 1; }); return Object.entries(crm.RFM_SEGMENTS).map(([key, label]) => ({ key, label, n: m[key] || 0 })); })(),
@@ -602,7 +604,7 @@ function register(app, pool) {
     const pct = next ? Math.min(100, Math.max(0, Math.round(((c.tierMetric - cur.min) / Math.max(1, next.min - cur.min)) * 100))) : 100;
     const phone = c.phone ? c.phone.slice(0, 3) + '****' + c.phone.slice(-3) : '';
     res.json({ success: true, data: {
-      brand: data.settings.brand, name: c.name, memberCode: c.memberCode, phone, tier: c.tier, tierName: c.tierName, perks: cur.perks, points: c.points,
+      brand: data.settings.brand, name: c.name, memberCode: c.memberCode, phone, tier: c.tier, tierName: c.tierName, perks: cur.perks, points: c.points, pointsExpireOn: c.pointsExpireOn, pointsExpiring: c.pointsExpiring, pointsValidYears: data.settings.pointsValidYears,
       since: (c.firstVisit || String(c.createdAt || '').slice(0, 10)), visits: c.visits,
       next: next ? { name: next.name, need: Math.max(0, next.min - c.tierMetric), pct } : null, period: data.settings.tierPeriod, validUntil: c.validUntil, expiringSoon: c.expiringSoon, afterTierName: c.afterTierName, tierSource: c.tierSource, terms: data.settings.terms, discountPct: c.discountPct,
       tiers: tiers.map((t) => ({ key: t.key, name: t.name, min: t.min }))

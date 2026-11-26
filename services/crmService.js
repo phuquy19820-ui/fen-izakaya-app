@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS = {
     'Hạng thành viên chỉ xét theo tổng chi tiêu tại quán (không xét theo điểm tích lũy): đủ mức thì nâng hạng, không duy trì đủ mức thì hạ hạng.'
   ],
   pointsRate: 10000, // 10.000đ = 1 điểm
+  pointsValidYears: 1, // điểm tính theo NĂM THÀNH VIÊN (kể từ ngày đăng ký, lặp lại mỗi năm): điểm phát sinh trong một năm có hiệu lực đến ngày kỷ niệm đăng ký kế tiếp (1 = hết hạn vào kỷ niệm kế tiếp)
   // Mẫu tin nhắn gửi nhanh qua Zalo / SMS / Facebook. Biến: {ten} {hang} {quan} {the}
   messageTemplates: [
     { name: 'Chúc mừng sinh nhật', text: 'Xin chào {ten}, {quan} xin chúc mừng sinh nhật anh/chị! Mời anh/chị ghé quán trong tháng sinh nhật để nhận quà tặng đặc biệt dành cho thành viên hạng {hang}.' },
@@ -171,6 +172,7 @@ async function saveSettings(pool, body) {
   }
   if (['best_month12', 'rolling12', 'lifetime'].includes(body.tierPeriod)) next.tierPeriod = body.tierPeriod;
   for (const k of ['pointsRate', 'newDays', 'winbackDays', 'lostDays']) if (Number(body[k]) > 0) next[k] = Number(body[k]);
+  if (Number(body.pointsValidYears) >= 1) next.pointsValidYears = Math.min(3, Math.floor(Number(body.pointsValidYears)));
   next.policyVersion = DEFAULT_SETTINGS.policyVersion;
   for (const k of ['cardMonths', 'expiryWarnDays']) if (Number(body[k]) > 0) next[k] = Number(body[k]);
   if (Array.isArray(body.terms)) next.terms = body.terms;
@@ -263,6 +265,28 @@ function applyRfm(list) {
 
 const SEGMENTS = { new: 'Khách mới', one_time: 'Ghé 1 lần, chưa quay lại', loyal: 'Thân thiết', regular: 'Thường xuyên', at_risk: 'Có nguy cơ rời bỏ', lost: 'Đã mất', none: 'Chưa phát sinh' };
 
+// Điểm theo NĂM THÀNH VIÊN: năm bắt đầu từ ngày đăng ký (ngày đầu tiên ghé quán) và lặp lại mỗi năm. Điểm (tích theo chi tiêu + cộng/trừ tay)
+// phát sinh trong một năm thành viên có hiệu lực tới hết năm đó (validYears = 1) hoặc thêm vài năm nữa nếu cài đặt cho phép.
+function pointsByMembershipYear(since, today, validYears, rate, spendList, ledgerList) {
+  const [sy, sm, sd] = since.split('-').map(Number);
+  const leap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  const mk = (y) => `${y}-${pad(sm)}-${pad(sm === 2 && sd === 29 && !leap(y) ? 28 : sd)}`;
+  let y0 = Number(today.slice(0, 4));
+  if (mk(y0) > today) y0 -= 1; // năm thành viên hiện tại bắt đầu từ ngày kỷ niệm gần nhất đã qua
+  const n = Math.max(1, validYears || 1);
+  const buckets = [];
+  for (let k = 0; k < n; k++) buckets.push({ from: mk(y0 - k), to: k === 0 ? '9999-12-31' : mk(y0 - k + 1), earned: 0, adj: 0 });
+  const inB = (b, d) => d >= b.from && d < b.to;
+  const bySpend = buckets.map(() => 0);
+  (spendList || []).forEach((r) => { buckets.forEach((b, i) => { if (inB(b, r.d)) bySpend[i] += r.amt; }); });
+  (ledgerList || []).forEach((r) => { buckets.forEach((b) => { if (inB(b, r.d)) b.adj += r.pts; }); });
+  buckets.forEach((b, i) => { b.earned = Math.floor(bySpend[i] / rate); });
+  const total = Math.max(0, buckets.reduce((a, b) => a + b.earned + b.adj, 0));
+  const oldest = buckets[buckets.length - 1];
+  const expiring = Math.max(0, Math.min(total, oldest.earned + oldest.adj));
+  return { points: total, expireOn: mk(y0 + 1), expiring, yearStart: buckets[0].from };
+}
+
 async function loadAll(pool, force = false) {
   await syncCustomers(pool, force);
   if (!force && cache.data && Date.now() - cache.at < 30000) return cache.data;
@@ -288,6 +312,13 @@ async function loadAll(pool, force = false) {
     WHERE cust_key <> '' AND inv_date >= $1::date - 366 GROUP BY cust_key, inv_date ORDER BY inv_date`, [today])).rows;
   const recentOf = new Map();
   recentRows.forEach((r) => { if (!recentOf.has(r.cust_key)) recentOf.set(r.cust_key, []); recentOf.get(r.cust_key).push({ d: r.d, amt: Number(r.amt) || 0 }); });
+  const ptRows = (await pool.query(`SELECT cust_key, to_char(inv_date, 'YYYY-MM-DD') AS d, SUM(${REV}) AS amt FROM cukcuk_invoices
+    WHERE cust_key <> '' AND inv_date >= $1::date - 1100 GROUP BY cust_key, inv_date`, [today])).rows;
+  const spendDays = new Map();
+  ptRows.forEach((r) => { if (!spendDays.has(r.cust_key)) spendDays.set(r.cust_key, []); spendDays.get(r.cust_key).push({ d: r.d, amt: Number(r.amt) || 0 }); });
+  const ledRows = (await pool.query(`SELECT customer_id, points, to_char(created_at + interval '7 hours', 'YYYY-MM-DD') AS d FROM crm_points_ledger WHERE created_at >= NOW() - interval '1110 days'`)).rows;
+  const ledgerDays = new Map();
+  ledRows.forEach((r) => { if (!ledgerDays.has(r.customer_id)) ledgerDays.set(r.customer_id, []); ledgerDays.get(r.customer_id).push({ d: r.d, pts: Number(r.points) || 0 }); });
   const addDaysStr = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
   const cardDays = Math.round((settings.cardMonths || 12) * 30.4375);
   const levelBySpend = (amt) => { let l = 0; settings.tiers.forEach((t, k) => { if (k > 0 && amt >= t.min) l = k; }); return l; };
@@ -338,6 +369,8 @@ async function loadAll(pool, force = false) {
     }
     const expiresInDays = validUntil ? daysBetween(today, validUntil) : null;
     const next = tiers[level + 1] || null;
+    const sinceDate = firstVisit || String(c.created_at ? new Date(new Date(c.created_at).getTime() + 7 * 3600 * 1000).toISOString() : today).slice(0, 10);
+    const pt = pointsByMembershipYear(sinceDate, today, settings.pointsValidYears, settings.pointsRate, spendDays.get(c.cust_key), ledgerDays.get(c.id));
     // mã trên thẻ = FEN-<số điện thoại> để nhân viên nhập đúng khách khi thanh toán; chưa có SĐT thì dùng số thứ tự
     const obj = {
       id: c.id, memberNo: c.member_no, memberCode: 'FEN-' + (String(c.phone || '').replace(/\D/g, '') || String(c.member_no).padStart(6, '0')), key: c.cust_key, name: c.name, phone: c.phone || '', phoneIssue: phoneIssue(c.phone), email: c.email || '', gender: c.gender || '',
@@ -349,7 +382,7 @@ async function loadAll(pool, force = false) {
       avgBill: bs.reduce((a, b) => a + b.invoices, 0) ? spend / bs.reduce((a, b) => a + b.invoices, 0) : 0,
       tier: tier.key, tierName: tier.name, tierMetric: metric, tierSource: source, validUntil, expiresInDays, expiringSoon: !!validUntil && expiresInDays <= (settings.expiryWarnDays || 30), afterTierName: afterLevel === null ? '' : tiers[afterLevel].name, firstBill: fb, discountPct: tier.discountPct || 0,
       nextTier: next ? { key: next.key, name: next.name, min: next.min, need: Math.max(0, next.min - metric), newBillMin: next.newBillMin || 0 } : null,
-      points: Math.max(0, Math.floor(spend / settings.pointsRate) + Number(c.ledger_points || 0)),
+      points: pt.points, pointsExpireOn: pt.expireOn, pointsExpiring: pt.expiring, pointsYearStart: pt.yearStart, pointsLifetime: Math.max(0, Math.floor(spend / settings.pointsRate) + Number(c.ledger_points || 0)),
       recencyDays: lastVisit ? daysBetween(lastVisit, today) : null,
       visits12: inv12.filter((r) => r.d >= addDaysStr(today, -365)).length,
       consent: c.consent || '', consentAt: c.consent_at || null, consentBy: c.consent_by || ''

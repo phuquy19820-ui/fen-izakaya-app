@@ -46,6 +46,11 @@ export default function CardPage() {
               ) : <p className="text-sm font-semibold">🎉 Bạn đang ở hạng cao nhất: {data.tierName}</p>}
             </div>
 
+            <div className="w-full rounded-2xl p-4 text-white text-sm" style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.12)' }}>
+              <div className="font-bold">Điểm thưởng: {Number(data.points).toLocaleString('vi-VN')} điểm</div>
+              <div className="text-gray-300 mt-1">Điểm tính theo năm thành viên (kể từ ngày đăng ký). {data.pointsExpiring > 0 ? <>Có <b className="text-yellow-300">{Number(data.pointsExpiring).toLocaleString('vi-VN')} điểm hết hạn vào {String(data.pointsExpireOn).split('-').reverse().join('/')}</b> — hãy dùng điểm trước ngày này.</> : 'Chưa có điểm sắp hết hạn.'}</div>
+            </div>
+
             {data.validUntil && (
               <div className="w-full rounded-2xl p-4 text-white text-sm" style={{ background: data.expiringSoon ? 'rgba(220,38,38,.25)' : 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.12)' }}>
                 <div className="font-bold">Hạn hiệu lực hạng: {data.validUntil.split('-').reverse().join('/')}</div>

@@ -77,7 +77,7 @@ export default function CrmCustomerDetail({ id, meta, go, isManager }) {
             <Kpi label="Số lần ghé" value={num(c.visits)} sub={c.firstVisit ? 'Từ ' + fmtDate(c.firstVisit) : ''} color="#8b5cf6" />
             <Kpi label="Bill trung bình" value={money(c.avgBill) + ' đ'} sub={`${num(c.guests)} lượt khách`} color="#d97706" />
             <Kpi label="Lần ghé gần nhất" value={c.lastVisit ? fmtDate(c.lastVisit) : '—'} sub={c.recencyDays !== null ? `${c.recencyDays} ngày trước` : ''} color="#0ea5e9" />
-            <Kpi label="Điểm tích lũy" value={num(c.points)} sub={`1 điểm = ${money(d.settings.pointsRate)} đ`} color="#dc2626" />
+            <Kpi label="Điểm tích lũy" value={num(c.points)} sub={c.pointsExpiring > 0 ? `${num(c.pointsExpiring)} điểm hết hạn ${fmtDate(c.pointsExpireOn)}` : `1 điểm = ${money(d.settings.pointsRate)} đ`} color="#dc2626" />
           </div>
           <Card title="Chi tiêu theo chi nhánh">
             <div className="flex flex-wrap gap-3 text-sm">
@@ -260,6 +260,7 @@ function Points({ d, reload, isManager }) {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
       <Card title="Điểm tích lũy">
         <p className="text-3xl font-extrabold text-red-600">{num(c.points)} điểm</p>
+        <p className="text-sm font-semibold mt-1" style={{ color: c.pointsExpiring > 0 ? '#b45309' : '#6b7280' }}>Điểm tính theo năm thành viên (kể từ ngày đăng ký {fmtDate(c.firstVisit || String(c.createdAt || '').slice(0, 10))}): năm hiện tại bắt đầu {fmtDate(c.pointsYearStart)}; {c.pointsExpiring > 0 ? <>có <b>{num(c.pointsExpiring)} điểm sẽ hết hạn vào {fmtDate(c.pointsExpireOn)}</b> (ngày kỷ niệm đăng ký) — nhắc khách dùng điểm trước ngày này.</> : 'chưa có điểm sắp hết hạn.'}</p>
         <p className="text-sm text-gray-600 mt-1">Tự động tích điểm: 1 điểm cho mỗi {money(d.settings.pointsRate)} đ chi tiêu. Cộng/trừ thủ công (đổi quà, tặng điểm) hiển thị bên dưới.</p>
         {isManager && (
           <div className="flex flex-wrap gap-2 mt-3">

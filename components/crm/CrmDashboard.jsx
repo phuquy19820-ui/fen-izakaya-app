@@ -19,6 +19,7 @@ export default function CrmDashboard({ meta, go }) {
         <Kpi label="Khách còn hoạt động (90 ngày)" value={num(k.active90)} sub={`${pc(k.total ? k.active90 / k.total : 0)} tổng khách`} color="#0ea5e9" />
         <Kpi label="Tỷ lệ khách quay lại" value={pc(k.returningRate)} sub="Khách ghé từ 2 lần trở lên" color="#8b5cf6" />
         <Kpi label="Chi tiêu TB / khách" value={money(k.avgSpend) + ' đ'} sub={`Top 10% khách chiếm ${pc(k.top10share)} doanh thu`} color="#d97706" />
+        <Kpi label="Điểm sắp hết hạn (30 ngày)" value={num(k.pointsExpiring30Sum)} sub={`${num(k.pointsExpiring30)} khách — nhắc dùng điểm`} color="#b45309" />
         <Kpi label="Khách VIP có nguy cơ rời bỏ" value={num(k.atRiskVip)} sub="Hạng cao, lâu chưa quay lại" color="#dc2626" />
       </div>
 

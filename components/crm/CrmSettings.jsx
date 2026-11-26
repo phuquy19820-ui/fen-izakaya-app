@@ -63,6 +63,7 @@ export default function CrmSettings({ meta, reloadMeta }) {
       <Card title="Điểm thưởng & phân khúc khách">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Field label="Tên thương hiệu trên thẻ"><input value={s.brand} onChange={(e) => setS({ ...s, brand: e.target.value })} className={inputCls} /></Field>
+          <Field label="Điểm có hiệu lực (số năm thành viên)"><input type="number" min="1" max="3" value={s.pointsValidYears || 1} onChange={(e) => setS({ ...s, pointsValidYears: Number(e.target.value) })} className={inputCls} /><div className="text-xs text-gray-500 mt-0.5">1 = điểm hết hạn vào ngày kỷ niệm đăng ký kế tiếp</div></Field>
           <Field label="Chi bao nhiêu đ = 1 điểm"><MoneyInput value={s.pointsRate} onChange={(v) => setS({ ...s, pointsRate: v })} /></Field>
           <Field label="Khách mới: trong (ngày) kể từ lần đầu"><input type="number" value={s.newDays} onChange={(e) => setS({ ...s, newDays: Number(e.target.value) })} className={inputCls} /></Field>
           <Field label="Có nguy cơ rời bỏ: không ghé quá (ngày)"><input type="number" value={s.winbackDays} onChange={(e) => setS({ ...s, winbackDays: Number(e.target.value) })} className={inputCls} /></Field>
