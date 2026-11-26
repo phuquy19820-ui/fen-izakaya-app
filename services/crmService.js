@@ -45,6 +45,18 @@ const pad = (n) => String(n).padStart(2, '0');
 const todayVn = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 const daysBetween = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
 
+// ---- chất lượng số điện thoại: số "giữ chỗ" trên POS (0999999999, 01234567890...) không phải khách thật
+function isDummyPhone(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  return /(\d)\1{5,}/.test(d) || /(?:0123456|1234567|2345678|3456789|9876543|8765432|7654321|6543210)/.test(d);
+}
+// '' = hợp lệ; 'format' = sai định dạng số Việt Nam (di động 10 số, bàn 11 số) nên có thể gõ nhầm
+function phoneIssue(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (/^0(3|5|7|8|9)\d{8}$/.test(d) || /^02\d{9}$/.test(d) || /^1[89]00\d{4,6}$/.test(d)) return '';
+  return 'format';
+}
+
 // ---- nhận diện khách từ tên khách hàng trên POS
 function parseCustomerName(raw) {
   const original = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
@@ -57,7 +69,7 @@ function parseCustomerName(raw) {
   while ((m = re.exec(original))) {
     let d = m[0].replace(/\D/g, '');
     if (d.startsWith('84') && d.length >= 11) d = '0' + d.slice(2);
-    if (/^0\d{9,10}$/.test(d)) { phone = d; phoneText = m[0]; }
+    if (/^0\d{9,10}$/.test(d)) { phoneText = m[0]; if (!isDummyPhone(d)) phone = d; }
   }
   const group = customerGroup(original);
   // phần trong ngoặc: nền tảng/nguồn hoặc tên người giới thiệu (vd. "( AN )", "( A.LỘC )")
@@ -204,13 +216,16 @@ function tierFor(settings, metric, override) {
 function segmentFor(c, settings, today) {
   if (!c.visits) return 'none';
   const rec = daysBetween(c.lastVisit, today);
-  if (c.visits <= 1 && daysBetween(c.firstVisit, today) <= settings.newDays) return 'new';
+  if (c.visits <= 1) {
+    if (daysBetween(c.firstVisit, today) <= settings.newDays) return 'new'; // mới ghé lần đầu, còn trong thời gian chăm sóc khách mới
+    return rec > settings.lostDays ? 'lost' : 'one_time'; // đã quá hạn mà chưa quay lại lần 2
+  }
   if (rec > settings.lostDays) return 'lost';
-  if (c.visits >= 2 && rec > settings.winbackDays) return 'at_risk';
-  if (c.visits >= 4 && rec <= settings.winbackDays) return 'loyal';
+  if (rec > settings.winbackDays) return 'at_risk';
+  if (c.visits >= 4) return 'loyal';
   return 'regular';
 }
-const SEGMENTS = { new: 'Khách mới', loyal: 'Thân thiết', regular: 'Thường xuyên', at_risk: 'Có nguy cơ rời bỏ', lost: 'Đã mất', none: 'Chưa phát sinh' };
+const SEGMENTS = { new: 'Khách mới', one_time: 'Ghé 1 lần, chưa quay lại', loyal: 'Thân thiết', regular: 'Thường xuyên', at_risk: 'Có nguy cơ rời bỏ', lost: 'Đã mất', none: 'Chưa phát sinh' };
 
 async function loadAll(pool, force = false) {
   await syncCustomers(pool, force);
@@ -221,11 +236,11 @@ async function loadAll(pool, force = false) {
     (SELECT MAX(created_at) FROM crm_interactions i WHERE i.customer_id = c.id) AS last_contact FROM crm_customers c ORDER BY c.id`)).rows;
   const per = (await pool.query(`
     SELECT cust_key, branch_id, COUNT(*) AS invoices, COUNT(DISTINCT inv_date) AS visits, to_char(MIN(inv_date), 'YYYY-MM-DD') AS first_visit, to_char(MAX(inv_date), 'YYYY-MM-DD') AS last_visit,
-           SUM(${REV}) AS spend, SUM(people) AS guests, SUM(${REV}) FILTER (WHERE inv_date >= CURRENT_DATE - 365) AS spend12
-    FROM cukcuk_invoices WHERE cust_key <> '' GROUP BY cust_key, branch_id`)).rows;
+           SUM(${REV}) AS spend, SUM(people) AS guests, SUM(${REV}) FILTER (WHERE inv_date >= $1::date - 365) AS spend12
+    FROM cukcuk_invoices WHERE cust_key <> '' GROUP BY cust_key, branch_id`, [today])).rows;
   const months = (await pool.query(`
     SELECT cust_key, to_char(inv_date, 'YYYY-MM') AS ym, SUM(${REV}) AS spend FROM cukcuk_invoices
-    WHERE cust_key <> '' AND inv_date >= date_trunc('month', CURRENT_DATE - interval '11 months') GROUP BY cust_key, ym`)).rows;
+    WHERE cust_key <> '' AND inv_date >= date_trunc('month', $1::date - interval '11 months') GROUP BY cust_key, ym`, [today])).rows;
   // hóa đơn lớn nhất trong ngày đầu tiên khách ghé (xét khách mới) và các hóa đơn 12 tháng gần nhất (tính ngày hết hạn hạng)
   const firstBills = (await pool.query(`
     SELECT i.cust_key, MAX(${REV}) AS first_bill FROM cukcuk_invoices i
@@ -234,7 +249,7 @@ async function loadAll(pool, force = false) {
   const firstBillOf = new Map(firstBills.map((r) => [r.cust_key, Number(r.first_bill) || 0]));
   const recentRows = (await pool.query(`
     SELECT cust_key, to_char(inv_date, 'YYYY-MM-DD') AS d, SUM(${REV}) AS amt FROM cukcuk_invoices
-    WHERE cust_key <> '' AND inv_date >= CURRENT_DATE - 366 GROUP BY cust_key, inv_date ORDER BY inv_date`)).rows;
+    WHERE cust_key <> '' AND inv_date >= $1::date - 366 GROUP BY cust_key, inv_date ORDER BY inv_date`, [today])).rows;
   const recentOf = new Map();
   recentRows.forEach((r) => { if (!recentOf.has(r.cust_key)) recentOf.set(r.cust_key, []); recentOf.get(r.cust_key).push({ d: r.d, amt: Number(r.amt) || 0 }); });
   const addDaysStr = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
@@ -245,7 +260,7 @@ async function loadAll(pool, force = false) {
   months.forEach((r) => { if (byKey.has(r.cust_key)) byKey.get(r.cust_key).months[r.ym] = Number(r.spend) || 0; });
 
   // chỉ khách có số điện thoại mới là thành viên; khách không có số điện thoại bị loại hoàn toàn khỏi CRM
-  const hasPhone = (c) => String(c.phone || '').replace(/\D/g, '').length >= 8;
+  const hasPhone = (c) => String(c.phone || '').replace(/\D/g, '').length >= 8 && !isDummyPhone(c.phone);
   const list = custs.filter(hasPhone).map((c) => {
     const st = byKey.get(c.cust_key) || { branches: {}, months: {} };
     const bs = Object.values(st.branches);
@@ -262,7 +277,7 @@ async function loadAll(pool, force = false) {
     const spendLevel = levelBySpend(spend12);
     // khách mới lần đầu: hóa đơn lần đầu vượt ngưỡng thì được xếp hạng ngay, hiệu lực 12 tháng kể từ ngày đó
     let newLevel = 0;
-    if (firstVisit && daysBetween(firstVisit, today) <= cardDays) tiers.forEach((t, k) => { if (k > 0 && t.newBillMin > 0 && fb > t.newBillMin) newLevel = k; });
+    if (firstVisit && daysBetween(firstVisit, today) <= cardDays) tiers.forEach((t, k) => { if (k > 0 && t.newBillMin > 0 && fb >= t.newBillMin) newLevel = k; });
     const ovIdx = c.tier_override ? tiers.findIndex((t) => t.key === c.tier_override) : -1;
     const level = Math.max(spendLevel, newLevel, ovIdx);
     const tier = tiers[level];
@@ -289,7 +304,7 @@ async function loadAll(pool, force = false) {
     const next = tiers[level + 1] || null;
     // mã trên thẻ = FEN-<số điện thoại> để nhân viên nhập đúng khách khi thanh toán; chưa có SĐT thì dùng số thứ tự
     const obj = {
-      id: c.id, memberNo: c.member_no, memberCode: 'FEN-' + (String(c.phone || '').replace(/\D/g, '') || String(c.member_no).padStart(6, '0')), key: c.cust_key, name: c.name, phone: c.phone || '', email: c.email || '', gender: c.gender || '',
+      id: c.id, memberNo: c.member_no, memberCode: 'FEN-' + (String(c.phone || '').replace(/\D/g, '') || String(c.member_no).padStart(6, '0')), key: c.cust_key, name: c.name, phone: c.phone || '', phoneIssue: phoneIssue(c.phone), email: c.email || '', gender: c.gender || '',
       birthday: c.birthday ? new Date(new Date(c.birthday).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10) : '', address: c.address || '', company: c.company || '',
       source: c.source || '', socialLink: c.social_link || '', refBy: c.ref_by || '', notes: c.notes || '', preferences: c.preferences || '', allergies: c.allergies || '', tags: c.tags || [], status: c.status,
       ownerId: c.owner_id, branchId: c.branch_id, isManual: c.is_manual, tierOverride: c.tier_override || '', cardToken: c.card_token, createdAt: c.created_at,
@@ -336,4 +351,4 @@ function maskFor(c, scope, settings, today) {
   return out;
 }
 
-module.exports = { init, getSettings, saveSettings, loadAll, invalidate, syncCustomers, parseCustomerName, scopeFor, visibleTo, maskFor, newToken, DEFAULT_SETTINGS, SEGMENTS, todayVn, daysBetween, REV };
+module.exports = { isDummyPhone, phoneIssue, init, getSettings, saveSettings, loadAll, invalidate, syncCustomers, parseCustomerName, scopeFor, visibleTo, maskFor, newToken, DEFAULT_SETTINGS, SEGMENTS, todayVn, daysBetween, REV };

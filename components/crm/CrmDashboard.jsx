@@ -35,7 +35,7 @@ export default function CrmDashboard({ meta, go }) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        <Card title="Phân khúc khách hàng (RFM)">
+        <Card title="Phân khúc vòng đời khách hàng (theo lần ghé gần nhất & tần suất)">
           <ChartBox type="bar" height={220} data={{ labels: d.segments.map((s) => s.label), datasets: [{ label: 'Số khách', data: d.segments.map((s) => s.n), backgroundColor: d.segments.map((s) => SEGMENT_COLORS[s.key] || '#64748b') }] }} options={{ indexAxis: 'y', plugins: { legend: { display: false } } }} />
         </Card>
         <Card title="Nguồn khách">

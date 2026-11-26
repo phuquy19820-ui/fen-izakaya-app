@@ -52,7 +52,7 @@ function register(app, pool) {
     }).filter(Boolean);
   };
   const slim = (c) => ({
-    id: c.id, memberCode: c.memberCode, name: c.name, phone: c.phone, source: c.source, tier: c.tier, tierName: c.tierName, segment: c.segment, visits: c.visits, lastVisit: c.lastVisit,
+    id: c.id, memberCode: c.memberCode, name: c.name, phone: c.phone, phoneIssue: c.phoneIssue, source: c.source, tier: c.tier, tierName: c.tierName, segment: c.segment, visits: c.visits, lastVisit: c.lastVisit,
     spend: c.spend, spend12: c.spend12, points: c.points, tags: c.tags, status: c.status, branches: c.branches, birthday: c.birthday, ownerId: c.ownerId, recencyDays: c.recencyDays,
     lastContact: c.lastContact, avgBill: c.avgBill, email: c.email, refBy: c.refBy
   });
@@ -475,6 +475,7 @@ function register(app, pool) {
     const withVisits = list.filter((c) => c.visits > 0);
     const rawAll = visibleList(ctx, true).filter((c) => c.status !== 'inactive');
     const withVisitsAll = rawAll.filter((c) => c.visits > 0);
+    const rawByKey = new Map(rawAll.map((c) => [c.key, c]));
     const count = (f) => list.filter(f).length;
     const tally = (fn, labels) => {
       const m = {};
@@ -496,8 +497,10 @@ function register(app, pool) {
     monthly.forEach((m) => { const r = rev.find((x) => x.ym === m.ym); m.memberRev = r ? Number(r.member_rev) || 0 : 0; m.totalRev = r ? Number(r.total_rev) || 0 : 0; });
     const birthdays = rawAll.filter((c) => c.birthday).map((c) => {
       const [, mm, dd] = c.birthday.split('-');
-      let next = `${today.slice(0, 4)}-${mm}-${dd}`;
-      if (next < today) next = `${Number(today.slice(0, 4)) + 1}-${mm}-${dd}`;
+      const dayIn = (y) => { const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0; return mm === '02' && dd === '29' && !leap ? '28' : dd; };
+      const y0 = Number(today.slice(0, 4));
+      let next = `${y0}-${mm}-${dayIn(y0)}`;
+      if (next < today) next = `${y0 + 1}-${mm}-${dayIn(y0 + 1)}`;
       return { ...slim(c), next, inDays: crm.daysBetween(today, next) };
     }).filter((c) => c.inDays <= 14).sort((a, b) => a.inDays - b.inDays).slice(0, 12);
     const myTasks = (await pool.query(`SELECT COUNT(*) FILTER (WHERE status = 'open') AS open, COUNT(*) FILTER (WHERE status = 'open' AND due_date < CURRENT_DATE) AS overdue,
@@ -512,7 +515,7 @@ function register(app, pool) {
       kpi: {
         total: list.length, withPhone: count((c) => c.phone), withVisits: withVisits.length, newThisMonth: withVisitsAll.filter((c) => c.firstVisit.startsWith(ym)).length,
         newLastMonth: withVisitsAll.filter((c) => c.firstVisit.startsWith(prevYm)).length, active90: count((c) => c.recencyDays !== null && c.recencyDays <= 90),
-        returningRate: withVisits.length ? withVisits.filter((c) => c.visits >= 2).length / withVisits.length : 0, avgSpend: withVisits.length ? totalSpend / withVisits.length : 0,
+        returningRate: withVisits.length ? (ctx.month ? withVisits.filter((c) => { const r = rawByKey.get(c.key); return r && r.firstVisit && r.firstVisit < ym + '-01'; }).length : withVisits.filter((c) => c.visits >= 2).length) / withVisits.length : 0, avgSpend: withVisits.length ? totalSpend / withVisits.length : 0,
         top10share: totalSpend ? top10pct / totalSpend : 0, atRiskVip: rawAll.filter((c) => c.segment === 'at_risk' && c.tier !== ctx.data.settings.tiers[0].key).length, totalPoints: list.reduce((a, c) => a + c.points, 0)
       },
       tiers: ctx.data.settings.tiers.map((t) => ({ key: t.key, label: t.name, n: list.filter((c) => c.tier === t.key).length })),

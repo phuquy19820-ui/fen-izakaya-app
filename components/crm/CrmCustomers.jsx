@@ -64,7 +64,7 @@ export default function CrmCustomers({ meta, go, isManager, branch = '' }) {
 
       <Card pad={false} title={data ? `${num(data.total)} khách · tổng chi tiêu ${money(data.totalSpend)} đ` : 'Khách hàng'} right={loading ? <span className="text-xs text-gray-500">Đang tải…</span> : null}>
         <Table rows={data ? data.items : []} rowKey={(r) => r.id} onRow={(r) => go('customer', r.id)} empty={loading ? 'Đang tải…' : 'Không có khách nào phù hợp bộ lọc. Khách được tạo tự động từ hóa đơn đã đồng bộ, hoặc bấm "+ Thêm khách".'} cols={[
-          { label: 'Khách hàng', render: (r) => <div><div className="font-semibold">{r.name}{r.status === 'vip' ? ' ⭐' : ''}</div><div className="text-xs text-gray-500">{r.memberCode}{r.phone ? ' · ' + r.phone : ''}{r.source ? ' · ' + r.source : ''}</div></div> },
+          { label: 'Khách hàng', render: (r) => <div><div className="font-semibold">{r.name}{r.status === 'vip' ? ' ⭐' : ''}</div><div className="text-xs text-gray-500">{r.memberCode}{r.phone ? ' · ' + r.phone : ''}{r.phoneIssue ? <span title="Số điện thoại sai định dạng (di động 10 số) — kiểm tra lại để liên hệ được khách" className="text-orange-600 font-bold"> ⚠ SĐT?</span> : null}{r.source ? ' · ' + r.source : ''}</div></div> },
           { label: 'Hạng', render: (r) => <TierBadge tier={r.tier} name={r.tierName} /> },
           { label: 'Phân khúc', render: (r) => <SegmentBadge segment={r.segment} label={meta.segments[r.segment]} /> },
           { label: 'Chi nhánh', render: (r) => <span className="text-xs">{r.branches.map((b) => (meta.branches.find((x) => x.branch_id === b) || {}).branch_name || b).join(', ')}</span> },
